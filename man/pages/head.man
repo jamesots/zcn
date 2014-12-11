@@ -1,0 +1,8 @@
+NAME
+	head - display the head of a file
+
+SYNOPSIS
+	head filename
+
+DESCRIPTION
+	`head' displays the first eight lines of a text file.

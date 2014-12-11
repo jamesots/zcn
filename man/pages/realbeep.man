@@ -1,0 +1,9 @@
+NAME
+	realbeep - disable/enable audible beep
+
+SYNOPSIS
+	realbeep [0|1]
+
+DESCRIPTION
+	Turn off (0) or on (1) an audible beep. (The usual `beep'
+	action is to flash the screen.)

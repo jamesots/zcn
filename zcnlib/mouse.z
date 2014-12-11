@@ -1,0 +1,516 @@
+;mouse.z - ZCN MS mouse driver
+;requires graph
+;only supports Microsoft-compatible mice, i.e. two-button mode only
+;XXX any way to test for mouse really being connected?
+
+;to use the mouse driver and init the mouse, call minit.
+;there is currently no way of telling if there's actually a mouse
+;plugged into the serial port or not. before calling minit, you
+;may want to set (mfixp) to something other than 0 for a slower-moving
+;mouse; see mfixp's declaration for details.
+;
+;if you want a mouse pointer, call mouseon after calling minit.
+;
+;after that, call mevents fairly often (which reads the serial port
+;and updates the driver's notion of where the mouse pointer is etc.)
+;you would usually call mstat right after calling that. mstat returns
+;the pointer's pixel position onscreen in (de,c). It's also mstat
+;which redraws the mouse pointer, if you've turned it on.
+;
+;if you need to do *any* drawing on the screen (which includes
+;using the BDOS to draw any text), call mouseoff beforehand and
+;call mouseon afterwards. (mouseoff undraws the mouse pointer, mouseon
+;redraws it. obviously you shouldn't do this if you didn't have the
+;mouse pointer turned on anyway.)
+;
+;don't call any of the routines here before calling minit, and
+;similarly don't call mouseoff before calling mouseon.
+;
+;if you want to remove the mouse pointer before exiting, call mouseoff
+;at the appropriate time.
+;
+;you should always call muninit before exiting.
+;
+;if you want a different mouse pointer, change the bitmap and mask at
+;mbptr (see below).
+
+
+;for CP/M zmac
+;ZZglobal minit
+;ZZglobal muninit
+;ZZglobal mouseon
+;ZZglobal mouseoff
+;ZZglobal mevents
+;ZZglobal mstat
+;ZZglobal mfixp
+;ZZglobal mbptr
+
+
+
+;mouse x/y on grid of (0,0) to (479,63), i.e. the screen.
+;we use fixed ints though, so reading them directly isn't
+;too useful. call 'mstat' instead.
+
+;there are 2^(mfixp) sub-pixel positions. so essentially, the
+;bigger (mfixp) gets, the less sensitive the mouse movement gets.
+;it must be >=0 and <=7. 0 or 1 are generally ok, and 4 is good for
+;really high detail stuff where you don't want it to move so much.
+mfixp:	defb 0
+
+mousex: defw 0
+mousey: defw 0
+mbut:	defb 0		;0=none, 2=left, 1=right, 3=both
+
+mbuf0: defb 0
+mbuf1: defb 0
+mbuf2: defb 0
+
+mxmax:	defw 0
+mymax:	defw 0
+
+;following stuff for the mouse pointer
+moldx: defw 0
+moldy: defw 0
+
+mdoptr: defb 0		;1 if mouse pointer should be drawn
+
+;8x8 mouse pointer bitmap/mask
+mbptr:
+;bitmap
+defb 000h	; . . . . . . . .
+defb 040h	; . x . . . . . .
+defb 070h	; . x x x . . . .
+defb 07ch	; . x x x x x . .
+defb 070h	; . x x x . . . .
+defb 058h	; . x . x x . . .
+defb 008h	; . . . . x . . .
+defb 000h	; . . . . . . . .
+;mask
+defb 0bfh	; x . x x x x x x
+defb 00fh	; . . . . x x x x
+defb 003h	; . . . . . . x x
+defb 001h	; . . . . . . . x
+defb 003h	; . . . . . . x x
+defb 003h	; . . . . . . x x
+defb 0a3h	; x . x . . . x x
+defb 0f7h	; x x x x . x x x
+
+;for saving 16x8
+mpsavbuf:
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+
+msemu: defb 0		;1 if we're running under nc100em
+
+
+zfmouse		equ 141		;set/unset mouse settings
+
+
+
+;returns serial input in a or nc if no char
+msgetch:
+ld c,7
+call 5
+inc a
+ret nc
+
+ld c,3
+call 5
+scf
+ret
+
+
+msputch:
+ld e,a
+ld c,4
+jp 5
+
+
+
+minit:
+;see if we're running under nc100em
+ld a,9
+out (0ddh),a
+in a,(0dch)
+cp 100
+ld a,0
+jr nz,min0
+;zero (mfixp)
+ld (mfixp),a
+inc a
+min0:
+ld (msemu),a
+
+;set xmax and ymax
+ld hl,479
+ld a,(mfixp)
+and a
+jr z,min1
+ld b,a
+minlp1:
+scf
+rl l
+rl h
+djnz minlp1
+min1:
+ld (mxmax),hl
+
+ld hl,63
+ld a,(mfixp)
+and a
+jr z,min2
+ld b,a
+minlp2:
+scf
+rl l
+rl h
+djnz minlp2
+min2:
+ld (mymax),hl
+
+
+;and others, i.e. no buttons pressed and put pointer in middle of scrn
+;hl is still mymax
+and a
+rr h
+rr l
+ld (mousey),hl
+ld hl,(mxmax)
+and a
+rr h
+rr l
+ld (mousex),hl
+
+xor a
+ld (mbut),a
+
+ld (mdoptr),a
+
+
+;stop here if running nc100em
+ld a,(msemu)
+and a
+ret nz
+
+
+ld de,0301h
+ld c,zfmouse
+call 5
+
+ld a,'Q'	;sample rate 100
+call msputch
+
+;wait a bit
+halt
+halt
+halt
+halt
+
+;initialise again to flush any possible input
+ld de,0301h
+ld c,zfmouse
+call 5
+ret
+
+
+;uninit mouse
+;do this before exiting
+muninit:
+ld a,(msemu)
+and a
+ret nz
+
+ld de,0300h
+ld c,zfmouse
+jp 5
+
+
+;save old mouse pos
+;internal use only
+msavepos:
+ld (moldx),de
+ld (moldy),bc
+ret
+
+
+;get old mouse pos
+;internal use only
+moldpos:
+ld de,(moldx)
+ld bc,(moldy)
+ret
+
+
+;call this to turn on mouse pointer
+;pointer is redrawn each time you call mstat
+;call mouseoff to disable before drawing anything on screen yourself
+;af/bc/de/hl/ix corrupt
+mouseon:
+call mstat
+push de
+push bc
+call msavepos
+ld ix,mpsavbuf
+call save16x8
+pop bc
+pop de
+ld ix,mbptr
+call draw8x8
+
+ld a,1
+ld (mdoptr),a
+ret
+
+
+;turns off mouse pointer
+;see 'mouseon'
+mouseoff:
+call moldpos
+ld ix,mpsavbuf
+call rstr16x8
+
+xor a
+ld (mdoptr),a
+ret
+
+
+
+
+;handle any mouse events pending
+;call this reasonably often, certainly before calling mstat.
+;this doesn't return any mouse position etc. - see mstat for that.
+mevents:
+ld a,(msemu)
+and a
+jp nz,mevents_emu
+
+mevloop:
+;get header (abort if no chars)
+call msgetch
+ret nc
+
+ld (mbuf0),a
+
+;see if it's a header char
+and 040h
+cp 040h
+jr nz,mevloop	;if not, get another
+
+;read in the other 2 chars of the event block
+halt
+halt
+call msgetch
+jr nc,mevloop
+ld (mbuf1),a
+and 040h
+jr nz,mevloop
+
+halt
+halt
+call msgetch
+jr nc,mevloop
+ld (mbuf2),a
+and 040h
+jr nz,mevloop
+
+
+;ok, got the lot. now construct the button on/off status and delta.
+;the packet went like this:
+;   e        d        c
+; 0021yyxx 00xxxxxx 00yyyyyy
+;
+;0=unused, 2=left button, 1=right
+
+ld hl,mbuf0
+ld e,(hl)
+inc hl
+ld d,(hl)
+inc hl
+ld c,(hl)
+
+ld a,e
+and 030h
+rrca
+rrca
+rrca
+rrca
+ld (mbut),a
+
+ld a,e
+and 00ch	;top 2 bits of y delta
+rlca
+rlca
+rlca
+rlca
+ld b,a
+ld a,c
+and 03fh	;rest of y
+or b
+ld l,a
+
+ld a,e
+and 003h	;top 2 bits of x delta
+rrca
+rrca
+ld b,a
+ld a,d
+and 03fh
+or b
+ld h,a
+
+ex de,hl
+
+;so now d=x delta and e=y delta.
+push de
+ld hl,(mousex)
+ld e,d
+ld d,0
+call sext_de
+add hl,de
+bit 7,h
+jr z,mev1
+ld hl,0
+mev1:
+ld (mousex),hl
+pop de
+
+ld hl,(mousey)
+ld d,0
+call sext_de
+add hl,de
+bit 7,h
+jr z,mev2
+ld hl,0
+mev2:
+ld (mousey),hl
+
+;see if either has overrun the max and fix if so.
+ld hl,(mousex)
+ld de,(mxmax)
+and a
+sbc hl,de
+jr c,mev3
+ld hl,(mxmax)
+ld (mousex),hl
+mev3:
+
+ld hl,(mousey)
+ld de,(mymax)
+and a
+sbc hl,de
+jr c,mev4
+ld hl,(mymax)
+ld (mousey),hl
+mev4:
+
+jp mevloop	;loop while there are any more events
+
+
+mevents_emu:
+in a,(02ah)
+rra
+and 3
+ld (mbut),a
+
+in a,(02bh)
+ld l,a
+in a,(02ch)
+ld h,a
+ld (mousex),hl
+
+in a,(02dh)
+ld (mousey),a
+ret
+
+
+
+;sign extend 2's cpl number in e to de
+sext_de:
+ld d,0
+bit 7,e
+ret z
+ld d,0ffh
+ret
+
+
+
+;get mouse status
+;call mevents before calling this
+;entry: none
+;exit:	de=mouse x (0-479), c=mouse y (0-63)
+;	a=mouse buttons (bit 1 set if left, bit 0 set if right)
+;	f/b/hl/ix corrupt
+mstat:
+ld de,(mousex)
+ld a,(mfixp)
+and a
+jr z,mst1
+mstlp1:
+and a
+rr d
+rr e
+dec a
+jr nz,mstlp1
+mst1:
+
+ld bc,(mousey)
+ld a,(mfixp)
+and a
+jr z,mst2
+mstlp2:
+;don't care what leaks into b
+rr b
+rr c
+dec a
+jr nz,mstlp2
+mst2:
+
+ld b,0
+
+;see if we want to redraw the mouse pointer
+ld a,(mdoptr)
+and a
+ld a,(mbut)
+ret z		;don't if not turned on
+
+push de
+push bc
+
+;check current pos against last
+ex de,hl
+ld a,c
+call moldpos
+;de=old x, c=old y, hl=new x, a=new y
+and a
+sbc hl,de
+jr nz,mstupd
+cp c
+jr z,mstnope	;if neither changed, leave as is
+
+mstupd:
+;ok, it's moved, so update it
+;de and c are still old x/y
+ld ix,mpsavbuf
+call rstr16x8
+pop bc
+pop de
+push de
+push bc
+push de
+push bc
+ld ix,mpsavbuf
+call save16x8
+pop bc
+pop de
+ld ix,mbptr
+call draw8x8
+pop bc
+pop de
+call msavepos	;save current pos as next old pos
+jr mstend
+
+mstnope:
+pop bc
+pop de
+mstend:
+ld a,(mbut)
+ret

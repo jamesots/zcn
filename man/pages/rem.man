@@ -1,0 +1,11 @@
+NAME
+	rem - do nothing (for comments in SUB files)
+
+SYNOPSIS
+	rem any_text
+	  or
+	# any_text
+
+DESCRIPTION
+	Rem allows you to insert comments in SUB files. You can do
+	this with `#' if you prefer.

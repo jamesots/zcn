@@ -1,0 +1,23 @@
+NAME
+	zcnclock - an ana/digi `world time' clock program
+
+SYNOPSIS
+	zcnclock
+
+DESCRIPTION
+	A clock program which continuously updates both analogue and
+	digital time displays, as well as the current date, and
+	supports displaying the time in various cities around the
+	world. Press ^S (or cursor left) and ^D (or cursor right) to
+	change city. Exit the program with Esc.
+
+BUGS
+	The auto-poweroff timeout is effectively disabled by the
+	constant updating. Be careful if running off batteries.
+
+	The `world time' is very UK-centric, and since DST is dealt
+	with in differing ways across the globe, is probably sometimes
+	out by an hour.
+
+SEE ALSO
+	dclock, time, timeset

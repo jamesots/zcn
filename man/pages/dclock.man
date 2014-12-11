@@ -1,0 +1,15 @@
+NAME
+	dclock - a simple clock program
+
+SYNOPSIS
+	dclock
+
+DESCRIPTION
+	A clock program (a cut-down zcnclock). Exit with Esc.
+
+BUGS
+	The auto-poweroff timeout is effectively disabled by the
+	constant updating. Be careful if running off batteries.
+
+SEE ALSO
+	zcnclock, time, timeset

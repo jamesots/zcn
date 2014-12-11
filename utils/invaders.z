@@ -1,0 +1,1187 @@
+;ZCN invaders
+
+
+org 0100h
+
+jr start
+
+krawmap: defw 0
+
+;x pos & 7 -> mask table for alterpix routine
+masktbl:
+defb 080h,040h,020h,010h,008h,004h,002h,001h
+
+;game vars
+lives: defb 0
+oldscore: defw 0
+score: defw 0
+pxpos: defb 0
+pypos: defb 0
+firing: defb 0
+fxpos: defb 0
+fypos: defb 0
+
+endlvl: defb 0		;1 if level ended this frame (break loop)
+wasshot: defb 0		;1 if player was shot by invader (lose life)
+wasinv: defb 0		;1 if player was invaded (game over)
+success: defb 0		;1 if level was completed successfully (next level)
+
+
+;invader info stuff
+;start of array is 'invdat', at end of file
+;info on each invader at invdat is held individually, and it's held across
+;then down (but that's not terribly important).
+;for each invader, it has:
+;byte 0 - x pos (in pix)  byte 1 - y pos (in pix)
+;byte 2 - dx              byte 3 - dy
+;byte 4 - type number if active, 0 if dead.
+turnthistime:	defb 0
+turnnexttime:	defb 0
+
+;type numbers are:
+itype1		equ 1		; .^. 10 pts
+itype2		equ 2		; [^]  6 pts
+itype3		equ 3		; ^I^  3 pts
+itype4		equ 4		; ^.^  1 pt
+
+;points table, from above
+invscdat:
+defb 10,6,3,1
+
+;type1 go at the top, type 4 at the bottom.
+
+invnx		equ 8		;this many invaders across
+invny		equ 8		;this many down
+invnum		equ invnx*invny	;this many total
+
+invcount:	defb 0		;num. invaders left on level
+
+bdos		equ 5
+
+zftight		equ 129		;set whether interrupts 'tight' or not
+zfrawmap	equ 130		;return address of kybd rawmap
+
+scrnaddr	equ 0f000h	;start of screen
+winaddr		equ scrnaddr+20	;start of 80x64 game window
+scorexpos	equ 72
+scoreypos	equ 2		;pos of score
+winoffset	equ winaddr*8-scrnaddr*8	;(in pixels)
+scpixxpos	equ scorexpos*4-winoffset	;(for drawpix)
+botrow		equ 60		;row below player (must be even)
+plrline		equ botrow-2	;row player is drawn at/below
+winwidth	equ 80		;width of game window (must be mult. of 8)
+winheight	equ 64		;height of game window
+dxsize		equ 1		;size of invader dx move
+dysize		equ 1		;size of invader dy move
+firedy		equ -4		;speed of shot
+pdxsize		equ 2		;player dx move
+
+delay: defw 0
+speed: defw 0
+
+
+;messages
+mscore:	defb 'score: $'
+
+
+
+start:
+;needs zcn
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;do random sys. init stuff
+call sysinit
+
+;start a new game
+newgame:
+call gameinit
+
+gameloop:
+;init level
+call clrscrn
+call lvlinit
+
+lvlloop:
+call invmove	;undraw/move/draw/check for each invader in turn
+		; (will also move shots later)
+call plrmove	;undraw/move/draw/check for player and shot
+call updscore
+ld hl,(score)
+ld (oldscore),hl
+
+call dodelay
+
+ld a,(endlvl)
+and a
+jr z,lvlloop
+
+ld a,(success)
+and a
+jr nz,gameloop
+
+;all done. ZCN will fix the cursor and undo tight ints.
+jp 0
+
+
+dodelay:
+ld hl,(delay)
+delaylp:
+dec hl
+ld a,h
+or l
+jr nz,delaylp
+ret
+
+
+;update score if needed
+updscore:
+;updating the score on-screen is only done if it's changed, as
+;ZCN's terminal driver, certainly compared to drawing pixels, is
+;tragically slow.
+ld hl,(oldscore)
+ld de,(score)
+and a
+sbc hl,de
+ret z
+
+ld a,16
+call putchar
+ld a,' '+scoreypos
+call putchar
+ld a,' '+scorexpos+1
+call putchar
+ld de,mscore
+ld c,9
+call bdos
+ld de,(score)
+call dispdec
+ret
+
+
+putchar:
+ld e,a
+ld c,2
+call bdos
+ret
+
+
+;undraw/move/draw/check invaders
+invmove:
+ld a,(turnnexttime)
+ld (turnthistime),a
+
+
+ld ix,invdat
+ld b,invnum
+
+invloop:
+push bc
+
+;skip if invader is dead
+ld a,(ix+4)
+and a
+jp z,invmvdun
+
+;undraw it
+ld b,(ix+0)
+ld c,(ix+1)
+call undrawinv
+
+;move it
+ld a,(ix+3)
+and a
+jr z,invxmv
+
+;move down
+ld a,(ix+1)
+add a,(ix+3)
+ld (ix+1),a
+ld (ix+3),0
+cp plrline
+jr nz,invdrw
+
+;invaded!
+;we'll worry about dealing with it later, for now just set the flag.
+ld a,1
+ld (endlvl),a
+ld (wasinv),a
+jr invdrw
+
+invxmv:
+ld a,(ix+0)
+add a,(ix+2)
+ld (ix+0),a
+ld a,(turnthistime)
+and a
+jr z,invxsk1
+
+ld a,(ix+2)
+neg
+ld (ix+2),a
+ld (ix+3),dysize
+xor a
+ld (turnnexttime),a
+jr invdrw
+
+;if not (turnthistime)...
+invxsk1:
+;see if it will need to turn next time
+ld a,(ix+2)
+cp dxsize
+ld a,(ix+0)
+jr nz,invsk2
+
+;moving right
+cp winwidth-dxsize-dxsize-3
+jr c,invdrw
+jr invnxtm
+
+invsk2:
+;moving left
+cp dxsize*2
+jr nc,invdrw
+
+invnxtm:
+ld a,1
+ld (turnnexttime),a
+
+invdrw:
+;moved ok, draw invader
+ld b,(ix+0)
+ld c,(ix+1)
+ld a,(ix+4)
+call drawinv
+
+;next invader...
+invmvdun:
+ld bc,5
+add ix,bc
+pop bc
+dec b
+jp nz,invloop
+
+;XXX invader shot handling here
+
+ret
+
+
+;undraw/move/draw/check player
+plrmove:
+;undraw
+ld a,(pxpos)
+ld b,a
+ld a,(pypos)
+ld c,a
+call undrawplr
+
+;move (and check keys of course :-))
+ld ix,(krawmap)
+
+ld a,(ix+'z')		;left
+and a
+jr z,plrm1
+
+ld a,(pxpos)
+cp pdxsize
+jr c,plrm1
+add a,-pdxsize
+ld (pxpos),a
+
+plrm1:
+ld a,(ix+'x')		;right
+and a
+jr z,plrm2
+
+ld a,(pxpos)
+cp winwidth-pdxsize-3
+jr nc,plrm2
+add a,pdxsize
+ld (pxpos),a
+
+plrm2:
+ld a,(ix+' ')		;fire
+and a
+jr z,plrm3
+
+ld a,(firing)
+and a
+jr nz,plrm3
+inc a
+ld (firing),a
+ld a,(pxpos)
+inc a
+ld (fxpos),a
+ld a,(pypos)
+ld (fypos),a
+
+plrm3:
+ld a,(ix+'q')		;quit
+and a
+jr z,plrm4
+
+;XXX should do it a bit more nicely
+rst 0
+
+plrm4:
+
+;movement done, draw player again
+
+ld a,(pxpos)
+ld b,a
+ld a,(pypos)
+ld c,a
+call drawplr
+
+
+;now deal with shot if firing
+ld a,(firing)
+and a
+ret z
+
+ld a,(fxpos)
+ld b,a
+ld a,(fypos)
+ld c,a
+;don't undraw if fypos=plrline
+cp plrline
+call nz,undrawps
+
+;move it
+ld a,(fypos)
+cp -firedy
+jr nc,plrsk1
+
+;reached top of scrn, so stop
+xor a
+ld (firing),a
+ret
+
+plrsk1:
+;otherwise move up
+add a,firedy
+ld (fypos),a
+
+;draw
+;the new y pos is in a
+ld c,a
+ld a,(fxpos)
+ld b,a
+call drawps
+
+
+;see if it's hit any invaders
+ld ix,invdat
+ld b,invnum
+
+schkloop:
+push bc
+
+;skip if invader is dead
+ld a,(ix+4)
+and a
+jp z,schkmvdun
+
+;we have to check:
+;(fy=iy-2 or fy=iy-1 or fy=iy or fy=iy+1) and (fx=ix or fx=ix+1 or fx=ix+2).
+;first, b=inv x pos, c=inv y pos.
+ld b,(ix+0)
+ld c,(ix+1)
+dec c
+dec c
+
+ld a,(fypos)
+cp c
+jr z,schkfymch
+inc c
+cp c
+jr z,schkfymch
+inc c
+cp c
+jr z,schkfymch
+inc c
+cp c
+jr nz,schkmvdun
+
+schkfymch:
+ld a,(fxpos)
+cp b
+jr z,schkfxymch
+inc b
+cp b
+jr z,schkfxymch
+inc b
+cp b
+jr nz,schkmvdun
+
+schkfxymch:
+;ok, this invader's been hit. undraw the invader and the shot,
+; disable both, decr (invcount), and add appropriate score.
+;not necessarily in that order. :-)
+ld a,(invcount)
+dec a
+ld (invcount),a
+jr nz,schkskip1
+
+inc a
+ld (endlvl),a		;blasted all the bad guys from this level
+ld (success),a
+
+schkskip1:
+;re-calc (delay) since (invcount) has changed
+call calcdelay
+
+;add appropriate score
+ld hl,invscdat
+ld d,0
+ld e,(ix+4)
+dec e
+add hl,de
+ld e,(hl)
+ld hl,(score)
+add hl,de
+ld (score),hl
+
+ld b,(ix+0)
+ld c,(ix+1)
+call undrawinv
+
+ld a,(fxpos)
+ld b,a
+ld a,(fypos)
+ld c,a
+call undrawps
+
+xor a
+ld (ix+4),a	;disable invader
+ld (firing),a	;and shot
+pop bc		;ditch loop var
+ret
+
+;if not hit it, try next invader...
+schkmvdun:
+ld bc,5
+add ix,bc
+pop bc
+djnz schkloop
+
+ret
+
+
+
+;init for new game
+gameinit:
+ld hl,0
+ld (score),hl
+
+ld hl,1200
+ld (speed),hl
+ret
+
+
+;init for new level
+lvlinit:
+ld a,invnum
+ld (invcount),a
+
+ld hl,(speed)
+ld de,200
+and a
+sbc hl,de
+jp m,lvlsk	;XXX is this right?
+ld (speed),hl
+lvlsk:
+
+call calcdelay
+
+xor a
+ld (endlvl),a
+ld (wasshot),a
+ld (wasinv),a
+ld (success),a
+ld (turnthistime),a
+ld (turnnexttime),a
+ld (firing),a
+
+ld hl,0ffffh
+ld (oldscore),hl	;make sure score is drawn
+
+ld a,38
+ld (pxpos),a
+ld a,plrline
+ld (pypos),a
+
+;init invader positions etc.
+ld ix,invdat
+ld l,itype1
+ld e,invny
+ld c,0		;top y pos
+
+lvlylp:
+ld d,invnx
+ld b,0		;left x pos
+
+lvlxlp:
+ld (ix+0),b
+ld (ix+1),c
+ld (ix+2),dxsize
+ld (ix+3),0
+ld a,l
+ld (ix+4),a
+
+;next element
+push bc
+ld bc,5
+add ix,bc
+pop bc
+
+ld a,b
+add a,6		;x space between top-lefts of invs
+ld b,a
+dec d
+jr nz,lvlxlp
+
+ld a,c
+add a,4		;y space between
+ld c,a
+
+bit 0,e
+jr z,lvli1
+inc l		;next invader type every 2 rows
+lvli1:
+
+dec e
+jr nz,lvlylp
+ret
+
+
+;work out (delay) from (speed) and (invcount)
+;XXX this may be too slow
+calcdelay:
+;the formula is 10000+(50+speed)*invcount, but that's in usec.
+;it's also out of 16-bit range, so we cut it down to:
+;4000+(50+speed)*invcount/2
+ld a,(invcount)
+and a
+rra
+ld b,a
+ld hl,(speed)
+ld de,50
+add hl,de
+ex de,hl
+ld hl,4000
+ld a,b
+and a
+jr z,calcskip	;skip if b=0
+calcloop:
+add hl,de
+djnz calcloop
+calcskip:
+
+;now scale down the delay to more manageable proportions.
+;dividing it by 16 should be ok.
+and a
+rr h
+rr l
+and a
+rr h
+rr l
+and a
+rr h
+rr l
+and a
+rr h
+rr l
+
+ld (delay),hl
+ret
+
+
+clrscrn:
+ld hl,0f000h
+ld de,0f001h
+ld bc,4092
+ld (hl),l
+ldir
+
+ld b,8
+ld c,080h
+
+clrbklp2:
+halt
+halt
+ld de,0f000h
+ld hl,0c000h
+clrbklp:
+ld a,(hl)
+inc hl
+and (hl)
+and c
+ld (de),a
+inc de
+ld a,d
+or e
+jr nz,clrbklp
+
+scf
+rr c
+djnz clrbklp2
+
+;draw logo
+ld hl,logodat
+ld de,21*64+scrnaddr+1
+ld b,logoheight
+clrlglp:
+push bc
+push de
+ld bc,logowidth		;in bytes
+ldir
+pop de
+ld bc,64
+ex de,hl
+add hl,bc
+ex de,hl
+pop bc
+djnz clrlglp
+
+;draw lines by side of game window
+ld ix,winaddr-1			;left side
+ld iy,winwidth/8+winaddr	;right
+ld de,64
+ld b,64
+ld h,006h
+ld l,060h
+ld c,050h
+clrlp2:
+halt
+ld a,(ix)
+and 0f0h
+or h
+ld (ix),a
+ld a,h
+xor 00ch
+ld h,a
+
+ld a,(iy)
+and 00fh
+or l
+ld (iy),a
+ld a,l
+xor 030h
+ld l,a
+add ix,de
+add iy,de
+djnz clrlp2
+
+;clear the game window itself, from the middle lines, up and down
+ld ix,31*64+winaddr
+ld iy,32*64+winaddr
+ld de,-64
+ld hl,64
+ld c,32
+clrylp:
+halt
+push ix
+push iy
+
+ld b,winwidth/8
+clrxlp:
+ld (ix),0
+ld (iy),0
+inc ix
+inc iy
+djnz clrxlp
+
+pop iy
+pop ix
+add ix,de
+ex de,hl
+add iy,de
+ex de,hl
+
+dec c
+jr nz,clrylp
+
+
+;draw window for score to go in
+
+;outside box
+;horizontal lines...
+ld b,scpixxpos-1
+ld e,14*4+2
+clrlp4:
+halt
+push de
+push bc
+ld c,scoreypos*6-1
+call drawpix
+pop bc
+push bc
+ld c,scoreypos*6+10
+call drawpix
+pop bc
+pop de
+inc b
+dec e
+jr nz,clrlp4
+
+;and vertical...
+ld c,scoreypos*6
+ld e,10
+clrlp5:
+halt
+push de
+push bc
+ld b,scpixxpos-1
+call drawpix
+pop bc
+push bc
+ld b,scpixxpos+14*4
+call drawpix
+pop bc
+pop de
+inc c
+dec e
+jr nz,clrlp5
+
+;now clear the inside
+ld hl,scoreypos*64*6+scrnaddr+scorexpos/2
+ld b,10
+clrlp3:
+halt
+push hl
+push bc
+ld d,h
+ld e,l
+inc e
+ld bc,6		;enough for ' score: 00000 ', minus 1
+ld (hl),0
+ldir
+pop bc
+pop hl
+ld de,64
+add hl,de
+djnz clrlp3
+ret
+
+
+sysinit:
+;turn off cursor
+ld e,4
+ld c,2
+call bdos
+
+;tight ints
+ld e,1
+ld c,zftight
+call bdos
+
+;get addr of keyboard rawmap
+ld c,zfrawmap
+call bdos
+ld (krawmap),hl
+ret
+
+
+
+;undraw pixel in game win, (x,y)=b,c in pixels
+undrawpix:
+ld e,0
+jr alterpix
+
+;draw pixel in game win, (x,y)=b,c in pixels
+drawpix:
+ld e,0ffh
+;FALLS THROUGH
+
+;draw/undraw pixel in game window
+;b=x pos, c=y pos
+;e=ffh to set pixel, 0 to unset (really an 8-bit mask)
+alterpix:
+push de
+;get pixel mask byte first
+ld a,b
+and 7
+ld d,0
+ld e,a
+ld hl,masktbl
+add hl,de
+ld a,(hl)
+pop de
+
+;y pos
+ld h,c
+ld l,0
+and a
+rr h
+rr l
+rr h
+rr l
+
+;put mask (from a) in c
+ld c,a
+
+;x pos
+ld a,b
+and 0f8h
+rrca
+rrca
+rrca
+or l
+ld l,a
+
+;put the user-supplied mask in b
+ld b,e
+
+ld de,winaddr
+add hl,de
+
+;so hl=addr of byte pixel is in, c=mask with bit set at pixel.
+;now plot/unplot the point.
+
+;mask off any point there already
+ld a,c
+cpl
+and (hl)
+ld e,a
+;now apply the user-supplied mask (in b) to the pixel mask (in c)
+ld a,c
+and b
+;and plot/unplot pixel
+or e
+ld (hl),a
+ret
+
+
+;undraw invader (doubles as undraw player)
+;does this by undrawing a 3x2 box at (x,y)=b,c.
+;this could probably be optimised a fair bit if necessary, but
+; it'd be a bit of a pain...
+undrawinv:
+undrawplr:
+push bc
+call undrawpix
+pop bc
+inc b
+push bc
+call undrawpix
+pop bc
+inc b
+push bc
+call undrawpix
+pop bc
+dec b
+dec b
+inc c
+push bc
+call undrawpix
+pop bc
+inc b
+push bc
+call undrawpix
+pop bc
+inc b
+jp undrawpix
+
+
+;routines to draw different invader types
+
+;draw invader, (x,y)=b,c, a=inv. type
+drawinv:
+dec a
+jr z,drawt1
+dec a
+jr z,drawt2
+dec a
+jr z,drawt3
+dec a
+jr z,drawt4
+ret
+
+
+;draw invader type 1:
+;  ##
+;##  ##
+drawt1:
+inc b
+push bc
+call drawpix
+pop bc
+dec b
+inc c
+push bc
+call drawpix
+pop bc
+inc b
+inc b
+jp drawpix
+
+;draw invader type 2:
+;######
+;##  ##
+drawt2:
+push bc
+call drawpix
+pop bc
+inc b
+push bc
+call drawpix
+pop bc
+inc b
+push bc
+call drawpix
+pop bc
+dec b
+dec b
+inc c
+push bc
+call drawpix
+pop bc
+inc b
+inc b
+jp drawpix
+
+;draw invader type 3:
+;######
+;  ##
+drawt3:
+push bc
+call drawpix
+pop bc
+inc b
+push bc
+call drawpix
+pop bc
+inc b
+push bc
+call drawpix
+pop bc
+dec b
+inc c
+jp drawpix
+
+;draw invader type 4:
+;##  ##
+;  ##
+drawt4:
+push bc
+call drawpix
+pop bc
+inc b
+inc b
+push bc
+call drawpix
+pop bc
+dec b
+inc c
+jp drawpix
+
+;draw player
+;  ##
+;######
+drawplr:
+inc b
+push bc
+call drawpix
+pop bc
+dec b
+inc c
+push bc
+call drawpix
+pop bc
+inc b
+push bc
+call drawpix
+pop bc
+inc b
+jp drawpix
+
+
+
+numtmp: defb '0000000000000000$'	;16 zeroes and '$'
+
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+push ix
+ld ix,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+add ix,ix
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+sbc hl,de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+ld a,1
+defb 0ddh
+or l		;or ixl
+defb 0ddh
+ld l,a		;ld ixl,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+push ix
+pop hl
+pop ix
+;exit: hl=result, de=remainder
+ret
+
+
+;display number in de in decimal
+dispdec:
+ld b,10
+;FALLS THROUGH
+
+;display number in de, in given base (unsigned)
+;entry: de=number to display, b=base (from 2 to 36)
+;exit: af/bc/de/hl corrupt
+dispnum:
+ld hl,numtmp+16
+ld a,'$'
+ld (hl),a
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ld c,9
+jp bdos
+
+
+;undraw shot at b,c
+undrawps:
+push bc
+call undrawpix
+pop bc
+dec c
+push bc
+call undrawpix
+pop bc
+dec c
+call undrawpix
+ret
+
+;draw shot at b,c
+drawps:
+push bc
+call drawpix
+pop bc
+dec c
+push bc
+call drawpix
+pop bc
+dec c
+call drawpix
+ret
+
+
+;zcnvaders logo
+logowidth		equ 104/8	;in bytes
+logoheight		equ 22		;in pixels
+
+;from the pbm file:
+logodat:
+defb 0,0,0,0,0,0
+defb 000h,000h,000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h,000h,001h
+defb 000h,000h,000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,080h,000h,000h
+defb 000h,000h,000h,000h,000h,000h,000h,000h
+defb 000h,005h,042h,084h,094h,000h,000h,000h
+defb 000h,000h,000h,022h,082h,015h,015h,04Ah
+defb 04Ah,089h,000h,000h,000h,028h,02Ah,015h
+defb 052h,084h,055h,014h,0AAh,065h,068h,000h
+defb 000h,015h,0A8h,0ADh,015h,0AAh,0C6h,062h
+defb 094h,054h,032h,086h,0C0h,000h,02Eh,0D9h
+defb 0B5h,09Ah,071h,04Ah,001h,0D8h,057h,0ADh
+defb 083h,050h,000h,031h,062h,0C6h,0ACh,059h
+defb 0ECh,00Eh,096h,032h,0DAh,0C0h,0FCh,000h
+defb 003h,0A7h,040h,034h,068h,0AEh,01Bh,0EDh
+defb 02Dh,080h,0E0h,086h,000h,006h,0C5h,080h
+defb 03Ch,078h,0F4h,034h,0AFh,01Dh,0C3h,050h
+defb 0E5h,000h,01Fh,00Fh,080h,02Ch,058h,0BCh
+defb 03Ch,0F5h,096h,0FEh,0B8h,05Fh,000h,03Ah
+defb 00Dh,080h,038h,070h,06Ch,034h,063h,0FEh
+defb 07Bh,09Ch,01Fh,000h,07Ch,00Fh,087h,03Ch
+defb 078h,07Ch,01Fh,0F9h,0BFh,01Fh,088h,000h
+defb 000h,0F8h,01Fh,007h,07Ch,078h,07Ch,01Fh
+defb 0F8h,0F5h,000h,000h,000h,003h,0F0h,00Fh
+defb 09Eh,07Ch,078h,03Ch,00Fh,0BCh,000h,000h
+defb 000h,000h,007h,0E7h,09Fh,0FEh,07Ch,078h
+defb 03Ch,002h,000h,000h,000h,000h,000h,00Fh
+defb 0FFh,08Fh,0FCh,078h,078h,000h,000h,000h
+defb 000h,000h,000h,000h,01Fh,0FFh,08Fh,0F8h
+defb 068h,000h,000h,000h,000h,000h,000h,000h
+defb 000h,03Fh,0FFh,007h,0E0h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h,03Fh,0F8h
+defb 000h,000h,000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h,000h,000h
+
+
+;info on invaders. must be last thing in program.
+;format is described nearer top of file.
+invdat:

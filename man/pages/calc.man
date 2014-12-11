@@ -1,0 +1,30 @@
+NAME
+	calc - run ROM calculator
+
+SYNOPSIS
+	calc
+
+DESCRIPTION
+	Run the NC100's ROM calculator as if it were a ZCN program.
+
+	The ROM calculator operates in much the same way as your
+	average cheap-and-cheerful pocket calculator does.
+
+KEYS
+	0-9, +-*/, %	enter digit, or do appropriate operation
+	_ (underscore)	invert sign (+/-)
+	c		"CE/C"
+	r		"MRC"
+	p		"M+"
+	s		"M-"
+	x		clear memory
+	q		square root
+	Menu		toggle use of the "green keys" (off by default)
+
+NOTES
+	You can save the number in memory and the number displayed
+	onscreen to a text file by quitting and doing `!!'. This saves
+	them to `calcnums.txt'.
+
+SEE ALSO
+	bbcbas, runrom, expr

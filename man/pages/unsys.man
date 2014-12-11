@@ -1,0 +1,13 @@
+NAME
+	unsys - make drive unbootable (remove ZCN from it)
+
+SYNOPSIS
+	unsys d:
+
+DESCRIPTION
+	Remove ZCN system from a drive. It non-destructively moves
+	existing drive contents back down to reclaim room - you'll get
+	`delblk..' messages while this happens.
+
+SEE ALSO
+	sys

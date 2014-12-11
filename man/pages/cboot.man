@@ -1,0 +1,10 @@
+NAME
+	cboot - cold boot ZCN from memory card
+
+SYNOPSIS
+	cboot
+
+DESCRIPTION
+	Cold boot ZCN from the memory card. If the card is not
+	bootable, or there's no card in the slot, ZCN will say "Bad
+	crd/drv/format" rather than booting.

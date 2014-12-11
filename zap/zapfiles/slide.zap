@@ -1,0 +1,27 @@
+progname Slide
+progfile slide.com
+# no filetype
+bmphex 00000000
+bmphex 0a000000
+bmphex 20000000
+bmphex 08000018
+bmphex 02000264
+bmphex 28800dac
+bmphex 00003210
+bmphex 0080cd60
+bmphex 000130a0
+bmphex 00aecb60
+bmphex 00192480
+bmphex 00665b00
+bmphex 01992600
+bmphex 0664c800
+bmphex 19933a00
+bmphex 6bc56000
+bmphex ad788880
+bmphex f42b0000
+bmphex d0c60a54
+bmphex 611c0000
+bmphex 66b00050
+bmphex 3a600000
+bmphex 35c00054
+bmphex 1b000000

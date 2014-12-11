@@ -1,0 +1,12 @@
+;must be last things
+
+;for 6 79-char-plus-NUL asciiz strings used to generate month data.
+monthbuf:
+
+;used by args.z (really tmpargs.z) - 128 bytes each
+argline		equ 80*6+monthbuf
+argv		equ argline+128
+
+;for copy of generated calendar (this is displayed or written to file)
+filedat		equ argv+128
+

@@ -1,0 +1,706 @@
+;calc - run ROM calculator from ZCN
+;
+;there are some fairly brutal space-saving optimisations in this
+;to keep it under 1k, so engage brain before modifying. :-)
+
+org 02000h
+
+
+ld a,(066h)
+cp 0f7h
+ret nz		;needs ZCN
+
+;copy code to 2000h
+ld hl,0100h
+ld de,02000h
+ld bc,2048
+ldir
+jp start
+
+
+tmpbuf	equ 03000h	;256 bytes used for storing strings to print
+			;from rom
+
+usekypd: defb 0		;bit 0 is 1 if we're using the green keys
+
+
+start:
+ld sp,04000h
+
+;turn off cursor
+ld e,4
+ld c,2
+call 5
+
+call cls
+call zcnoff
+call zcnoffinit
+call blnkscrn	;switch to blank screen until we can fix ROM's border
+
+call 0c000h	;init calc (zero its memory)
+call 0c003h	;run calc
+
+call zcnon
+
+;copy ascii numbers to 100h ready for possible saving
+
+;put ^Zs at 100h-1ffh.
+ld hl,0100h
+ld de,0101h
+ld bc,255
+ld (hl),26
+ldir
+
+;make sure `!!' doesn't crash it!
+;(in fact, we make it write the numbers to `calcnums.txt')
+;this is tricky, and we have to use a kludge. I thought sticking to
+;m/c which came out as plain ascii chars was best, so if the file
+;is saved with `save 1 foo' it doesn't look too awful.
+ld hl,07e30h	;jr nc,0180h
+ld (0100h),hl
+ld hl,0387ch	;jr c,0180h
+ld (0102h),hl
+;since ^Z is `ld h,N' we can safely put the `!!' code at 0200h, which
+;is a little tidier in terms of any saved file.
+ld hl,writecode
+ld de,0200h
+ld bc,256
+ldir
+
+ld hl,104h
+call cpy_crlf
+ld de,0681ch	;number in mem
+call strcpy
+call cpy_crlf
+ld de,06800h	;number onscreen when we exited
+call strcpy
+call cpy_crlf
+;write a ^Z instead of a NUL to end it
+ld (hl),26
+
+call cls
+
+rst 0
+
+
+
+
+;this code is run by a `!!' after exit, and saves the record at 106h
+;to `calcnums.txt'.
+writecode:
+phase 0200h
+
+bfwrite		equ 21
+bfmake		equ 22
+bsetdma		equ 26
+
+ld de,calcfcb
+ld c,bfmake
+call 5
+inc a
+jr nz,wcod1
+
+ld de,mwerr
+ld c,9
+jr jr_jp5	;saves a byte :-)
+
+wcod1:
+ld de,0106h
+ld c,bsetdma
+call 5
+;no need to close files on ZCN, so we avoid that to save space
+ld de,calcfcb
+ld c,bfwrite
+jr_jp5:
+jp 5
+
+mwerr:	defb 'Write error$'
+
+;this is as much of the FCB as needs to be initialised
+calcfcb: defb 0,'CALCNUMSTXT'
+
+dephase
+
+
+;our code runs in 0100-3fff, 4000-7fff is unused or used to page in
+;the screen by the rom, 8000-bfff has the usual 4000-7fff area paged
+;in with some patches for indirect rom calls the rom expects to be
+;able to do, and finally c000-ffff contains the rom.
+
+;NB: zcnoffinit must be called just *after* calling zcnoff for the first time.
+
+zcnoff:
+di
+ld a,0c9h
+ld (066h),a
+ld a,041h
+out (012h),a
+ld (0b001h),a	;these need to be after the out, for
+ld (0b002h),a	; hopefully obvious reasons :-)
+ld a,2
+ld (0b003h),a
+out (013h),a
+ret
+
+
+zcnon:
+ld a,041h
+out (011h),a
+inc a
+out (012h),a
+inc a
+out (013h),a
+ld a,0f7h
+ld (066h),a
+ei
+ret
+
+
+zcnoffinit:
+;first zero the jump area
+ld hl,0b800h
+push hl
+ld bc,0800h
+call zeroblk
+
+;now put in the rom routine emulations.
+ld hl,jptbl1
+pop de		;b800h
+ld bc,jptbl1end-jptbl1
+ldir
+ld de,0b944h
+ld bc,jptbl2end-jptbl2
+ldir
+
+;finally a ret at BA1Fh. That routine is used (in the calc) for
+;drawing a box around the `use green keys' text, which we don't
+;bother with.
+ld a,0c9h
+ld (0ba1fh),a
+ret
+
+
+
+;this table was generated with this:
+;  awk 'BEGIN { for(f=47104;f<47872;f+=3) {printf "jp not_here\t;%04X\n",f}}'
+;and then edited, to add our rom routine emulations.
+;I separated it into two sections to keep calc.com under 1k.
+
+jptbl1:		;goes at b800
+jp not_here	;B800
+jp not_here	;B803
+jp not_here	;B806
+jp not_here	;B809
+jp kmtick	;B80C
+jp not_here	;B80F
+jp not_here	;B812
+jp not_here	;B815
+jp not_here	;B818
+jp not_here	;B81B
+jp not_here	;B81E
+jp txtoutcount	;B821
+jp txtclrwin	;B824
+jp not_here	;B827
+jp not_here	;B82A
+jp not_here	;B82D
+jp not_here	;B830
+jp txtoutput	;B833
+jp txtsetcur	;B836
+jp txtsetwin	;B839
+jp not_here	;B83C
+jp not_here	;B83F
+jp not_here	;B842
+jp inv_off	;B845
+jp inv_on	;B848
+jptbl1end:
+
+;jptbl2 must immediately follow jptbl1end.
+
+jptbl2:		;goes at b944
+jp not_here	;B944	(due to the zeroes (nops) this one covers many)
+jp clockthing	;B947
+jp clockthing	;B94A
+jp not_here	;B94D
+jp not_here	;B950
+jp not_here	;B953
+jp keypad	;B956
+jp not_here	;B959
+jp chroutput	;B95C
+jp not_here	;B95F
+jp not_here	;B962
+jp not_here	;B965
+jp not_here	;B968
+jp not_here	;B96B
+jp not_here	;B96E
+jp not_here	;B971
+jp not_here	;B974
+jp not_here	;B977
+jp not_here	;B97A
+jp not_here	;B97D
+jp not_here	;B980
+jp not_here	;B983
+jp not_here	;B986
+jp not_here	;B989
+jp not_here	;B98C
+jp not_here	;B98F
+jp not_here	;B992
+jp not_here	;B995
+jp not_here	;B998
+jp not_here	;B99B
+jp not_here	;B99E
+jp not_here	;B9A1
+jp not_here	;B9A4
+jp not_here	;B9A7
+jp not_here	;B9AA
+jp not_here	;B9AD
+jp not_here	;B9B0
+jp not_here	;B9B3
+jp not_here	;B9B6
+jp getch	;B9B9
+jp not_here	;B9BC
+jp spaces	;B9BF
+jp not_here	;B9C2
+jp chrspace	;B9C5
+jp not_here	;B9C8
+jp not_here	;B9CB
+jp not_here	;B9CE
+jp not_here	;B9D1
+jp not_here	;B9D4
+jp not_here	;B9D7
+jp not_here	;B9DA
+jp not_here	;B9DD
+jp not_here	;B9E0
+jp not_here	;B9E3
+jp not_here	;B9E6
+jp not_here	;B9E9
+jp not_here	;B9EC
+jp not_here	;B9EF
+jp not_here	;B9F2
+jp toupper	;B9F5
+
+jptbl2end:
+
+
+cls:
+;clear screen (when in normal zcn configuration)
+ld e,1
+ld c,2
+jp 5
+
+
+not_here:
+;if we get here, it jumped to a rom routine we haven't emulated.
+;this is not a good sign, so cough and die. :-)
+call zcnon
+call cls
+ld de,mnotemu
+ld c,9
+call 5
+rst 0
+
+mnotemu:	defb 'Bad ROM call - can',39,'t happen!$'
+
+
+;all these are ignored
+
+txtclrwin:		;unnecessary
+txtsetwin:		;unnecessary
+clockthing:		;something weird and pointless, IIRC
+ret
+
+
+;these are used on error.
+;they enable txtoutcount, so that the `use green keys' text isn't
+;printed but the flashing error thing is.
+inv_off:
+xor a
+ld (tocop),a
+ld a,24
+jr putbyte
+
+inv_on:
+xor a
+ld (tocop),a
+ld a,25
+jr putbyte
+
+
+txtoutcount:
+;ignore it if called before inv_off/on routines
+ld b,0
+tocop: ret		;modified
+
+push de
+push hl
+ld de,tmpbuf
+push de
+ld bc,256
+ldir
+pop hl
+
+toclp:
+ld a,(hl)
+and a
+jr z,tocdone
+call convbyte
+call putbyte
+inc hl
+inc b
+jr toclp
+
+tocdone:
+pop hl
+pop de
+ret
+
+
+;use a - for bytes with high bit set
+;(in practice, for surround of error box thing)
+convbyte:
+bit 7,a
+ret z
+ld a,'-'
+ret
+
+
+keypad:
+;ignored
+ret
+
+
+;called to set up flash for calc. error.
+kmtick:
+ld a,l
+ld (ticksset),a
+ret
+
+
+toupper:
+call islower
+ret nc
+xor 020h
+ret
+
+islower:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+
+
+;I still think this routine should be printing a char then a space,
+;but this gives the same result as the normal rom calc so I'll
+;reluctantly go along with it... :-)
+chrspace:
+ld a,32
+
+;falls through
+
+chroutput:
+txtoutput:
+;these fall through into...
+
+;putbyte - put char in a without translation
+;preserves all regs
+putbyte:
+push af
+push bc
+push de
+push hl
+push af
+call zcnon
+pop af
+ld e,a
+ld c,2
+call 5
+call zcnoff
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;show a blank screen until we can remove the stupid border thing
+blnkscrn:
+ld hl,01000h
+ld b,h		;size also happens to be 4k :-)
+ld c,l
+call zeroblk
+ld a,010h
+out (0),a	;show blank screen
+ret
+
+
+;remove border and switch back to normal screen
+;runs with ZCN enabled
+fixborder:
+ld hl,0f000h
+ld bc,8*64
+call zeroblk	;top
+ld hl,56*64+0f000h
+ld bc,8*64
+call zeroblk	;bottom
+;now remove sides
+push ix
+ld ix,8*64+0f000h
+ld de,64
+ld b,6*8
+fixblp:
+ld (ix),0
+ld (ix+59),0
+add ix,de
+djnz fixblp
+pop ix
+
+ld a,0f0h
+out (0),a	;switch to normal screen
+ret
+
+
+;entry: hl=addr of block to zero, bc=size
+;exit:  bc=0, de points to 1st byte past end of block
+;f/hl corrupt (a preserved)
+zeroblk:
+dec bc
+ld d,h
+ld e,l
+inc de
+ld (hl),0
+ldir
+ret
+
+
+ticks:    defb 0
+ticksset: defb 0
+firstget: defb 1
+
+
+;getch - get char into a and bc
+;preserves all others but f
+getch:
+push de
+push hl
+call zcnon
+
+ld hl,firstget
+ld a,(hl)
+ld (hl),0
+and a
+call nz,fixborder
+
+ld a,(ticksset)
+ld (ticks),a
+
+getchlp:
+halt
+ld a,(ticks)
+and a
+jr z,gcskip
+dec a
+ld (ticks),a
+jr z,gctimout
+gcskip:
+call kbhit
+jr nc,getchlp
+
+ld e,0ffh
+ld c,6
+call 5
+push af
+call zcnoff
+pop af
+
+ld hl,usekypd
+bit 0,(hl)
+call nz,kypd_fix
+
+cp 9
+call z,kypd_tog
+
+pop hl
+pop de
+ld b,0
+ld c,a
+cp 27
+jr z,gcesc
+cp 127
+ret nz
+ld bc,027fh	;del
+ret
+gcesc:
+ld bc,02fch	;esc
+ret
+
+kypd_tog:
+;toggle whether to use keypad or not
+push af
+ld hl,usekypd
+ld a,(hl)
+xor 1
+ld (hl),a
+ld hl,mkypdoff
+jr z,kypdt1
+ld hl,mkypdon
+kypdt1:
+call inv_off		;kludge to enable txtoutcount
+call txtoutcount
+pop af
+ret
+
+mkypdoff: defb 16,32+9,32,'      ',0
+mkypdon:  defb 16,32+9,32,'keypad',0
+
+gctimout:
+call zcnoff
+pop hl
+pop de
+ld bc,0
+ret
+
+
+
+;kbhit - like the common DOS C function
+;returns c if key pressed, nc if not
+kbhit:
+ld c,11
+call 5
+rra
+ret
+
+
+
+spaces:
+push af
+push bc
+push de
+push hl
+call zcnon
+
+spcloop:
+push bc
+ld e,32
+ld c,2
+call 5
+pop bc
+djnz spcloop
+
+call zcnoff
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+txtsetcur:
+push hl
+ld a,16
+call putbyte
+pop hl
+push hl
+ld a,l
+add a,32
+call putbyte
+pop hl
+push hl
+ld a,h
+add a,32
+call putbyte
+pop hl
+ret
+
+
+mcrlf: defb 13,10,0
+
+cpy_crlf:
+ld de,mcrlf
+;falls through
+
+;strcpy(hl,de)
+;entry:	hl=dest, de=src
+;exit:	hl and de both point to the NUL in each copy
+;af corrupt
+strcpy:
+ld a,(de)
+ld (hl),a
+and a
+ret z
+inc hl
+inc de
+jr strcpy
+
+
+;fix input to translate `green' keys into real ones.
+;entry:	a=char
+;exit:	a=fixed char
+kypd_fix:
+call toupper
+cp 39
+ret c	;ignore if <quote
+cp 92
+ret nc	;ignore if >`['
+
+sub 39
+ld hl,kypd_tbl
+ld d,0
+ld e,a
+add hl,de
+ld a,(hl)
+ret
+
+kypd_tbl:
+defb 'Q'	;39 '	square-root
+defb '('	;40 (
+defb ')'	;41 )
+defb '*'	;42 *
+defb '+'	;43 +
+defb '='	;44 ,	=
+defb '_'	;45 -	+/-
+defb '.'	;46 .
+defb '+'	;47 /	+
+defb '/'	;48 0	divide
+defb '1'	;49 1
+defb '2'	;50 2
+defb '3'	;51 3
+defb '4'	;52 4
+defb '5'	;53 5
+defb 'R'	;54 6	MRC
+defb '7'	;55 7
+defb '8'	;56 8
+defb '9'	;57 9
+defb ':'	;58 :
+defb '-'	;59 ;	-
+defb '<'	;60 <
+defb '='	;61 =
+defb '>'	;62 >
+defb '?'	;63 ?
+defb '@'	;64 @
+defb 'A'	;65 A
+defb 'B'	;66 B
+defb 'C'	;67 C
+defb 'D'	;68 D
+defb 'E'	;69 E
+defb 'F'	;70 F
+defb 'G'	;71 G
+defb 'S'	;72 H	M-
+defb '5'	;73 I	5
+defb '1'	;74 J	1
+defb '2'	;75 K	2
+defb '3'	;76 L	3
+defb '0'	;77 M	0
+defb 'C'	;78 N	CE/C
+defb '6'	;79 O	6
+defb '*'	;80 P	*
+defb 'Q'	;81 Q
+defb 'R'	;82 R
+defb 'S'	;83 S
+defb 'T'	;84 T
+defb '4'	;85 U	4
+defb 'V'	;86 V
+defb 'W'	;87 W
+defb 'X'	;88 X
+defb 'P'	;89 Y	M+
+defb 'Z'	;90 Z
+defb '%'	;91 [	%

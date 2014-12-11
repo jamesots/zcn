@@ -1,0 +1,253 @@
+;ZCN v1.2 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-1999 Russell Marks. See `zcn.txt' for license details.
+
+;power on/off handler
+
+;assumptions this makes are:
+;* that 30h-37h and 66h are left untouched and are safe to use;
+;* that the memory mapping goes as in `bank' vars.
+;* that all the ROM stuff stays the same.
+
+
+savbuf equ 0ed00h	;some place to put b000h to b2ffh (768 bytes)
+savbuf2 equ 0e700h	;same for b300h-b3ffh
+
+savr	equ savrop+1
+savhl	equ savhlop+1
+savde	equ savdeop+1
+savbc	equ savbcop+1
+savaf	equ savafop+1
+savsp	equ savspop+1
+savpc: defw 0
+sav77buf: defw 0,0,0,0
+phstack:		;sav77buf is also used as a very small temp. stack
+
+
+
+;*** initialiser ***
+initpowr:
+;put 'rst 30h' at 66h
+ld a,0f7h
+ld (066h),a
+
+;and put 'jp snaphndl' at 30h
+ld a,0c3h
+ld (030h),a
+ld hl,snaphndl
+ld (031h),hl
+
+;that's all
+ret
+
+
+
+;*** snapshot handler ***
+
+snaphndl:
+;careful, everything is up in the air at this point...
+;interrupts are already disabled
+ld (savhl),hl
+ld (savde),de
+ld (savbc),bc
+
+pop hl		;remove return address from the 'RST 30h' at 66h.
+
+push af
+pop hl
+ld (savaf),hl
+
+;save pc and sp
+pop hl
+ld (savpc),hl
+ld (savsp),sp
+
+;a bit of magic from the speccy FAQ, in turn from Z80's docs:
+;> The value of IFF2 is copied to the P/V flag by LD A,I and LD A,R.
+;> When an NMI occurs, IFF1 is reset, thereby disallowing further
+;> [maskable] interrupts, but IFF2 is left unchanged.
+;it's confirmed (well, mentioned in passing) by Penfold.
+
+;assume ints are off
+ld hl,noporei
+ld (hl),0
+
+ld a,r
+ld (savr),a		;save (top bit of) R here too
+jp po,snapskp1		;if p/v=0 (ints off), leave as 'nop'
+
+ld (hl),0fbh		;opcode for 'ei'
+
+snapskp1:
+;save 8 bytes at 77h.
+ld hl,077h
+ld de,sav77buf
+ld bc,8
+ldir
+
+;now put 'out (013h),a','jp rstrhndl' at 77h ready for restore.
+ld hl,013d3h	;out (013h),a
+ld (077h),hl
+ld a,0c3h	;jp...
+ld (079h),a
+ld hl,rstrhndl  ;...rstrhndl
+ld (07ah),hl
+
+if IS_NC200
+;the '200 jumps to 7Dh instead, put a JR there.
+ld hl,0f818h	;jr 077h
+ld (07dh),hl
+endif
+
+;save b000-b3ff
+;(sounds dodgy, but it's fine - will even work if the stack is here)
+ld hl,0b000h
+ld de,savbuf
+ld bc,0300h
+ldir
+ld de,savbuf2
+;was `ld bc,0100h', but since c is still zero from the ldir...
+ld b,1
+ldir
+
+;...and zero it out
+ld hl,0b000h
+;was `ld bc,0400h', but c still zero again...
+ld b,4
+call zeroblk
+
+ld sp,0b1feh	;this is guaranteed safe now
+
+;put non-zero value in b137h, needed by ROM snapshot stuff.
+ld a,1
+ld (0b137h),a
+
+;put the right memory banks in (so to speak) for later restoration
+ld hl,(bank0)
+ld (0b000h),hl
+ld a,042h
+ld (0b002h),a
+if IS_NC200
+ld a,044h
+else
+ld a,043h
+endif
+ld (0b005h),a	;yes, this is right
+
+;now we need to have ROM 0 in at c000h, and the stack in RAM.
+;some of this needs to be done from low memory, so we also
+;copy a routine there.
+;note that sp and pc (as on stack) won't be right - this doesn't
+;matter, as we saved them earlier and will restore them after
+;the ROM has done its restoring.
+
+;the ROM routine will want the old AF on the stack
+savafop: ld hl,0
+push hl
+
+;copy the final bit
+ld hl,snapfin
+ld de,033h	;just after the JP that came here
+ld bc,5
+ldir
+
+;put hl/de/bc back
+savhlop: ld hl,0
+savdeop: ld de,0
+savbcop: ld bc,0
+xor a
+ld (0b003h),a
+jp 033h
+
+snapfin:
+;this must stay pretty small, and BC above must be changed if it gets
+;bigger than 5 bytes.
+;(in fact, if it gets bigger than 5 bytes, it'll overwrite the
+; maskable interrupt routine!)
+out (013h),a
+;normal snapshot routine does the rest
+if IS_NC200
+jp 0c0c2h
+else
+jp 0c0bdh
+endif
+
+
+;*** restore handler ***
+rstrhndl:
+;again, walking on eggshells. all memory is in place, and all regs
+;except AF are ok - AF is on the stack.
+
+ld (savhl),hl
+ld (savde),de
+ld (savbc),bc
+pop hl
+ld (savaf),hl
+
+;restart auto-poweroff timer.
+ld hl,(pwrofftm)
+ld (potimout),hl
+
+;put b000-b3ff back.
+ld hl,savbuf
+ld de,0b000h
+ld bc,0300h
+ldir
+ld hl,savbuf2
+;was `ld bc,0100h', but c's zero from ldir
+ld b,1
+ldir
+
+;put the stuff at 77h back.
+ld hl,sav77buf
+ld de,077h
+;was `ld bc,8', but b's zero from ldir
+ld c,8
+ldir
+
+;we need a small stack until sp is restored. (phstack points to just
+;after the 8 bytes of sav77buf.)
+ld sp,phstack
+
+;now that e600h-e7ffh is available again, re-init IM2 jump table, set
+;I, do `im 2',  etc. but *don't* write an 0038h jump.
+call initijp_not38
+
+;init serial - won't work otherwise!
+call sinit	;also sets up IRQ mask
+
+;if both shift keys are pressed, cold-boot zcn (i.e. jp to start+250)
+in a,(0b0h)
+cpl
+and 3
+jp z,start+250
+
+if IS_NC200
+;enable backlight if required
+lightop: ld a,0	;set by init.z/internal.z
+out (070h),a
+endif
+
+;remember that the pc and sp are rubbish! that's fixed here.
+savspop: ld sp,0
+ld hl,(savpc)
+push hl
+
+savrop: ld a,0
+ld r,a
+ld hl,(savaf)
+push hl
+pop af
+ld hl,(savhl)
+ld de,(savde)
+ld bc,(savbc)
+noporei: nop	;replaced with 'ei' earlier if we wanted ints back
+ret		;finally, back to wherever we were before switching off.
+
+;NB: for hysterical raisins, interrupts are enabled whenever one of
+;the following happens:
+;1. any bdos call.
+;2. warm boot.
+;3. high-level keyboard-reading routines (used by bdos).
+;4. some bios calls.
+;none are really necessary any more, but I've left them in anyway,
+; as at least 2 and 3 seem like Good Ideas.

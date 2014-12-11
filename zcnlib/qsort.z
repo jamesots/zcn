@@ -1,0 +1,154 @@
+;qsort.z - sorting routine
+;needs maths.z
+;based on the sort routine used by ZCN's 'ls'
+
+;qsort - sort array at hl, bc long, de 'wide', ix=compare routine
+
+;for cpm zmac:
+;ZZglobal qsort
+
+
+;qsort - sort an array, like C's qsort
+;qsort(hl,bc,de,ix)
+;entry: hl=array base, bc=number of entries in array, de=size of an
+;		element, ix=addr. of element compare routine
+;exit:	none
+;af/bc/de/hl corrupt
+;
+;WARNING! WARNING! WARNING! WARNING! WARNING! WARNING! WARNING!
+;There must be enough room at the end of the array for an *extra
+; element*, which is used when swapping elements in the array.
+;
+;WARNING2: sorting zero-length arrays is a Bad Thing. Results
+; are unspecified.
+;
+;the comparison routine should conform to these entry/exit
+; requirements:
+;	entry:	de=element1, hl=element2
+;	exit:	carry set (c)	 if element1 > element2;
+;		carry clear (nc) if element1 < element2;
+;		carry state doesn't matter if they're equal, return
+;		 whatever's most convenient.
+;	af/bc/de/hl corrupt, if you like
+;
+;NB: This isn't really a quicksort, it's just an exchange sort. If
+; I remember my A-level CompSci correctly, it's not all that much better
+; than bubble sort really, but it's certainly the easiest and most
+; intuitive to write and understand. And since this is assembly,
+; that's a good thing in my book. Fewer bugs. :-) Like the man said,
+; "When in doubt, use brute force".
+;
+;[Technical details for the interested who don't know how an exchange
+; sort is better than a bubble sort: While the number of comparisons
+; is the same, it massively reduces the number of exchange ops. So
+; 'exchange sort' is a rather stupid name for it really. :-) As for
+; how the sort works, it's like this:
+;
+; for n=0 to nmemb-1
+;   find smallest element (from elements n..nmemb-1)
+;   exchange that with the nth element
+; next
+;
+; (it should really be 'for n=0 to nmemb-2', but this causes problems
+; with 1-element arrays, of course!)
+;
+; If you have, say, a 100-element array with the smallest element at the
+; end, exchange sort will do 98 fewer exchanges than bubble sort to
+; get it to the right place! With each exchange involving three block
+; copies, this is a major saving.]
+
+qstmpc:	defw 0
+qslpos: defw 0	;ptr to start of array (initially)
+qslend: defw 0	;ptr to first unused element of array
+qsnent: defw 0	;number of entries
+qssize: defw 0	;size of an element
+
+qsort:
+ld (qslpos),hl
+ld (qsnent),bc
+ld (qssize),de
+
+;calc (qslend)
+ld h,b
+ld l,c
+call multiply
+ld de,(qslpos)
+add hl,de
+ld (qslend),hl
+
+qsortlp:
+ld hl,(qslpos)
+ld (qstmpc),hl
+ex de,hl
+
+qsortlp2:
+ld hl,(qstmpc)
+push hl
+push de
+call qscallix	;compare elements
+pop de
+pop hl
+jr nc,qsort1
+ld (qstmpc),de
+
+qsort1:
+;move de to next node.
+ld hl,(qssize)
+add hl,de
+
+;see if we're at end of list yet.
+push hl
+ld de,(qslend)
+and a
+sbc hl,de
+pop de
+jr nz,qsortlp2
+
+;ok, (qstmpc) is the node to swap. won't matter if it's the same one.
+ld hl,(qstmpc)
+ld de,(qslpos)
+call qsnswap
+
+;next node.
+ld hl,(qslpos)
+ld de,(qssize)
+add hl,de
+ld (qslpos),hl
+
+ld de,(qslend)
+and a
+sbc hl,de
+jr nz,qsortlp
+
+;done.
+ret
+
+qscallix: jp (ix)
+
+
+;swap nodes in hl and de
+;flags corrupt, other preserved
+qsnswap:
+push hl
+push de
+push bc
+
+push de
+push hl
+push de
+ld de,(qslend)
+ld bc,(qssize)
+ldir
+pop hl
+pop de
+ld bc,(qssize)
+ldir
+ld hl,(qslend)
+pop de
+ld bc,(qssize)
+ldir
+
+pop bc
+pop de
+pop hl
+ret

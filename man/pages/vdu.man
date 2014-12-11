@@ -1,0 +1,9 @@
+NAME
+	vdu - output one or two chars given their ASCII values
+
+SYNOPSIS
+	vdu char_value [char_value] 
+
+DESCRIPTION
+	Output one or two characters, given their ASCII value. This is
+	primarily useful for outputting control codes in SUB files.

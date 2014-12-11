@@ -1,0 +1,12 @@
+NAME
+	dmp2txt - convert screen dump to text file
+
+SYNOPSIS
+	dmp2txt screen.dmp output_file
+
+DESCRIPTION
+	Converts a ZCN screen.dmp file to a text file.
+
+BUGS
+	Fairly slow, and the output text file doesn't show whether
+	text is bold, italic, etc.

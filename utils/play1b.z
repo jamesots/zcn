@@ -1,0 +1,473 @@
+;1-bit 8kHz sample player
+;pressing the on/off switch while playing aborts
+;XXX it plays at slightly under 8kHz
+;XXX the t-state stuff must be *very* wrong, 'cos I had to
+; trial-and-error it into existence... :-(
+
+org 0100h
+
+jp start
+
+musage:		defb 'usage: play1b [filename.1b]$'
+mnofile:	defb 'No file$'
+
+samlen:	defw 0
+
+bdos	 equ 5
+userfcb1 equ 05ch
+userfcb2 equ 06ch
+bconout	 equ 2
+bdprint	 equ 9
+bfopen	 equ 15
+bfread	 equ 20
+bsetdma	 equ 26
+
+
+start:
+ld a,(066h)
+cp 0f7h
+ret nz
+
+ld sp,0100h	;just somewhere to keep it out of the way
+
+ld a,(userfcb1+1)
+cp 32
+jr z,usage
+
+call loadfile
+
+;hl now points to after end of sample
+ld de,samaddr
+and a
+sbc hl,de
+ld (samlen),hl
+
+jp playsam
+
+
+usage:
+ld de,musage
+ld c,bdprint
+call bdos
+jp 0
+
+
+loadfile:
+ld de,userfcb1
+ld c,bfopen
+call bdos
+inc a
+jr nz,lf1
+ld de,mnofile
+ld c,bdprint
+call bdos
+jp 0
+
+lf1:
+ld hl,samaddr
+
+iflp:
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,userfcb1
+ld c,bfread
+call bdos
+pop hl
+and a
+ret nz
+ld de,128
+add hl,de
+jr iflp
+
+
+exit:
+;turn off sound
+ld a,080h
+out (051h),a
+
+ei
+jp 0
+
+
+;disp msg at de and exit
+die:
+ld c,9
+call 5
+jp 0
+
+
+
+;play the loaded sample
+playsam:
+;put zero in low byte (which doesn't change)
+xor a
+out (050h),a
+
+;some dodgy timing ahead, so ints off...
+di
+
+;hack in nmi button as abort
+ld a,0c3h
+ld (066h),a
+ld hl,exit
+ld (067h),hl
+
+ld hl,samaddr
+ld bc,(samlen)
+
+loop:
+;this does one byte (8 samples) per loop
+;for t-state timing details, see bits 1 and 0
+
+;bit 7
+ld e,(hl)
+xor a
+rl e
+rr a
+out (051h),a
+call waste712
+
+;bit 6
+ld d,(hl)	;dummy
+xor a
+rl e
+rr a
+out (051h),a
+call waste712
+
+;bit 5
+ld d,(hl)	;dummy
+xor a
+rl e
+rr a
+out (051h),a
+call waste712
+
+;bit 4
+ld d,(hl)	;dummy
+xor a
+rl e
+rr a
+out (051h),a
+call waste712
+
+;bit 3
+ld d,(hl)	;dummy
+xor a
+rl e
+rr a
+out (051h),a
+call waste712
+
+;bit 2
+ld d,(hl)	;dummy
+xor a
+rl e
+rr a
+out (051h),a
+call waste712
+
+;bit 1
+;we want each bit to take exactly 750 t-states for 8kHz playback.
+;the timings on bits 7-1 go:
+ld d,(hl)	;7
+xor a		;4
+rl e		;8
+rr a		;8
+out (051h),a	;11, total 38
+call waste712	;plus 712 = 750
+
+;bit 0
+;this bit is special as it includes the time for the inc/dec/loop
+;stuff.
+ld d,(hl)	;7
+xor a		;4
+rl e		;8
+rr a		;8
+out (051h),a	;11, total 38
+call waste671
+
+inc hl		;10 (guessing)
+dec bc		;10
+ld a,b		;4
+or c		;7
+jp nz,loop	;10, total 41, to make a grand total of 750
+
+
+;all done
+
+jp exit
+
+
+
+;XXX the next two routines are guesswork. Certainly they're much
+;shorter than they ought to be. Something bogus this way comes. :-(
+
+;waste 712 t-states.
+;if we take into account the call's 17 and the ret's 10, that
+;leaves 685 to use up.
+waste712:
+;171 nops (take it on trust, eh? :-))
+;this is actually 1 t-state under, but sod it, it's close enough.
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+
+ret
+
+
+;waste 671 t-states.
+;if we take into account the call's 17 and the ret's 10, that
+;leaves 644 to use up.
+waste671:
+;161 nops (exact).
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+
+ret
+
+
+;sample is loaded here; must be last thing in program.
+samaddr:

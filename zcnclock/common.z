@@ -1,0 +1,4 @@
+;common.z - included by both dclock.z and zcnclock.z
+
+include clock.z
+include digits.z

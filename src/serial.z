@@ -1,0 +1,289 @@
+;ZCN v1.2 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-1999 Russell Marks. See `zcn.txt' for license details.
+
+;serial handler (also handles printer stuff)
+
+;the input/output is a doddle, but I'm pretty shaky on the setup,
+;so I've left some (rather confusing) notes here.
+;
+;(I've now checked with a data sheet for a different 8251 clone
+;(thanks Steven :-)), and these notes (and the code) are correct, but
+;they're still confusing...)
+
+;notes:
+;
+;((sdbits mod 3)+1)*64
+;a= (bin) x y 0 0 0 0 0 0
+;...where xy=(sdbits mod 3)+1
+;
+;sparity: 0=none, 1=odd, 2=even
+;a= (bin) 0 0 x y 0 0 0 0
+;...where xy=0 if none, 1 if odd, 3 if even
+;
+;if sdbits>=3 then 8 data bits - (bin) 0 0 0 0 1 1 1 0 (14 dec)
+;...else 7 data bits -           (bin) 0 0 0 0 1 0 1 0 (10 dec)
+
+ser_norm:
+sbaud:	defb 4		;2400 baud
+sdbits: defb 3		;8 data bits, 1 stop bit
+sparity: defb 0		;no parity
+
+mouse: defb 0		;if 1, ignore above and use settings below:
+
+ser_ms:
+defb 3,0,0		;1200 baud, 7 bits, 1 stop bit, no parity
+
+;serial input buffer
+sbuf	equ 0ed00h
+;definitions for sbstart and sbend are in main.z
+
+
+;serial init
+;should do this before using serial, at least (usually on powerup)
+;DOES NOT RE-ENABLE INTERRUPTS! you must do that yourself if needed.
+sinit:
+;NB: this routine must not use more than 3 words of stack, due to the
+;`phstack' used in powrhndl.z. Currently it uses one for saving IX,
+;and one later for both saving AF and calling sdelay.
+
+push ix
+
+ld ix,ser_norm
+ld a,(mouse)
+and a
+jr z,sinit0
+ld ix,ser_ms
+sinit0:
+
+di
+
+;number of stop bits
+ld a,(ix+1)	;sdbits
+cp 3
+push af
+jr c,sinit1
+sub 3
+sinit1:
+inc a
+rrca
+rrca
+and 0c0h
+ld e,a
+
+;set parity (none/odd/even, usually none)
+ld a,(ix+2)	;sparity
+cp 2
+jr nz,sinit2
+inc a
+sinit2:
+rlca
+rlca
+rlca
+rlca
+and 030h
+or e
+ld e,a
+
+;previously had this here:
+;ld a,(ix+1)	;sdbits
+;cp 3
+;but we did that above, so just pop prev. result:
+pop af
+ld a,0eh	;8 data bits
+jr nc,sinit3
+ld a,0ah	;7 data bits
+sinit3:
+or e
+ld e,a
+
+;set baud rate
+;(not the UART though, I think this bit's for the line driver)
+ld a,(ix+0)	;sbaud
+or 0f8h
+linedrvop:
+xor 16	;16 to enable line driver, else 0
+push af
+out (030h),a
+call sdelay
+
+;reset the UART. The next control byte then becomes a `mode' one,
+;specifying the format - i.e. the byte we've built up in E.
+and 0f7h
+out (030h),a
+call sdelay
+
+;so, setup the other serial controls - data bits, parity etc.
+ld a,e
+out (0c1h),a
+call sdelay
+
+;now setup the usual control stuff.
+;this basically just enables transmit/receive.
+ld a,037h
+out (0c1h),a
+call sdelay
+
+;XXX do I need these?
+in a,(0c0h)
+in a,(0c0h)
+
+;initialise serial input buffer
+ld hl,sbuf
+ld (sbstart),hl
+ld (sbend),hl
+
+;XXX should try to figure out some way of avoiding spurious serial int
+
+;make sure we (only) receive serial in and 1/100th timer interrupts,
+;i.e. bits 3 and 0 of the IRQ mask. This isn't really the best place
+;to put it, but at least this saves me having it in two different
+;places (init.z and powrhndl.z).
+pop af
+and 16		;z if serial enabled
+if IS_NC200
+ ld a,01ch	;bits 4, 3 and 2 on the '200 - poweroff, kybd, serial
+ jr z,sinit4
+ xor 4		;filter out serial ints if line driver is off
+else
+ld a,9		;bits 3 and 0 on '100
+jr z,sinit4
+dec a		;filter out as above
+endif
+sinit4:
+out (060h),a
+
+pop ix
+ret
+
+
+;this is overkill really.
+sdelay:
+ld b,12
+sdelaylp:
+djnz sdelaylp
+ret
+
+
+;put byte in e to serial port
+;carry set on success, else false
+sputbyte:
+;inlining scanput here takes the same space as a call to scanput
+;and takes slightly less time, so we do that...
+in a,(0c1h)
+rra
+ret nc
+ld a,e
+out (0c0h),a
+;we know carry is already set (since ret nc above failed)
+ret
+
+
+;can we put a byte onto serial?
+;return carry set if so, false if not.
+;blasts a
+;NB: this isn't something to check DTR, or anything; this checks
+;to see if there's a byte *currently being sent*. Without this,
+;you can run into problems even at 19200 baud, believe it or not!
+scanput:
+in a,(0c1h)
+rra
+ret
+
+
+;add char in a to serial input buffer
+saddbuf:
+ld hl,(sbend)
+push hl
+
+call sbufinc
+
+ld bc,(sbstart)
+;if they're equal, the buffer is 'full'
+and a
+push hl
+sbc hl,bc
+pop hl
+pop bc
+ret z
+ld (sbend),hl
+ld (bc),a
+ret
+
+
+;get a byte from serial port
+;exit: carry set if ok (with data byte in A) else carry false
+;the actual input was done by the interrupt handler
+sgetbyte:
+;this turns out to be identical to sgetchar, so:
+;FALLS THROUGH
+
+;get char from buffer into a (carry set if ok, false if buffer empty).
+sgetchar:
+ld hl,(sbstart)
+ld bc,(sbend)
+and a
+sbc hl,bc
+ret z		;and carry is false
+
+add hl,bc
+ld a,(hl)
+call sbufinc
+ld (sbstart),hl
+scf		;carry set
+ret
+
+
+;incr hl in serial buffer, wrapping at end
+;must not corrupt af
+sbufinc:
+inc hl
+bit 4,h			;assumes that buffer ends at f000h
+ret z
+ld hl,sbuf
+ret
+
+
+;can we get a byte from serial?
+;return carry set if so, false if not.
+;(also takes a peek at the char, returning it in a, so we can also
+; use this as `sseechar')
+;bc/hl corrupt
+scanget:
+sseechar:
+ld hl,(sbstart)
+ld bc,(sbend)
+and a
+sbc hl,bc
+ret z		;and carry is false
+
+add hl,bc
+ld a,(hl)
+scf		;carry set
+ret
+
+
+;send byte in e to printer, nc if couldn't
+;mustn't modify e (so redirection-to-printer call from term.z is ok)
+pputbyte:
+call pcanput
+ret nc
+ld a,e
+out (040h),a
+ld a,0afh
+out (030h),a	;strobe low
+ld a,0efh
+out (030h),a	;...and high
+;we know carry is already set (since ret nc above failed and flags are
+; still intact)
+ret
+
+
+;c if printer ok, nc if busy
+;mustn't modify e (see above note for pputbyte)
+pcanput:
+in a,(0a0h)
+;if bit 1 is set, it's busy
+rra
+rra
+ccf	;(we want to know if it's *not* busy)
+ret

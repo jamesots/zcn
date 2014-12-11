@@ -1,0 +1,154 @@
+;set time
+
+;usage: timeset [yymmdd] hhmm[ss]
+
+
+org 0100h
+
+jr start
+
+timebuf:
+defb 0,0,0,0,0,0	;time is written to here
+
+tmp1: defw 0,0,0
+tmp2: defw 0,0,0
+
+start:
+;check for ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;give usage if no args given
+ld a,(05dh)
+cp 32
+jp z,usage
+
+;see if they did both time and date
+ld a,(06dh)
+cp 32
+jr z,onlytime	;skip date if so
+
+;parse date at 05dh
+ld ix,05dh
+ld iy,timebuf
+call ix2bcd	;also incrs ix by 2
+sub 090h
+daa
+ld (iy),a
+call ix2bcd
+ld (iy+1),a
+call ix2bcd
+ld (iy+2),a
+
+;now copy time over date so the time parsing works
+ld hl,06dh
+ld de,05dh
+ld bc,6
+ldir
+jr dotime
+
+onlytime:
+;if only the time specified, need to grab date
+ld c,085h
+ld de,tmp1
+call 5
+
+ld c,085h
+ld de,tmp2
+call 5
+
+;now, if t1<t2 then t1:=t2
+
+ld ix,tmp1
+ld b,6
+tchklp:
+ld a,(ix)
+cp (ix+6)
+jr c,uset2
+inc ix
+djnz tchklp
+
+jr tchkdone
+
+uset2:
+ld hl,tmp2
+ld de,tmp1
+ld bc,3
+ldir
+
+tchkdone:
+;copy date part
+ld hl,tmp1
+ld de,timebuf
+ld bc,3
+ldir
+
+dotime:
+;parse time at 05dh
+ld ix,05dh
+ld iy,timebuf+3
+call ix2bcd	;also incrs ix by 2
+ld (iy),a
+call ix2bcd
+ld (iy+1),a
+;if secs not there, use 0
+ld (iy+2),0
+ld a,(ix)
+cp 32
+jr z,nosecs
+call ix2bcd
+ld (iy+2),a
+
+nosecs:
+;all in place - write time
+ld c,134
+ld de,timebuf
+jp 5
+
+
+
+musage:
+defb 'usage: timeset [yymmdd] hhmm[ss]',13,10
+defb ' where yymmdd is date - 28th May 1995 would be 950528,',13,10
+defb '                    and 14th Jan 2001 would be 010114;',13,10
+defb '   and hhmmss is time - 7:30 a.m. would be 0730,',13,10
+defb '                    and 9:12 p.m. would be 2112.',13,10
+defb '  [Note that the date and seconds are optional.]$'
+
+usage:
+ld de,musage
+ld c,9
+jp 5
+
+
+;turn two chars at (ix) and (ix+1) into bcd
+;in a, and add 2 to ix
+ix2bcd:
+ld a,(ix)
+sub '0'
+jr c,specerr
+cp 10
+jr nc,specerr
+rlca
+rlca
+rlca
+rlca
+ld b,a
+ld a,(ix+1)
+sub '0'
+jr c,specerr
+cp 10
+jr nc,specerr
+or b
+inc ix
+inc ix
+ret
+
+mspecerr: defb 'Error in date/time spec.$'
+
+specerr:
+ld de,mspecerr
+ld c,9
+call 5
+jp 0

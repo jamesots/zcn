@@ -1,0 +1,12 @@
+NAME
+	quitsub - abort any running SUB file, then optionally run command
+
+SYNOPSIS
+	quitsub [command [args]]
+
+DESCRIPTION
+	Abort any currently-running SUB file, and run command if
+	given. Usually only useful in combination with if(n)peek.
+
+SEE ALSO
+	ifpeek, ifnpeek

@@ -1,0 +1,18 @@
+NAME
+	keyb - change keyboard map
+
+SYNOPSIS
+	keyb [map_type]
+
+DESCRIPTION
+	`keyb' changes the keyboard mapping used by ZCN. It works by
+	patching the currently-running ZCN, so for a non-UK mapping
+	you'd normally run `keyb' from autoexec.sub.
+
+OPTIONS
+	map_type
+		the mapping to use. Run `keyb' without args to see
+		supported mappings.
+
+SEE ALSO
+	capsctrl

@@ -1,0 +1,22 @@
+;zcnclock - bells-and-whistles clock program
+
+;fullclock is -1 so that `not fullclock' works in zmac (which only has
+;a bitwise not)
+
+fullclock	equ -1
+
+
+include common.z
+
+;include the stuff necessary for analogue display and world time etc.
+
+include ../zcnlib/maths.z
+include graph_zc.z
+
+include readmrf.z
+include circ60.z
+include citydat.z
+
+;must be last
+;used to find the mrf catted onto the end
+citymrf:

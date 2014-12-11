@@ -1,0 +1,56 @@
+Getting ZCN across for the first time with a minimal serial lead
+----------------------------------------------------------------
+
+Not so very long ago, I needed to transfer a copy of ZCN outside of
+ZCN itself for the first time in, well, literally years. (I'd been
+doing some low-level messing about for a speccy game `port' and had
+managed to crash the machine *and* trash the first 16k of my memory
+card. Not very nice.) This was when I found out that 1. the ROM
+software needs more than a minimal three-pins-connected serial lead to
+do an XMODEM file transfer, and 2. my serial lead was sufficiently
+worn out that it was effectively such a lead. :-/
+
+After exhausting the other alternatives (not difficult), I tried
+something which clearly wouldn't work - doing `receive document'.
+Surely that would only work for plain text files... but apparently
+not. It passes through 8-bit values unmodified! So as long as you have
+some way of getting the bytes to the serial port unmodified (`cat
+zcn.bin >/dev/ttyS1' or similar on Unix if the terminal settings are
+right; `copy /b zcn.bin com2:' or similar on MS-DOS), and the transfer
+is perfect and no characters are lost or anything, you *can* transfer
+ZCN across a minimal three-pins-only lead.
+
+Here's how:
+
+Cold-boot the NC100 by turning it off and, while holding down
+Function, Stop and `<-Del', turning it back on.
+
+Next you should do the following:
+
+Key				Reason
+---				------
+Function + S			go to terminal program
+Menu, down*3, left*2, Stop	set speed to 2400 baud
+<type a few characters on the NC100 and `remote' computer to check
+ the link is working ok>
+Stop				quit terminal program
+Function + N, x, return		create junk document
+x				put junk in it
+Function + L			load document
+Menu, T, R, tmp, return		receive `tmp'
+<send the file with `cat', `copy' or whatever>
+<wait for transfer to finish>
+Function + B			enter basic
+"*LOAD TMP 6000"		load system (omit the quotes :-))
+"CALL &6000"			start ZCN
+
+(It might be a good idea to check the byte count given on the NC when
+the transfer finishes against the size of `zcn.bin'. They should
+match, or the former might be at most one byte larger. But the most
+important point here is that if the size the NC reports is *smaller*
+than the real size, the transfer failed.)
+
+Now, if *that* doesn't work, you really do need to get a decent lead
+off somebody. :-)
+
+-Rus.

@@ -1,0 +1,16 @@
+NAME
+	dump - give hex/ASCII dump of file
+
+SYNOPSIS
+	dump filename
+
+DESCRIPTION
+	Give a hex and ASCII dump of the specified file, pausing after
+	every 128 bytes. Use ^C to quit.
+
+BUGS
+	If the file position is greater than 65535, it'll be shown
+	incorrectly.
+
+SEE ALSO
+	memdump

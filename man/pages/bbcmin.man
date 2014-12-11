@@ -1,0 +1,42 @@
+NAME
+	bbcmin - run ROM BBC Basic (cut-down version of bbcbas)
+
+SYNOPSIS
+	bbcmin [-h] [basic_file]
+
+DESCRIPTION
+	Run the NC100's ROM BBC Basic as if it were a ZCN program.
+	Auto-runs `basic_file' if specified.
+
+	bbcmin is a cut-down version of `bbcbas' - it has a much
+	smaller executable yet has similar functionality. However,
+	it's much less usable for program development. Good for when
+	you just want to run existing Basic programs, rather than
+	writing new ones.
+
+	Here's a breakdown of what it lacks relative to bbcbas:
+
+	- There's no copy cursor.
+
+	- The help pages (those obtained with *KEY) are absent.
+
+	- *CAT does nothing.
+
+	- There's no serial/parallel support. (You can still use it
+	  with the serial/parallel port with console redirection, but
+	  that's all.)
+
+	- There are no bitmaps for chars in the 128-255 range;
+	  outputting such chars doesn't print any useful symbols. For
+	  this reason, the pound sign cannot be entered when typing a
+	  program line.
+
+	- There is no customisable LISTO setting. On startup it
+	  defaults to LISTO format 7, just like Basic does under the
+	  ROM software.
+
+OPTIONS
+	-h	give usage help (synopsis).
+
+SEE ALSO
+	bbcbas

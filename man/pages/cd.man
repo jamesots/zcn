@@ -1,0 +1,16 @@
+NAME
+	cd - change user area
+
+SYNOPSIS
+	cd [area_num|*|-]
+
+DESCRIPTION
+	Change current user area. If area_num is given, changes to
+	that user area (must be in range 0-15 or 255); if `*', changes
+	to area 255; if `-', changes to previously-current user area;
+	if no arg is given, changes to area 0.
+
+	`cd' is an alternative name for the `user' command.
+
+SEE ALSO
+	usernums, umv

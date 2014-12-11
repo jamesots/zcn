@@ -1,0 +1,96 @@
+;rand - simple random number generator
+;requires maths.z
+;algorithm adapted from the one I used for 8086 kirsten.
+
+;for cpm zmac:
+;ZZglobal seed
+;ZZglobal srand
+;ZZglobal rand16
+;ZZglobal rand
+
+;uses these:
+;ZZglobal multiply
+;ZZglobal divide
+
+
+seed: defb 'ZX81'	;don't ask :-)
+
+
+;set random number seed from R
+;entry: none, exit: none
+;af/hl corrupt
+srand:
+ld a,r
+ld h,a
+ld a,r
+ld l,a
+ld (seed),hl
+ld a,r
+ld h,a
+ld a,r
+ld l,a
+ld (seed+2),hl
+ret
+
+
+;get random number in range 0 to hl-1 inclusive
+;entry:	hl=range size
+;exit:	hl=random number in range 0 to range_size-1
+;af/bc/de corrupt
+;this is equivalent to 'rand()%range_size' in C; the Linux 'rand'
+;man page suggests this alternative if you need a better distribution,
+;which may be a good idea for numbers bigger than a few thousand:
+;
+; >        To  ensure  a  good distribution for a subrange of values,
+; >        use code like the below:
+; >             i = RAND_MAX / my_range
+; >             i *= my_range
+; >             while ((j = rand()) >= i) continue;
+; >             return j % i;
+; >        (code example based on code from Karl Lehenbauer's fortune
+; >        cookie  program,  which  credits  Ken Arnold, Unix Review,
+; >        October 1987).
+;
+;replace rand() above with a call to rand16, and RAND_MAX with FFFFh.
+;there are multiply/divide/mod routines in maths.z. Note that using the
+;above algorithm will be significantly slower than calling this
+;routine, probably half the speed at best.
+rand:
+push hl
+call rand16
+pop de
+call divide
+ex de,hl
+ret
+
+
+
+;get random number between 0 and 65535 inclusive
+;entry: none
+;exit:	hl=random number
+;af/bc/de corrupt
+rand16:
+ld hl,(seed+2)
+ld d,l
+add hl,hl
+add hl,hl
+ld c,h
+ld hl,(seed)
+ld b,h
+rl b
+ld e,h
+rl e
+rl d
+add hl,bc
+ld (seed),hl
+ld hl,(seed+2)
+adc hl,de
+res 7,h
+ld a,h
+and 080h
+jr nz,rand16a
+inc h
+rand16a:
+ld (seed+2),hl
+ld hl,(seed)		;now hl=16-bit rand. num.
+ret

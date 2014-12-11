@@ -1,0 +1,30 @@
+NAME
+	spellwd - check spelling of a word using ROM spellchecker
+
+SYNOPSIS
+	spellwd word
+
+DESCRIPTION
+	Spellwd is a simple interface to the ROM spellchecker. It
+	tells you whether it found `word' in its dictionary, i.e.
+	whether it's spelt correctly or	not. If it didn't find the
+	word, it lists alternatives which might be the word you meant.
+
+	If you want to spellcheck a file rather than just a single
+	word, try `spell'.
+
+EXAMPLES
+	Here are a few examples showing the kind of output `spellwd'
+	gives:
+
+	A>spellwd foo
+	word not found - suggest:
+	boo coo fob foe fog food fool foot fop for fox fro too woo zoo
+	A>spellwd bar
+	word ok
+	A>spellwd baz
+	word not found - suggest:
+	bad bag ban bar bat bay
+
+SEE ALSO
+	spell

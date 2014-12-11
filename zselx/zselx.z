@@ -1,0 +1,2212 @@
+;* for Emacs: -*- mode: outline; outline-regexp: ";\\*+"; -*-
+;
+;zselx - interactively select files and execute command.
+;Copyright (C) 1996 Russell Marks. See 'README' for license details.
+;
+; the terminal stuff in this is ripped from cpmtris.
+;
+; this is a Z80 conversion of my Unix version (written in C).
+; this is GPL'd rather than simply PD like the Unix one because, well,
+; it took longer. :-)
+
+;######### TODO
+; get it to not clear out blank lines onscreen if numfiles<maxfl.
+; also, consider an option to avoid reading file sizes (which would
+;  speed up dir reading a fair bit on the +3).
+
+;* start
+org 0100h
+
+jp indirect
+
+defb 0
+
+;* patch area
+
+;zselx is, by default, patched to run on a 80x24 VT52, and ZCN is
+;auto-detected.
+;As such, PCW, +3, and ZCN users shouldn't need to patch it.
+;(the screen layout fits in 51x24 so it works well on the +3, too)
+;users of other CP/M boxen need to patch cpmtris as below:
+
+;104h - number of columns
+; must have at least 50 columns
+; you don't really need to set this; it isn't used for anything.
+cols: defb 80
+
+;105h - number of lines
+; must have at least 10 lines
+lines: defb 24
+
+;106h - 10*Mhz of your Z80.
+; not used on zselx, ignore it.
+mhz10: defb 35
+
+;107h - terminal type
+;you can roll your own terminal routines, but there's hard-coded
+;support for a few terminals which saves you the effort. they are:
+; type 1 - VT100
+; type 2 - VT52, PCW, Spectrum +3, etc.
+; type 3 - ZCN
+; type 4 - VC404 (volker-craig)
+;set this to zero if you're writing your own clear screen and cursor
+;move routines.
+;note that the terminal type does not influence the number of lines
+;and columns - those must still be set (above).
+termtype: defb 2
+
+;108h-10fh - reserved (currently unused)
+defb 0,0,0,0,0,0,0,0
+
+;the routines below are allowed to corrupt af/bc/de/hl,
+; but other registers must remain intact
+;the routine at 180h prints the char in a, preserving all regs.
+
+;110h - clear screen
+;this example is for a VT100.
+hackcls:
+ld de,mcls
+ld c,9
+jp 5
+mcls: defb 27,'[H',27,'[J$'
+
+defb 0
+
+;120h - move to (x,y), where (0,0) is top-left
+;entry: (b,c)=(x,y)
+;this example is for a VT100.
+hackmove:
+ld a,27
+call 0183h
+ld a,'['
+call 0183h
+ld e,c
+inc e
+ld d,0
+call 0180h
+ld a,';'
+call 0183h
+ld e,b
+inc e
+;d still 0
+call 0180h
+ld a,'H'
+jp 0183h
+
+;140h - extra patch space, in case the above isn't enough
+;all the space up to 17fh is usable
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+
+;* patch routines
+
+;180h - print de as decimal number (for VT100 cursor move)
+;saves af/bc/de/hl
+jp dispdec2
+
+;183h - print char in a
+;saves all regs
+jp putchar
+
+;we jump to here first, so that the 1st jump always stays the same
+; no matter what hacking is done in future, and any binary patches
+; made by overwriting the first record still work.
+indirect:
+jp main
+
+dispdec2:
+push af
+push bc
+push de
+push hl
+call dispdec
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;* global vars
+
+curdrive:	defb 0		;1=A:
+curuser:	defb 0
+
+cmd_none	equ 0
+cmd_copy	equ 1
+cmd_move	equ 2
+cmd_delete	equ 3
+cmd_view	equ 4
+;cmd_edit	equ 5	;not supported
+;cmd_other	equ 6	;not supported
+
+cmdtype:	defb cmd_none
+
+max_files	equ 1024
+
+;8k buffer used by copy_one
+copybuf		equ max_files*16+files
+copybufsize	equ 8192
+
+;the first unused byte of TPA - this is used in checking we have
+; enough memory (about 30k).
+progsize	equ copybuf+copybufsize
+
+numfiles:	defw 0
+
+;this is a ptr to the comparison routine
+sorttype:	defw sort_name
+
+;max file lines, num. used for displaying filenames
+maxfl:		defb 0
+
+;buf for cp/mv dest to be typed
+;this can only be 4 chars max, (e.g. b15:) so this is *plenty*.
+dest:
+defw 0,0,0,0, 0,0,0,0
+
+;the actual dest drive/user
+destdrive:	defb 0
+destuser:	defb 0
+
+autosel:	defb 0
+
+origdrive:	defb 0
+origuser:	defb 0
+
+tagchng:	defb 0
+
+
+
+;* main program
+main:
+;check for ZCN
+ld a,(066h)
+cp 0f7h
+call z,zcninit
+
+;we need (files+16k) TPA, so we check for it here
+ld hl,progsize
+ld de,255
+add hl,de
+ld a,(7)
+cp h
+jr nc,main1
+
+call ilprint
+defb 'Not enough memory!',0
+jp 0
+
+main1:
+call getdrv	;get current drv/user
+ld a,(curdrive)
+ld (origdrive),a
+ld a,(curuser)
+ld (origuser),a
+call chkterm	;check for terminal-change arg
+call chkdrv	;check for start drv/user arg
+call setdrv	;set drv/user in case chkdrv changed cur{drive,user}
+
+;init maxfl
+ld a,(lines)
+sub 3
+ld (maxfl),a
+
+mainloop:
+call files_init		;read dir
+call do_select		;do the actual file selecting etc.
+call run_cmd		;run the command, if appropriate
+
+ld a,(cmdtype)
+cp cmd_none
+jr nz,mainloop
+
+;exit, restoring orig drive/user and clearing screen etc.
+exit:
+call cls
+ld a,(cols)
+ld c,a
+dec c
+ld b,0
+call move
+exitnocls:
+ld a,(origdrive)
+ld (curdrive),a
+ld a,(origuser)
+ld (curuser),a
+call setdrv
+jp 0
+
+
+;* args parsing routines
+
+chkterm:
+ld a,(05dh)
+cp 32
+ret z
+
+;set terminal type if 0<=a<=4
+sub 48
+ret c
+cp 5
+ret nc
+ld (termtype),a
+cp 3
+ret z
+;set to 24 lines if termtype specified and not ZCN type
+ld a,24
+ld (lines),a
+ret
+
+
+chkdrv:
+;make cmdline asciiz.
+ld a,(080h)
+add a,081h
+ld l,a
+ld h,0
+ld (hl),h
+
+;check it ends in ':', or it's not a drv/user spec.
+dec hl
+ld a,(hl)
+cp ':'
+ret nz
+
+;zero the colon out
+ld (hl),0
+
+;search it for last space.
+ld hl,081h
+ld e,' '
+call strrchr
+ld a,h
+or l
+ret z	;return if no 
+
+inc hl
+
+;this entry point is used when parsing dest for cp/mv.
+;entry: hl=ptr to drv/usr spec minus colon
+drvgrok:
+;now hl is pointing to last arg, which is a drive/user spec, with
+; one of these forms:
+;
+; 1.  a:	- drive a:, current user
+; 2.  0:	- current drive, user 0
+; 3.  a0:	- drive a:, user 0
+
+;so, to differentiate between these:
+;
+; if hl[0] is a digit, it's form 2, else
+; if hl[0] is not in 'a'..'p', it's meaningless, else
+; if hl[1] is a digit, it's form 3, else
+; it's form 1.
+
+ld a,(hl)
+call isdigit
+jr nc,chkdrv1
+
+;it's form 2
+grokuser:
+call atoi
+ld a,l
+ld (curuser),a
+ret
+
+chkdrv1:
+;a is still (hl)
+call isdrv
+ret nc		;ret if not a drv/user spec
+
+inc hl
+ld a,(hl)
+call isdigit
+jr nc,chkdrv2
+
+;it's form 3
+call grokdrv
+inc hl
+jr grokuser
+
+chkdrv2:
+
+;it's form 1
+grokdrv:
+dec hl
+ld a,(hl)
+sub 64
+ld (curdrive),a
+ret
+
+isdigit:
+cp ':'		;'9'+1
+ret nc
+cp '0'
+ccf
+ret
+
+;works only for capital drive letters
+isdrv:
+cp 'Q'
+ret nc
+cp 'A'
+ccf
+ret
+
+
+;* drive/user set/get
+
+;set drive/user from cur{drive,user}
+setdrv:
+ld a,(curdrive)
+dec a
+ld e,a
+ld c,14
+call 5
+
+ld a,(curuser)
+ld e,a
+ld c,32
+call 5
+ret
+
+
+;read current drive/user
+getdrv:
+ld c,25
+call 5
+inc a
+ld (curdrive),a
+
+ld e,255
+ld c,32
+call 5
+ld (curuser),a
+ret
+
+
+;* terminal routines
+
+;clear to eol
+;very crude, but good enough for our purposes.
+clrtoeol:
+ld b,50
+c2eollp:
+ld a,32
+call putchar
+djnz c2eollp
+ret
+
+;move to (b,c) and display asciiz at hl
+mvaddstr:
+push hl
+call move
+pop hl
+mvaslp:
+ld a,(hl)
+and a
+ret z
+call putchar
+inc hl
+jr mvaslp
+
+
+;the built-in terminal support
+cls:
+ld a,(termtype)
+and a
+jp z,hackcls
+
+cp 1
+jr nz,cls2
+
+;VT100
+ld de,mclsvt100
+ld c,9
+jp 5
+
+mclsvt100: defb 27,'[H',27,'[J$'
+
+cls2:
+cp 2
+jr nz,cls3
+
+;VT52
+ld de,mclsvt52
+ld c,9
+jp 5
+
+mclsvt52: defb 27,'H',27,'J$'
+
+cls3:
+cp 3
+jr nz,cls4
+
+;ZCN
+ld a,1
+jp putchar
+
+cls4:
+cp 4
+ret nz
+
+;VC404
+ld a,24
+jp putchar
+
+
+move:
+ld a,(termtype)
+and a
+jp z,hackmove
+
+cp 1
+jr nz,move2
+
+;VT100
+ld a,27
+call putchar
+ld a,'['
+call putchar
+ld e,c
+inc e
+ld d,0
+call dispdec2
+ld a,';'
+call putchar
+ld e,b
+inc e
+;d still 0
+call dispdec2
+ld a,'H'
+jp putchar
+
+move2:
+cp 2
+jr nz,move3
+
+;VT52
+ld a,27
+call putchar
+ld a,'Y'
+call putchar
+ld a,32
+add a,c
+call putchar
+ld a,32
+add a,b
+jp putchar
+
+move3:
+cp 3
+jr nz,move4
+
+;ZCN
+ld a,16
+call putchar
+ld a,32
+add a,c
+call putchar
+ld a,32
+add a,b
+jp putchar
+
+move4:
+cp 4
+ret nz
+
+;VC404
+ld a,16
+call putchar
+ld a,32
+add a,c
+call putchar
+ld a,32
+add a,b
+jp putchar
+
+
+zcninit:
+;we know it's ZCN, so set termtype etc.
+ld a,3
+ld (termtype),a
+ld a,120
+ld (cols),a
+ld a,10
+ld (lines),a
+ret
+
+
+;* index into files array
+
+;entry: hl=offset in files[] array
+;exit:	hl=ptr to element
+;de corrupt
+farrpos:
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+ld de,files
+add hl,de
+ret
+
+
+;* read list of files
+files_init:
+;clear tags
+ld bc,max_files
+ld de,16
+ld hl,files
+finitlp1:
+ld (hl),0
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,finitlp1
+
+call ilprint
+defb 'Reading/sorting dir...',10,0
+
+;make file list
+;first pass just gets the file names.
+ld de,searchfcb
+ld c,17
+call 5
+
+ld hl,files
+
+mflistlp:
+inc a
+jr z,mflist1
+
+push hl
+dec a
+ld h,0
+ld l,a
+add hl,hl ;*2
+add hl,hl ;*4
+add hl,hl ;*8
+add hl,hl ;*16
+add hl,hl ;*32
+ld de,081h
+add hl,de
+pop de
+push de
+inc de
+ld bc,11
+ldir
+
+ld c,18
+call 5
+pop hl
+ld de,16
+add hl,de
+jr mflistlp
+
+mflist1:
+;hl points to last unused array slot
+;work out numfiles from that
+ld de,files
+and a
+sbc hl,de
+and a
+;div by 16
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ld (numfiles),hl
+
+;don't do the next bit if 0 files found
+ld a,h
+or l
+jr z,mflistdone
+;jp mflistdone	;XXX
+
+;XXX this doesn't work on 'cpm'. it bloody should! :-(
+
+;now fill in the rest. tags have already been zeroed, so just size
+; (at byte 13-14 in struct) to fill.
+ld hl,files
+ld bc,(numfiles)
+ld ix,sizefcb
+mflistlp2:
+push bc
+push hl
+inc hl
+ld de,sizefcb+1
+ld bc,11
+ldir
+;open file
+ld de,sizefcb
+ld c,15
+call 5
+inc a
+jr nz,mflist2
+;treat it as 0k if unopenable - this "can't happen", but in fact it
+; *can* happen under the 'cpm' emulator for mixed-case filenames
+; (it only handles all-lowercase filenames correctly).
+;a is already 0
+ld (ix+33),a
+ld (ix+34),a
+jr mflist3
+mflist2:
+;get file size
+ld de,sizefcb
+ld c,35
+call 5
+mflist3:
+pop hl
+push hl
+ld de,13
+add hl,de
+ld a,(ix+33)
+ld (hl),a
+inc hl
+ld a,(ix+34)
+ld (hl),a
+pop hl
+pop bc
+ld de,16
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,mflistlp2
+
+mflistdone:
+;finished making file list - now check there are some files there
+ld hl,(numfiles)
+ld a,h
+or l
+jp nz,resortlist
+
+;if zero files here, complain!
+call ilprint
+defb 'No files found!',0
+jp exitnocls
+
+;used for getting dir
+searchfcb:
+defb 0,'???????????',0,0,0,0
+defw 0,0,0,0,0,0,0,0,0,0
+
+;used for getting size
+sizefcb:
+defw 0,0,0,0,0,0,0,0
+defw 0,0,0,0,0,0,0,0,0,0
+
+
+;* sorting stuff
+resortlist:
+ld hl,files
+ld bc,(numfiles)
+ld de,16
+ld ix,(sorttype)
+call qsort
+ret
+
+
+;comparison routines for qsort
+
+;compare two filenames (for qsort)
+;returns carry set if node at de < node at hl, else carry false
+sort_name:
+ld b,11
+inc hl
+inc de
+cnamelp:
+ld a,(de)
+cp (hl)
+ret nz
+inc hl
+inc de
+djnz cnamelp
+ret
+
+
+;compare two exts (for qsort)
+;returns carry set if node at de < node at hl, else carry false
+sort_ext:
+ld bc,9
+add hl,bc
+ex de,hl
+add hl,bc
+ex de,hl
+ld b,3
+cextlp1:
+ld a,(de)
+cp (hl)
+ret nz
+inc hl
+inc de
+djnz cextlp1
+;if exts are same, sort by name
+ld bc,11
+and a
+sbc hl,bc
+ex de,hl
+sbc hl,bc
+ex de,hl
+ld b,8
+cextlp2:
+ld a,(de)
+cp (hl)
+ret nz
+inc hl
+inc de
+djnz cextlp2
+ret
+
+
+;compare two sizes (for qsort)
+;returns carry set if node at de < node at hl, else carry false
+sort_size:
+push de
+push hl
+ld bc,13
+add hl,bc
+ex de,hl
+add hl,bc
+ex de,hl
+
+ld c,(hl)
+inc hl
+ld b,(hl)
+ld h,b
+ld l,c
+
+ex de,hl
+ld c,(hl)
+inc hl
+ld b,(hl)
+ld h,b
+ld l,c
+;leave them exchanged
+
+and a
+sbc hl,de
+pop hl
+pop de
+ret nz
+
+;if they're the same, use sort_name to differentiate
+jp sort_name
+
+
+
+;* file selector
+
+top: defw 0
+pos: defw 0
+oldtop: defw 0
+oldpos: defw 0
+selquit: defb 0
+
+do_select:
+call cls
+call showhdr
+
+;reset dma
+ld de,080h
+ld c,26
+call 5
+
+ld a,cmd_none
+ld (cmdtype),a
+
+ld hl,0
+ld (top),hl
+ld (pos),hl
+ld hl,-1
+ld (oldtop),hl
+ld (oldpos),hl
+xor a
+ld (selquit),a
+
+selloop:
+call drawfilelist
+ld hl,(top)
+ld (oldtop),hl
+ld hl,(pos)
+ld (oldpos),hl
+
+xor a
+ld (tagchng),a
+
+call getch
+ld h,0
+ld l,a
+add hl,hl
+ld de,key2call
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+or h
+call nz,seljphl
+
+;  if(pos<0) pos=0;
+;[assume bit15=sign]
+ld hl,(pos)
+bit 7,h
+jr z,sel0
+ld hl,0
+ld (pos),hl
+
+sel0:
+;  if(pos>=numfiles) pos=numfiles-1;
+ld hl,(pos)
+ld de,(numfiles)
+and a
+sbc hl,de
+jr c,sel1
+dec de
+ld (pos),de
+
+sel1:
+;  if(pos<top) top=pos;
+ld hl,(pos)
+ld de,(top)
+and a
+sbc hl,de
+jr nc,sel2
+ld hl,(pos)
+ld (top),hl
+
+sel2:
+;  if(pos>top+MAX_FILE_LINES-1) top=pos-MAX_FILE_LINES+1;
+;[we use pos>=top+maxfl]
+ld hl,(top)
+ld de,(maxfl)
+add hl,de
+ex de,hl
+ld hl,(pos)
+and a
+sbc hl,de
+jr c,sel3
+ld hl,(pos)
+ld de,(maxfl)
+and a
+sbc hl,de
+inc hl
+ld (top),hl
+
+sel3:
+;  if(top<0) top=0;
+;[assume bit15=sign]
+ld hl,(top)
+bit 7,h
+jr z,sel4
+ld hl,0
+ld (top),hl
+
+sel4:
+;die if quit chosen
+ld a,(selquit)
+and a
+jp nz,exit
+
+;else loop if no command chosen
+ld a,(cmdtype)
+cp cmd_none
+jp z,selloop
+
+xor a
+ld (autosel),a
+
+;so, we have a command.
+
+;if no files are tagged, tag current.
+;first, see if any are tagged...
+ld bc,(numfiles)
+ld hl,files
+xor a
+sellp2:
+or (hl)
+ld de,16
+add hl,de
+dec bc
+ld d,a
+ld a,b
+or c
+ld a,d
+jr nz,sellp2
+
+and a
+jr nz,sel5
+
+;yep, none tagged. tag the one at pos.
+ld hl,(pos)
+call farrpos
+ld a,1
+ld (hl),a
+ld (autosel),a
+
+sel5:
+;check they want to do cmd, and/or get dest
+
+;clear header bit, as all checks etc. use it
+ld bc,0
+call move
+call clrtoeol
+ld bc,1
+call move
+call clrtoeol
+
+;for cp/mv, get dest
+ld a,(cmdtype)
+cp cmd_copy
+jr z,sel6
+cp cmd_move
+jp nz,sel7
+sel6:
+
+;prompt
+ld bc,0
+call move
+call ilprint
+defb 'Drive/user to ',0
+ld a,(cmdtype)
+cp cmd_copy
+jr nz,sel6a
+call ilprint
+defb 'copy',0
+jr sel6b
+sel6a:
+call ilprint
+defb 'move',0
+sel6b:
+call ilprint
+defb ' files to? (none to abort)',10,0
+
+;input
+ld hl,dest
+ld (hl),10
+ex de,hl
+ld c,10
+call 5
+
+;see if last char in string is ':'
+ld hl,dest+1
+ld a,(hl)
+ld e,a
+ld d,0
+add hl,de
+ld a,(hl)
+cp ':'
+jr z,sel6c
+;abort
+ld a,cmd_none
+ld (cmdtype),a
+jp selchkdone
+sel6c:
+ld (hl),0	;zero out the colon
+ld a,128
+ld (curdrive),a
+ld (curuser),a
+ld hl,dest+2
+;capitalize (hl) if needed
+ld a,(hl)
+call islower
+jr nc,sel6c2
+res 5,a
+sel6c2:
+ld (hl),a
+call drvgrok
+;if both still 128, it couldn't grok it, abort
+ld a,(curdrive)
+ld e,a
+ld a,(curuser)
+ld d,a
+ld hl,08080h
+and a
+sbc hl,de
+jr nz,sel6d
+
+ld a,cmd_none
+ld (cmdtype),a
+call getdrv	;restore old cur{drive,user}
+jp selchkdone
+
+sel6d:
+ld a,(curdrive)
+cp 128
+jr nz,sel6e
+;use current drive
+ld c,25
+call 5
+inc a
+sel6e:
+ld (destdrive),a
+ld a,(curuser)
+cp 128
+jr nz,sel6f
+;use current user
+ld a,255
+call a2user
+sel6f:
+ld (destuser),a
+call getdrv	;restore old cur{drive,user}
+jr selchkdone
+
+sel7:
+cp cmd_delete
+jr nz,selchkdone
+
+;delete check
+ld bc,0
+call move
+call ilprint
+defb 'Delete marked files (y/n)? ',0
+sel7lp:
+call getch
+cp 'y'
+jr z,selchkdone
+cp 'n'
+jr z,sel7a
+jr sel7lp
+
+sel7a:
+ld a,cmd_none
+ld (cmdtype),a
+;FALLS THROUGH
+
+selchkdone:
+;if cmdtype!=cmd_none, didn't abort, so ret and run the cmd
+ld a,(cmdtype)
+cp cmd_none
+ret nz
+
+;redraw header
+call showhdr
+
+;unselect auto-selected item if need be (otherwise things will
+; look odd)
+ld a,(autosel)
+and a
+jp z,selloop
+
+ld hl,(pos)
+call farrpos
+ld (hl),0
+jp selloop
+
+
+showhdr:
+ld bc,0
+call move
+call ilprint
+defb 'zselx - tag/clr by +/-, A to clr all, Q quits',10
+defb 'cmds: Copy Move Del View order: Name Ext Size',10
+defb '---',10,0
+ret
+
+
+seljphl: jp (hl)
+
+;** key -> routine table - 0=none
+key2call:
+;	^@	^a	^b	^c	^d	^e	^f	^g
+defw	0,	0,	sel_pu,	sel_pd,	0,	sel_h,	sel_pd,	0
+;	^h	^i	^j	^k	^l	^m	^n	^o
+defw	0,	0,	0,	0,	0,	0,	sel_l,	0
+;	^p	^q	^r	^s	^t	^u	^v	^w
+defw	sel_h,	0,	sel_pu,	0,	0,	sel_pu,	sel_pd,	0
+;	^x	^y	^z	^[	^\	^]	^^	^_
+defw	sel_l,	0,	0,	sel_q,	0,	0,	sel_h,	sel_l
+;	SPC	!	"	#	$	%	&	'
+defw	sel_sp,	0,	0,	0,	sel_G,	0,	0,	0
+;	(	)	*	+	,	-	.	/
+defw	0,	0,	0,	sel_pl,	0,	sel_mi,	0,	0
+;	0	1	2	3	4	5	6	7
+defw	sel_0,	sel_c,	sel_d,	sel_m,	sel_a,	0,	0,	sel_n
+;	8	9	:	;	<	=	>	?
+defw	sel_e,	sel_s,	0,	0,	sel_0,	sel_pl,	sel_G,	0
+;	@	A	B	C	D	E	F	G
+defw	0,	0,	0,	0,	0,	0,	0,	sel_G
+;	H	I	J	K	L	M	N	O
+defw	0,	0,	0,	0,	0,	0,	0,	0
+;	P	Q	R	S	T	U	V	W
+defw	0,	0,	0,	0,	0,	0,	0,	0
+;	X	Y	Z	[	\	]	^	_
+defw	0,	0,	0,	0,	0,	0,	0,	0
+;	`	a	b	c	d	e	f	g
+defw	0,	sel_a,	0,	sel_c,	sel_d,	sel_e,	0,	0
+;	h	i	j	k	l	m	n	o
+defw	sel_h,	0,	sel_l,	sel_h,	sel_l,	sel_m,	sel_n,	0
+;	p	q	r	s	t	u	v	w
+defw	0,	sel_q,	0,	sel_s,	0,	0,	sel_v,	0
+;	x	y	z	{	|	}	~	DEL
+defw	sel_q,	0,	0,	0,	0,	0,	0,	0
+
+;** routines for keys
+sel_q:	;quit
+ld a,1
+ld (selquit),a
+ret
+
+sel_c:	;copy
+ld a,cmd_copy
+ld (cmdtype),a
+ret
+
+sel_d:	;delete
+ld a,cmd_delete
+ld (cmdtype),a
+ret
+
+sel_m:	;move
+ld a,cmd_move
+ld (cmdtype),a
+ret
+
+sel_v:
+ld a,cmd_view
+ld (cmdtype),a
+ret
+
+sel_n:
+ld de,sort_name
+sel_sortbit:
+ld hl,(sorttype)
+and a
+sbc hl,de
+ret z
+ld (sorttype),de
+call resortlist
+ld hl,-1
+ld (oldtop),hl
+ld (oldpos),hl
+ret
+
+sel_e:
+ld de,sort_ext
+jr sel_sortbit
+
+sel_s:
+ld de,sort_size
+jr sel_sortbit
+
+sel_h:	;up
+ld hl,(pos)
+dec hl
+ld (pos),hl
+ret
+
+sel_l:	;down
+ld hl,(pos)
+inc hl
+ld (pos),hl
+ret
+
+sel_0:	;top
+ld hl,0
+ld (pos),hl
+ret
+
+sel_G:	;end
+ld hl,(numfiles)
+dec hl
+ld (pos),hl
+ret
+
+sel_pd:	;pagedown
+ld hl,(pos)
+ld a,(maxfl)
+dec a
+dec a
+ld e,a
+ld d,0
+add hl,de
+ld (pos),hl
+ret
+
+sel_pu:	;pageup
+ld hl,(pos)
+ld a,(maxfl)
+dec a
+dec a
+ld e,a
+ld d,0
+and a
+sbc hl,de
+ld (pos),hl
+ret
+
+sel_a:
+ld bc,(numfiles)
+ld de,16
+ld hl,files
+sel_alp:
+ld (hl),0
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,sel_alp
+ld hl,-1
+ld (oldtop),hl
+ret
+
+sel_pl:	;tag
+ld hl,(pos)
+call farrpos
+ld (hl),1
+ld hl,(pos)
+inc hl
+ld (pos),hl
+ld a,1
+ld (tagchng),a
+ret
+
+sel_mi:	;untag
+ld hl,(pos)
+call farrpos
+ld (hl),0
+ld hl,(pos)
+inc hl
+ld (pos),hl
+ld a,1
+ld (tagchng),a
+ret
+
+sel_sp:	;toggle tag
+ld hl,(pos)
+call farrpos
+ld a,(hl)
+xor 1
+ld (hl),a
+ld hl,(pos)
+inc hl
+ld (pos),hl
+ld a,1
+ld (tagchng),a
+ret
+
+
+;* draw file list
+drawfilelist:
+;only draw all if top!=oldtop
+ld hl,(top)
+ld de,(oldtop)
+and a
+sbc hl,de
+jr nz,dfl1
+
+;if pos!=oldpos or tagchng is set, redraw oldpos/pos tag states.
+ld hl,(pos)
+ld de,(oldpos)
+and a
+sbc hl,de
+jr nz,dfl0
+
+ld a,(tagchng)
+and a
+jr nz,dfl0
+
+jp dflend
+
+dfl0:
+;ok, so top=oldtop but pos has changed. just update onscreen tag
+; status of oldpos and pos (which is all that can have changed).
+call dflupdpos
+jp dflend
+
+dfl1:
+
+ld c,0
+dflloop:
+push bc
+
+ld a,3
+add a,c
+ld c,a
+ld b,0
+call move
+
+;if top+c>=numfiles, clear line and skip to end of loop
+pop bc
+push bc
+ld b,0
+ld hl,(top)
+add hl,bc
+push hl
+ld de,(numfiles)
+and a
+sbc hl,de
+pop hl
+jr c,dfl2
+call clrtoeol	;XXX fewer spaces good enough, I expect
+jp dfllpend
+
+dfl2:
+;hl is still top+c
+call farrpos
+ld a,(hl)
+and a
+ld a,32
+jr z,dfl3
+ld a,'*'
+dfl3:
+call putchar
+ld a,32
+call putchar
+
+push hl
+pop ix
+
+;very yucky kludge to get fixed 6-char wide number field
+ld hl,numtmp
+ld de,numtmp+1
+ld bc,15
+ld (hl),32
+ldir
+ld e,(ix+13)
+ld d,(ix+14)
+ex de,hl
+ld bc,7
+add hl,bc	;round up
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ex de,hl
+call itoa
+ld de,numtmp+10
+ld c,9
+call 5
+
+call ilprint
+defb 'k  ',0
+
+push ix
+pop de
+
+call pfcbname
+
+dfllpend:
+pop bc
+inc c
+ld a,(maxfl)
+cp c
+jp nz,dflloop
+
+dflend:
+;always move cursor to right place
+ld hl,(pos)
+ld de,(top)
+and a
+sbc hl,de
+ld a,l
+add a,3
+ld c,a
+ld b,0
+call move
+ret
+
+
+;update onscreen tag of oldpos and pos.
+dflupdpos:
+;oldpos
+ld hl,(oldpos)
+ld de,(top)
+and a
+sbc hl,de
+ld a,3
+add a,l
+ld c,a
+ld b,0
+call move
+
+ld hl,(oldpos)
+call farrpos
+
+ld a,(hl)
+and a
+ld a,32
+jr z,dflup1
+ld a,'*'
+dflup1:
+call putchar
+
+;pos
+ld hl,(pos)
+ld de,(top)
+and a
+sbc hl,de
+ld a,3
+add a,l
+ld c,a
+ld b,0
+call move
+
+ld hl,(pos)
+call farrpos
+
+ld a,(hl)
+and a
+ld a,32
+jr z,dflup2
+ld a,'*'
+dflup2:
+call putchar
+
+ret
+
+
+;print the filename contained in fcb pointed at by de, folding spaces.
+;(nicked from ls.z)
+pfcbnoex: defb 0
+mspc: defb '   '
+
+pfcbname:
+inc de
+push de
+xor a
+ld (pfcbnoex),a
+ld c,0		;normal spaces printed after
+ld hl,8
+add hl,de
+ld de,mspc
+call cmpext
+jr nc,pfcb0
+ld a,1
+ld (pfcbnoex),a
+pfcb0:
+pop hl
+push hl
+ld b,8
+call plcase
+ld a,(pfcbnoex)
+and a
+ld a,'.'
+jr z,pfcb3
+ld a,32
+pfcb3:
+call putchar
+ld b,3
+call plcase
+pop hl
+
+ld a,c
+and a
+ret z
+
+;print spaces
+ld b,c
+pfcblp:
+ld a,32
+call putchar
+djnz pfcblp
+ret
+
+;print num. bytes in b from hl, smashing case to all-lower
+;returns hl *after* last byte printed and b=0
+;incr c for each space (but don't display spaces)
+plcase:
+ld a,(hl)
+call isupper
+jr nc,pfn1
+set 5,a
+pfn1:
+cp 32
+jr nz,pfn2
+inc c
+jr pfn3
+pfn2:
+call putchar
+pfn3:
+inc hl
+djnz plcase
+ret
+
+;compare three bytes at hl and de. if same, set carry.
+;saves bc/hl
+cmpext:
+push bc
+push hl
+ld b,3
+cmplp:
+ld a,(de)
+cp (hl)
+jr nz,cmpno
+inc hl
+inc de
+djnz cmplp
+pop hl
+pop bc
+scf
+ret
+
+cmpno:
+pop hl
+pop bc
+and a
+ret
+
+;returns carry set if uppercase alpha char. in a
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+;returns carry set if lowercase alpha char. in a
+islower:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+
+
+;* command runner
+
+run_cmd:
+;don't do anything if it's cmd_none
+;(can't happen, I think, but just in case)
+ld a,(cmdtype)
+cp cmd_none
+ret z
+
+;clear screen and put cursor at bot of scrn like Unix one does
+call cls
+ld a,(cols)
+ld c,a
+dec c
+ld b,0
+call move
+
+;make dest+2 printable as dest drive/user
+ld a,(dest+1)
+ld l,a
+ld h,0
+ld de,dest+2
+add hl,de
+ld (hl),'$'
+dec hl
+ld (hl),':'
+
+;ret via rcprompt
+ld hl,rcprompt
+push hl
+
+ld a,(cmdtype)
+
+;run the relevant routine
+cp cmd_copy
+jp z,do_copy
+cp cmd_move
+jp z,do_move
+cp cmd_delete
+jp z,do_del
+cp cmd_view
+jp z,do_view
+
+;not reached, but, again, just in case :-)
+ret
+
+
+rcprompt:
+;don't prompt if it was a view, 'cos that prompts itself
+ld a,(cmdtype)
+cp cmd_view
+jr z,rcp1
+
+call ilprint
+defb 'Command finished - press a key: ',0
+call getch
+ld a,10
+call putchar
+
+rcp1:
+;reset dma
+ld de,080h
+ld c,26
+call 5
+ret
+
+
+;** copy command
+do_copy:
+call ilprint
+defb 'Copying files:',10,0
+
+ld bc,(numfiles)
+ld hl,files
+doclp:
+ld a,(hl)
+and a
+jr z,doc1
+push bc
+push hl
+call copy_one
+pop hl
+pop bc
+doc1:
+ld de,16
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,doclp
+ret
+
+
+;used by file routines - copy, etc.
+;must be contiguous
+filefcb:
+defw 0,0,0,0,0,0,0,0
+defw 0,0,0,0,0,0,0,0,0,0
+file2fcb:
+defw 0,0,0,0,0,0,0,0
+defw 0,0,0,0,0,0,0,0,0,0
+
+written:	defb 0	;set if any has been 
+
+;entry: a=new user num.
+;exit:	none
+;af/bc/de/hl corrupt
+a2user:
+ld e,a
+ld c,32
+call 5
+ret
+
+
+;copy a single file to dest{drive,user}
+;entry: hl=ptr to element in files[]
+;exit:	none
+;af/bc/de/hl corrupt
+copy_one:
+ld (copysp),sp
+xor a
+ld (written),a
+
+;zero out fcbs
+push hl
+ld hl,filefcb
+ld de,filefcb+1
+ld bc,36*2-1
+ld (hl),0
+ldir
+pop hl
+
+;make src fcb
+inc hl
+ld de,filefcb+1
+ld bc,11
+ldir
+ld a,(curdrive)
+ld (filefcb),a
+
+;make dest fcb
+ld hl,filefcb+1
+ld de,file2fcb+1
+ld bc,11
+ldir
+ld a,(destdrive)
+ld (file2fcb),a
+
+;check drive/user. if both are the same, don't copy.
+;actually set the dest drive/user then read back, to make sure.
+ld a,(destdrive)
+ld c,14
+dec a
+ld e,a
+call 5
+ld a,(destuser)
+call a2user
+ld c,25		;return drive
+call 5
+ld b,a
+inc b
+ld a,(curdrive)
+cp b
+jr nz,copy1
+
+ld a,255
+call a2user
+ld b,a
+ld a,(curuser)
+cp b
+jr nz,copy1
+
+call ilprint
+defb 'Same drive/user - skipping ',0
+ld de,filefcb
+call pfcbname
+ld a,10
+call putchar
+and a	;ret nc
+ret
+
+copy1:
+;restore src drive/user
+call setdrv
+
+;delete any existing file on dest with same name
+ld a,(destuser)
+call a2user
+ld de,file2fcb
+ld c,19
+call 5
+ld a,(curuser)
+call a2user
+
+;print the foo -> a15:foo. message
+ld de,filefcb
+call pfcbname
+call ilprint
+defb ' -> ',0
+ld de,dest+2
+ld c,9
+call 5
+ld de,file2fcb
+call pfcbname
+ld a,32
+call putchar
+
+;open src file
+ld de,filefcb
+ld c,15
+call 5
+inc a
+jp z,copyfail
+
+;make dest file
+ld a,(destuser)
+call a2user
+ld de,file2fcb
+ld c,22
+call 5
+inc a
+jp z,copyfail	;restores curuser
+ld a,1
+ld (written),a
+ld a,(curuser)
+call a2user
+
+;now copy from src to dest in 8k chunks
+
+copyloop:
+;read (up to) 8k
+ld de,copybuf
+
+copylp2:
+;set dma
+push de
+ld c,26
+call 5
+
+ld de,filefcb
+ld c,20
+call 5
+and a
+pop de
+jr nz,copylp2end
+
+ld hl,128
+add hl,de
+ex de,hl
+ld hl,copybuf+copybufsize
+and a
+sbc hl,de
+jr nz,copylp2
+
+copylp2end:
+;got de-copybuf bytes in buf, write them
+ld (copystop),de	;save stop address
+
+;if copystop=copybuf, nothing to write
+ld hl,copybuf
+and a
+sbc hl,de
+jr z,copylp3end
+
+ld a,(destuser)
+call a2user
+
+ld de,copybuf
+
+copylp3:
+;set dma
+push de
+ld c,26
+call 5
+
+ld de,file2fcb
+ld c,21
+call 5
+and a
+pop de
+jp nz,copyfail
+
+ld hl,128
+add hl,de
+ex de,hl
+ld hl,(copystop)
+and a
+sbc hl,de
+jr nz,copylp3
+
+copylp3end:
+ld a,(curuser)
+call a2user
+
+;if copystop=copybuf+copybufsize, repeat
+ld hl,(copystop)
+ld de,copybuf+copybufsize
+and a
+sbc hl,de
+jp z,copyloop
+
+;close dest file
+ld a,(destuser)
+call a2user
+ld de,file2fcb
+ld c,16
+call 5
+ld a,(curuser)
+call a2user
+
+call ilprint
+defb 'ok',10,0
+
+;copied ok
+scf
+ret
+
+
+copystop: defw 0
+copysp: defw 0
+
+
+copyfail:
+ld sp,(copysp)
+call ilprint
+defb 'failed!',10,0
+
+;close dest file if any written (which means it's been made)
+ld a,(destuser)
+call a2user
+ld a,(written)
+and a
+jr z,copyf1
+
+ld de,file2fcb
+ld c,16
+call 5
+
+copyf1:
+;delete dest file
+ld de,file2fcb
+ld c,19
+call 5
+ld a,(curuser)
+call a2user
+
+and a	;ret nc
+ret
+
+
+;** move command
+
+do_move:
+call ilprint
+defb 'Moving files:',10,0
+
+ld bc,(numfiles)
+ld hl,files
+domlp:
+ld a,(hl)
+and a
+jr z,dom1
+push bc
+push hl
+call move_one
+pop hl
+pop bc
+dom1:
+ld de,16
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,domlp
+ret
+
+;dead easy, just copy/delete
+move_one:
+call copy_one
+ret nc	;stop if it didn't copy ok
+;else delete. do_copy made filefcb the original.
+ld de,filefcb
+ld c,19
+call 5
+scf
+ret
+
+
+;** delete command
+
+do_del:
+call ilprint
+defb 'Deleting files:',10,0
+
+ld bc,(numfiles)
+ld hl,files
+dodlp:
+ld a,(hl)
+and a
+jr z,dod1
+push bc
+push hl
+call del_one
+pop hl
+pop bc
+dod1:
+ld de,16
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,dodlp
+ret
+
+del_one:
+;make fcb
+inc hl
+ld de,filefcb+1
+ld bc,11
+ldir
+ld a,(curdrive)
+ld (filefcb),a
+
+;print filename
+ld de,filefcb
+call pfcbname
+ld a,32
+call putchar
+
+;and delete
+ld de,filefcb
+ld c,19
+call 5
+inc a
+jr z,del1
+
+;it worked
+call ilprint
+defb 'ok',10,0
+scf
+ret
+
+del1:
+;failed
+call ilprint
+defb 'failed!',10,0
+and a
+ret
+
+;** view command
+
+do_view:
+ld bc,(numfiles)
+ld hl,files
+dovlp:
+ld a,(hl)
+and a
+jr z,dov1
+push bc
+push hl
+call view_one
+pop hl
+pop bc
+dov1:
+ld de,16
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,dovlp
+ret
+
+viewlin:	defb 0	;num. lines on scrn so far
+
+view_one:
+;zero out fcb
+push hl
+ld hl,filefcb
+ld de,filefcb+1
+ld bc,35
+ld (hl),0
+ldir
+pop hl
+
+;make fcb
+inc hl
+ld de,filefcb+1
+ld bc,11
+ldir
+ld a,(curdrive)
+ld (filefcb),a
+
+;this is based on ZCN's internal 'more' command
+; (hence the funny itype* labels)
+xor a
+ld (viewlin),a
+
+;open file
+ld de,filefcb
+ld c,15
+call 5
+inc a
+jr nz,itype1
+
+and a	;ret nc
+ret
+
+itype1:
+ld hl,0100h
+
+;loop around, showing one char per time
+itypelp:
+ld a,h
+and a
+call nz,ityperd
+
+ld a,(hl)
+and 07fh	;strip high bit (for wordstar-style files)
+cp 26		;is it ^Z?
+push hl		;pop fodder for viewend
+jr z,viewend	;end if so
+pop hl
+cp 10		;is it LF?
+jr z,itypelf
+
+;if it's less than 32 show as ctrl char
+cp 32
+jr nc,view1
+
+;well, unless it's tab, cr, or lf.
+;we've already dealt with lf, though.
+cp 9
+jr z,view1
+cp 13
+jr z,view1
+
+;right. show as ^x.
+push af
+ld a,'^'
+call putchar
+pop af
+add a,64
+call putchar
+jr view2
+
+view1:
+call putchar
+view2:
+inc hl
+jr itypelp
+
+;newline
+itypelf:
+ld a,(viewlin)
+inc a
+ld (viewlin),a
+ld b,a
+ld a,(lines)
+dec a
+cp b
+jr z,itlf1
+
+ld a,10
+call putchar
+inc hl
+jr itypelp
+
+itlf1:
+xor a
+ld (viewlin),a
+
+xor a
+call vwprompt
+ret z		;ret if esc/q/x
+
+inc hl
+jr itypelp
+
+
+;read in 128 more bytes and reset hl
+ityperd:
+ld de,filefcb
+ld c,20
+call 5
+ld hl,080h
+and a
+ret z
+
+;if here, end of file. prompt once more, then return
+viewend:
+ld a,1
+call vwprompt
+pop hl
+ret
+
+
+;prompt for more
+;entry: a=0 if more, a!=0 if eof
+;preserves hl
+;returns z if we want to abort, else nz
+vwprompt:
+push hl
+push af
+call ilprint
+defb 10,'[ ',0
+ld de,filefcb
+call pfcbname
+ld a,32
+call putchar
+pop af
+and a
+jr nz,vwp1
+call ilprint
+defb '-- More -- ] ',0
+jr vwp2
+vwp1:
+call ilprint
+defb '-- EOF -- ] ',0
+vwp2:
+pop hl
+
+call getch
+push af
+ld a,10
+call putchar
+pop af
+cp 27
+ret z
+cp 'q'
+ret z
+cp 'x'
+ret z
+
+ld a,1
+and a	;ret nz
+ret

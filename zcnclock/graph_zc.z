@@ -1,0 +1,476 @@
+;edited version of graph.z, cut down for zcnclock to save room.
+
+
+;graph - simple graphics routines.
+;these are *definitely* ZCN-specific. :-)
+
+
+;x pos & 7 -> mask table for pos2addr routine
+masktbl:
+defb 080h,040h,020h,010h,008h,004h,002h,001h
+
+;the line, circle etc. routines call this to draw a pixel at (de,c)
+;af/bc/de/hl allowed to corrupt
+;set this routine with 'pixstyle'
+intdpix: jp pset
+
+
+;use the routine at hl as 'pixel draw' routine for all graphics
+;routines which set more than one pixel, such as 'circle'.
+;valid choices are pset, preset and pxor, but you can supply your
+;own routine if you want. You could even use fastp{set,reset,xor},
+;but you risk a crash if an attempt is made to draw off the screen.
+;the pixel drawing routine can corrupt af/bc/de/hl, but must leave
+;ix/iy intact. it will need to do co-ordinate range checking itself
+;if you need it.
+;entry: hl=addr of pixel draw routine
+;exit:	nothing
+pixstyle:
+ld (intdpix+1),hl
+ret
+
+
+;convert pixel position (de=x, c=y) to hl=addr, c=mask w/pixel set at pos
+;af/b/de corrupt
+;this is primarily intended for internal use, but feel free to use it
+;directly.
+pos2addr:
+push de
+;get pixel mask byte first
+ld a,e
+and 7
+ld d,0
+ld e,a
+ld hl,masktbl
+add hl,de
+ld a,(hl)
+
+;y pos
+ld h,c
+ld l,d	;d is still 0
+rr h	;carry flag is 0 from the 'add hl,de'
+rr l
+rr h
+rr l
+
+;put mask (from a) into c
+ld c,a
+
+;x pos
+pop de
+ld a,e
+and 0f8h
+rr d	;get the only used bit in d
+rra
+rra
+rra
+or l
+ld l,a
+
+;effectively add 0f000h to hl
+ld a,0f0h
+or h
+ld h,a
+ret
+
+
+;set pixel at (de,c)
+;use 'fastpset' to avoid clipping
+;af/bc/de/hl corrupt
+pset:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+fastpset:
+call pos2addr
+ld a,(hl)
+or c
+ld (hl),a
+ret
+
+
+;reset pixel at (de,c)
+;use 'fastpres' to avoid clipping
+;af/bc/de/hl corrupt
+preset:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+fastpres:
+call pos2addr
+ld a,c
+cpl
+and (hl)
+ld (hl),a
+ret
+
+
+;xor pixel at (de,c)
+;use 'fastpxor' to avoid clipping
+;af/bc/de/hl corrupt
+pxor:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+fastpxor:
+call pos2addr
+ld a,(hl)
+xor c
+ld (hl),a
+ret
+
+
+
+;hline - draw a horizontal line from (de,c) to (hl,c)
+;entry: as indicated above
+;exit:	nothing
+;af/bc/de/hl corrupt
+hline:
+;make sure de is the lesser of de,hl
+and a
+push hl
+sbc hl,de
+pop hl
+;while we're at it, it's quite easy if only one pixel long!
+jp z,intdpix
+jr nc,hlinelp
+;if hl<de, swap them
+ex de,hl
+hlinelp:
+;now draw from de to hl inclusive
+push bc
+push de
+push hl
+call intdpix
+pop hl
+pop de
+pop bc
+and a
+push hl
+sbc hl,de
+pop hl
+inc de
+jp nz,hlinelp
+ret
+
+
+;vline - draw a vertical line from (de,c) to (de,b)
+;entry: as indicated above
+;exit:	nothing
+;af/bc/de/hl corrupt
+vline:
+;make sure c is the lesser of c,b
+ld a,b
+cp c
+jr nc,vline1
+;if b<c, swap them
+;a still = b
+ld b,c
+ld c,a
+vline1:
+;now draw from c to b inclusive
+dec c
+vlinelp:
+inc c
+push bc
+push de
+call intdpix
+pop de
+pop bc
+ld a,c
+cp b
+jp nz,vlinelp
+ret
+
+
+;rect - draw (outline) rectangle from (de,c) to (hl,b)
+;entry: as above
+;exit:  nothing
+;af/bc/de/hl corrupt
+rect:
+ld (intrbc),bc
+ld (intrde),de
+ld (intrhl),hl
+
+;'left' line
+call vline
+
+;'right' line
+ld bc,(intrbc)
+ld de,(intrhl)
+call vline
+
+;'top' line
+ld bc,(intrbc)
+ld de,(intrde)
+ld hl,(intrhl)
+call hline
+
+;'bottom' line
+ld bc,(intrbc)
+ld de,(intrde)
+ld hl,(intrhl)
+ld c,b
+call hline
+ret
+
+intrbc: defw 0
+intrde: defw 0
+intrhl: defw 0
+
+
+
+if fullclock		;drawline only needed for full clock
+
+
+;drawline - draw line from (de,c) to (hl,b).
+;entry: as above
+;exit:  nothing
+;af/bc/de/hl corrupt
+;adapted from Paul Heckbert's C implementation of Bresenham's algorithm
+; in "Graphics Gems".
+;XXX could do with a bit of tuning for speed...
+dlinx1: defw 0
+dliny1: defb 0
+dlinx2: defw 0
+dliny2: defb 0
+dlind: defw 0
+dlinax: defw 0		;x len of line
+dlinay: defb 0		;y len
+dlinsx: defw 0		;x dir
+dlinsy: defb 0		;y dir
+dlindx: defw 0
+dlindy: defb 0
+
+drawline:
+ld (dlinx1),de
+ld (dlinx2),hl
+ld a,c
+ld (dliny1),a
+ld a,b
+ld (dliny2),a
+
+;dx=x2-x1
+;atm, hl=x2 and de=x1
+and a
+sbc hl,de
+ld (dlindx),hl
+
+;ax=abs(dx)/2
+;atm, hl=dx
+bit 7,h
+jr z,dlin1
+;reverse 2's cpl
+dec hl
+ld a,h
+cpl
+ld h,a
+ld a,l
+cpl
+ld l,a
+dlin1:
+;so now hl is abs(dx).
+sla l
+rl h
+ld (dlinax),hl
+
+;sx=sgn(dx), where sgn(x) is -1 if <0 and 1 if >=0
+ld hl,(dlindx)
+bit 7,h
+ld hl,1
+jr z,dlin2
+dec l
+dec hl
+dlin2:
+ld (dlinsx),hl
+
+;now do the same for the y vars
+;dy=y2-y1
+ld a,(dliny1)
+ld b,a
+ld a,(dliny2)
+sub b
+ld (dlindy),a
+
+;ay=abs(dy)/2
+;dy still in a
+;XXX must be a better way to test this?
+bit 7,a
+jr z,dlin3
+neg
+dlin3:
+sla a
+ld (dlinay),a
+
+;sy=sgn(dy) (as described above)
+ld a,(dlindy)
+bit 7,a
+ld a,1
+jr z,dlin4
+neg
+dlin4:
+ld (dlinsy),a
+
+;now get (x1,y1) into (de,c)
+ld de,(dlinx1)
+ld a,(dliny1)
+ld c,a
+
+;test which version of the algorithm we use:
+; if the x length is longer or equal, we use the one here;
+; if not, we use the latter one.
+push bc
+ld hl,(dlinax)
+ld a,(dlinay)
+ld b,0
+ld c,a
+and a
+sbc hl,bc
+pop bc
+jr c,dlinydom
+
+;start off the gradient error var, d
+;d=ay-(ax/2)
+push bc
+ld bc,(dlinax)
+srl b
+rr c
+ld a,(dlinay)
+ld l,a
+ld h,0
+and a
+sbc hl,bc
+pop bc
+ld (dlind),hl
+
+dlinxdlp:
+;draw current pixel
+push de
+push bc
+call intdpix
+pop bc
+pop de
+
+;if de=x2, we're done
+ld hl,(dlinx2)
+and a
+sbc hl,de
+ret z
+
+;now take a step as appropriate considering the grad. err.
+ld hl,(dlind)
+bit 7,h
+jr nz,dlinxd1
+;so d>=0
+;y+=sy
+ld a,(dlinsy)
+add a,c
+ld c,a
+;d-=ax
+;hl is still (dlind)
+push bc
+ld bc,(dlinax)
+and a
+sbc hl,bc
+pop bc
+ld (dlind),hl
+;falls through to make the move diagonal
+
+dlinxd1:
+;so d<0
+;x+=sx
+ld hl,(dlinsx)
+add hl,de
+ex de,hl
+;d+=ay
+ld hl,(dlind)
+push bc
+ld a,(dlinay)
+ld c,a
+ld b,0
+add hl,bc
+pop bc
+ld (dlind),hl
+jr dlinxdlp
+
+
+dlinydom:
+;d=ax-(ay/2)
+push bc
+ld a,(dlinay)
+srl a
+ld c,a
+ld b,0
+ld hl,(dlinax)
+and a
+sbc hl,bc
+pop bc
+ld (dlind),hl
+
+dlinydlp:
+;draw current pixel
+push de
+push bc
+call intdpix
+pop bc
+pop de
+
+;if c=y2, we're done
+ld a,(dliny2)
+cp c
+ret z
+
+;now take a step as appropriate considering the grad. err.
+ld hl,(dlind)
+bit 7,h
+jr nz,dlinyd1
+;x+=sx
+ld hl,(dlinsx)
+add hl,de
+ex de,hl
+;d-=ay
+push bc
+ld hl,(dlind)
+ld a,(dlinay)
+ld c,a
+ld b,0
+and a
+sbc hl,bc
+ld (dlind),hl
+pop bc
+;falls through to make the move diagonal
+
+dlinyd1:
+;y+=sy
+ld a,(dlinsy)
+add a,c
+ld c,a
+;d+=ax
+push bc
+ld hl,(dlind)
+ld bc,(dlinax)
+add hl,bc
+ld (dlind),hl
+pop bc
+jr dlinydlp
+
+
+endif	;fullclock

@@ -1,0 +1,35 @@
+NAME
+	expr - evaluate expressions
+
+SYNOPSIS
+	expr expression
+
+DESCRIPTION
+	Expr evaluates an expression and outputs the result. Each
+	token of the expression must be a separate argument. 32-bit
+	signed integers are used for the arithmetic; this permits
+	(whole) numbers in the range -2147483648 to 2147483647.
+
+	The operators (in order of increasing precedence) are:
+
+	+  -	Add, subtract.
+
+	*  /  %
+		Multiply, divide, modulo (remainder).
+
+	Parentheses are used for grouping in the usual manner.
+
+BUGS
+	As with the original C version, if an expression starts with a
+	bracket but doesn't end with one, expr gives a syntax error.
+	For example, `expr ( 1 + 2 ) * 3' doesn't work. You can work
+	around this bug by rearranging the expression (in this case,
+	`3 * ( 1 + 2 )' would work), or by prefixing it with `0 +'.
+
+AUTHOR
+	Erik Baalbergen wrote the original C version.
+	The cut-down Z80 m/c port was by Russell Marks.
+	This man page is loosely based on that for GNU expr.
+
+SEE ALSO
+	calc

@@ -1,0 +1,17 @@
+NAME
+	dir - show directory (list) of files
+
+SYNOPSIS
+	dir [filespec]
+
+DESCRIPTION
+	`dir' either lists the files which are on the current
+	drive/user area, or the files which match the (optional) file
+	specification.
+
+BUGS
+	It's very similar to CP/M's `dir' - and is therefore not very
+	nice. Use `ls' instead. :-)
+
+SEE ALSO
+	ls

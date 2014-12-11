@@ -1,0 +1,342 @@
+;view.z - viewer for man.
+;
+;XXX could do with a front-end to read ordinary files in, as this
+;isn't a bad file viewer really. Certainly it's better than `more'... ;-)
+
+numlines: defw 0
+curline: defw 0		;current top line of page
+oldcurline: defw 0
+lpp: defw 9		;lines per page (minus one for status line)
+			;(it's a defw to make maths with curline etc.
+			;easier.)
+nullline: defb 0	;a blank line pointed to by lpp extra lines
+			;added by idxlines to make disp_page easier.
+
+
+view:
+;correct lpp if on NC200
+ld c,144
+call 5
+and a
+jr nz,view1
+ld a,20
+ld (lpp),a
+
+view1:
+call idxlines
+
+;give up if zero lines
+ld hl,(numlines)
+ld a,h
+or l
+ret z
+
+ld hl,0
+ld (curline),hl
+dec hl
+ld (oldcurline),hl
+
+viewlp:
+call fix_pos	;fix any invalid curline position (off the end, etc.)
+
+ld hl,(curline)
+ld de,(oldcurline)
+and a
+sbc hl,de
+call nz,disp_page
+
+ld hl,(curline)
+ld (oldcurline),hl
+
+call getch
+ld hl,viewlp
+push hl		;we ret to viewlp
+cp 'q'
+jr z,view_q
+cp 27
+jr z,view_q
+cp ' '
+jr z,view_spc
+cp 'b'
+jr z,view_b
+cp 13
+jr z,view_down
+cp 10
+jr z,view_down
+cp '<'
+jr z,view_top
+cp '>'
+jr z,view_end
+cp 'P'-040h
+jr z,view_up
+cp 'N'-040h
+jr z,view_down
+cp 'E'-040h
+jr z,view_up
+cp 'X'-040h
+jr z,view_down
+;didn't match any
+ret
+
+
+
+view_up:
+ld hl,(curline)
+dec hl
+ld (curline),hl
+ret
+
+view_down:
+ld hl,(curline)
+inc hl
+ld (curline),hl
+ret
+
+view_cr:
+ld hl,(curline)
+inc hl
+ld (curline),hl
+ret
+
+
+view_top:
+ld hl,0
+ld (curline),hl
+ret
+
+view_end:
+ld hl,(numlines)
+dec hl
+ld (curline),hl
+ret
+
+view_q:
+;pop our artifical ret addr
+pop hl
+;print CR then 40 spaces (to remove status line) then CR again
+ld a,13
+call putchar
+ld b,40
+viewqlp:
+ld a,32
+call putchar
+djnz viewqlp
+ld a,13
+call putchar
+;and ret to man.z
+ret
+
+
+view_spc:
+;move on a page
+ld hl,(curline)
+ld de,(lpp)
+add hl,de
+ld (curline),hl
+ret
+
+
+view_b:
+;move back a page
+ld hl,(curline)
+ld de,(lpp)
+and a
+sbc hl,de
+ld (curline),hl
+ret
+
+
+fix_pos:
+;is curline<0?
+ld hl,(curline)
+bit 7,h		;good enough
+jr z,fixp1
+
+ld hl,0
+ld (curline),hl
+ret
+
+fixp1:
+;is curline+lpp>=numlines?
+ld hl,(curline)
+ld de,(lpp)
+add hl,de
+ld de,(numlines)
+and a
+sbc hl,de
+ret c
+
+;it is. if numlines<lpp move to top, else move to numlines-lpp.
+ld hl,(numlines)
+ld de,(lpp)
+and a
+sbc hl,de
+jr nc,fixp2
+
+ld hl,0
+ld (curline),hl
+ret
+
+fixp2:
+ld hl,(numlines)
+ld de,(lpp)
+and a
+sbc hl,de
+ld (curline),hl
+ret
+
+
+;make lines asciiz and build up lineptrs array
+idxlines:
+ld hl,0
+ld (numlines),hl
+ld hl,filedat
+;de stores ptr to most recent start-of-line
+ld d,h
+ld e,l
+
+idxlinlp:
+ld a,(hl)
+cp 13
+jr z,idxlin1
+cp 10
+jr z,idxlin2
+cp 26
+jr z,idxend
+inc hl
+jr idxlinlp
+
+idxlin1:
+;CRs are removed but otherwise ignored
+ld (hl),0
+inc hl
+jr idxlinlp
+
+idxlin2:
+;LFs mark EOL
+ld (hl),0
+inc hl
+push hl
+ld hl,(numlines)
+add hl,hl
+ld bc,lineptrs
+add hl,bc
+ld (hl),e
+inc hl
+ld (hl),d
+ld hl,(numlines)
+inc hl
+ld (numlines),hl
+pop hl
+ld d,h
+ld e,l
+jr idxlinlp
+
+idxend:
+ld (hl),0	;not really needed
+
+;now add lpp extra lines to make disp_page ok for cases where
+;numlines<lpp.
+ld hl,(numlines)
+add hl,hl
+ld de,lineptrs
+add hl,de
+ld de,nullline
+ld a,(lpp)
+ld b,a
+idxendlp:
+ld (hl),e
+inc hl
+ld (hl),d
+inc hl
+djnz idxendlp
+ret
+
+
+;display page from (curline) onwards, including status line.
+disp_page:
+call ilprint
+defb 13,10,0
+
+ld hl,(curline)
+add hl,hl
+ld de,lineptrs
+add hl,de
+ld a,(lpp)
+ld b,a
+
+disppglp:
+push bc
+;get line addr
+ld e,(hl)
+inc hl
+ld d,(hl)
+inc hl
+push hl
+ex de,hl
+call strprint
+call ilprint
+defb 13,10,0
+pop hl
+pop bc
+djnz disppglp
+
+;now do status line
+call ilprint
+defb '-- line ',0
+
+ld hl,(curline)
+inc hl
+ex de,hl
+call dispdec
+
+ld a,'/'
+call putchar
+
+ld de,(numlines)
+call dispdec
+
+call ilprint
+defb ' (',0
+
+ld hl,(curline)
+ld de,(lpp)
+add hl,de
+
+;multiply by 100
+add hl,hl	;*2
+add hl,hl	;*4
+ld d,h
+ld e,l		;save *4
+add hl,hl	;*8
+add hl,hl	;*16
+add hl,hl	;*32
+ld b,h
+ld c,l		;and *32
+add hl,hl	;*64
+add hl,bc	;*96
+add hl,de	;*100
+
+;divide by numlines
+ld de,(numlines)
+call divide
+
+;now have percentage - if >=100, say "END" :-)
+ld a,l
+cp 100
+jr nc,disppg1
+
+ex de,hl
+call dispdec
+ld a,'%'
+call putchar
+jr disppg2
+
+disppg1:
+call ilprint
+defb 'END',0
+
+disppg2:
+call ilprint
+defb ') -- ',0
+ret

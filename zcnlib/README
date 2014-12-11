@@ -1,0 +1,80 @@
+README for `zcnlib' directory
+-----------------------------
+
+What is it?
+-----------
+
+zcnlib is a collection of useful routines for you to use in your own
+programs. All files in this directory are public domain; you can use,
+modify and distribute them as you wish with no restrictions. I do
+however *request* that you consider making source to programs which
+use them as available as any resulting executable. Using the GNU
+general public license is one way to do this and ensure source remains
+available. Having source makes things easier for everyone - even
+assembly programmers. :-)
+
+You can textually incorporate the files into your programs, or
+concatenate them together when assembling, or link with them. (Though
+to use linking, you'll probably need to edit the files a bit.) I find
+concatenation when assembling the easiest way, but textually
+incorporating them lets you edit out unused routines to get the
+program as small as possible.
+
+Note that zcnlib is Z80-specific. This means that programs using it
+won't work on 8080 or 8085-based systems. Some parts are also
+ZCN-specific, such as the graphics routines. Many routines in int32.z
+use undocumented instructions, which may cause it to fail under some
+incomplete Z80 emulators, such as the Linux `cpm' emulator.
+
+
+But what does it *do*?
+----------------------
+
+Well, do you want to program in assembly, but without all the grief
+that comes from even having to print a number? Tried using C, but find
+both the compilers and the output executable too large and unwieldy?
+Then zcnlib could be the answer. Maybe. :-)
+
+It's a collection of routines designed to take some of the drudgery
+out of Z80 assembly programming on ZCN and CP/M in general. Included
+is a file I/O library modelled on a subset of C's stdio; clones of
+Unix's getopt, and C's argc/argv, string, and `ctype' routines;
+graphics routines; a driver for Microsoft-compatible mice; multiply,
+divide, and number I/O functions; a random number generator; and more.
+
+It shouldn't redline your bloatometer either. For example, the stdio
+subset takes just over 1k, and the maths routines take about 250
+bytes.
+
+Each source file is self-documenting, and independent of the others
+except where stated otherwise. So for more info, go and RTFS. :-)
+(Each routine is documented just before its definition, and there are
+sometimes general notes at the top of the file.) Alternatively, a more
+readable description of the routines is in `zcnprog.txt', my guide to
+programming CP/M and ZCN.
+
+You should assume routines corrupt any `normal' registers not used for
+return values. Usually this means af/bc/de/hl, but in some cases -
+mostly in stdio, graph, graph2 and mouse - it includes ix and iy too.
+The alternates are left alone by almost all routines - they are used
+only by some in int32.
+
+
+Demos
+-----
+
+There are a few demos of some of the graphics/mouse/rand routines
+here. Since all use the graphics routines, they're all ZCN-specific.
+
+`floodemo.com' is a demo of the flood-fill routine.
+
+`tridemo.com' draws random filled triangles until you press a key.
+
+`msdemo.com' lets you draw with the mouse until you press a key. Use
+the left button to draw, and the right button to `undraw'. You need a
+Microsoft-compatible serial mouse for this program to work. You might
+want to turn up the intensity a bit so you can see the mouse pointer
+in motion, which is otherwise rather difficult to see.
+
+
+-Rus.

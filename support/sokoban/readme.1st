@@ -1,0 +1,19 @@
+This is a CP/M port of a Unix curses clone of sokoban, along with an
+executable patched to run in emulated 80x24 on ZCN.
+
+To run it on ZCN, you need to copy both sokoban.com and soklevls.dat.
+
+To run on any other CP/M, you'll probably need to hack the clear() and
+move() routines in sokzcn.c and recompile it (with Hitech C); see
+sokzcn.c for more.
+
+The various other README files aren't too relevant any more, but
+they're the READMEs supplied by the author(s) of the version I ported.
+FYI, and all that. :-)
+
+I combined all the level files into one 'soklevls.dat' file. The format
+is that of the old screen.?? files, but with a ^L separating each level.
+This should make it easy to add your own levels; in VDE you can insert a
+^L by doing ^P ^L. The hard bit is designing the levels. :-)
+
+-Rus.

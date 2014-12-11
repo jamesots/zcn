@@ -1,0 +1,141 @@
+;args - a clone of C's arg[cv].
+;requires string and ctype
+
+;NB: *this lowercases the cmdline* as well as splitting it into
+; separate args.
+
+;use by calling 'makeargv' as early as possible in your program. Then
+; you can use argc (really a byte, but you can read it as a word if
+; that's more convenient) and the argv[] array to deal with args.
+; the routine 'getargv' returns hl=argv[a]. as you might expect, the
+; strings in argv[] are asciiz.
+
+;for cpm zmac:
+;ZZglobal argv
+;ZZglobal argc
+;ZZglobal makeargv
+;ZZglobal getargv
+
+;this holds a copy of the cmdline
+argline: defs 128
+
+;this holds pointers to the (up to 64) args
+argv: defs 128
+
+argc:	defw 0		;arg count, includes 'program name'
+
+argempty: defb 0	;zero-length string used for argv[0]
+
+
+;makeargv - make argv[] and argc from cmdline
+;entry:	none (but cmdline at 80h-ffh must be intact)
+;exit:	none (but argv/argc filled)
+;af/bc/de/hl/ix corrupt, cmdline corrupt
+;notes:
+;- after calling this routine, you can do whatever you want with
+;   80h-ffh, the argc/argv aren't affected.
+;- there is no way of quoting arguments; one or more spaces always
+;   separates them, no matter what.
+
+makeargv:
+;make argv[0] point to argempty
+ld hl,argempty
+ld (argv),hl
+
+;make cmdline asciiz
+ld a,(080h)
+ld l,a
+ld h,0
+ld de,081h
+add hl,de
+ld (hl),0
+
+;we go through the cmdline, copying asciiz args to argline as we go,
+;and also filling argv[].
+;ix=pointer to current argv element,
+;hl=pointer in cmdline
+;de=pointer in argline
+
+ld ix,argv+2	;skip argv[0], of course
+ld hl,081h
+ld de,argline
+ld c,1		;argc
+
+margvlp:
+;point to next arg
+call argfnspc
+
+;if a is zero, no next arg
+and a
+jr z,margvdun
+
+push hl
+;point to past end of arg
+call argfspc
+ld (hl),0
+pop hl
+and a		;test for nul
+push af
+ld (ix+0),e
+ld (ix+1),d
+ex de,hl
+call strcpy
+ex de,hl
+inc hl
+inc de
+inc ix
+inc ix
+inc c
+pop af
+jr nz,margvlp
+
+margvdun:
+ld a,c
+ld (argc),a
+
+;finally, lowercase all of argv[].
+ld hl,argline
+ld b,128
+margvlp2:
+ld a,(hl)
+call tolower
+ld (hl),a
+inc hl
+djnz margvlp2
+ret
+
+;find next space
+argfspc:
+ld a,(hl)
+cp 32
+ret z
+and a
+ret z
+inc hl
+jr argfspc
+
+;find next non-space
+argfnspc:
+ld a,(hl)
+cp 32
+ret nz
+inc hl
+jr argfnspc
+
+
+;getargv - hl=argv[a]
+;entry: a=argv element to look up
+;exit:	hl=addr of argv[a]
+getargv:
+ld l,a
+ld h,0
+add hl,hl
+push de
+ld de,argv
+add hl,de
+ld e,(hl)
+inc hl
+ld d,(hl)
+ex de,hl
+pop de
+ret

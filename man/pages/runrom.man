@@ -1,0 +1,59 @@
+NAME
+	runrom - use the ROM software
+
+SYNOPSIS
+	runrom
+
+DESCRIPTION
+	`runrom' starts up the ROM software, reloading a
+	previously-saved `runrom.ram' if present. (If no `runrom.ram'
+	is present, a new file is created - this requires 64k of free
+	disk space - and the ROM software is cold-booted.) The memory
+	card must be bootable for `runrom' to work (it aborts with an
+	error if it's not).
+
+	After the ROM s/w starts up, you can use it as normal - the
+	ROM is in complete control, with no emulation or other strange
+	things going on. When you want to return to ZCN, just use
+	Function-X to boot off the same card you ran `runrom' from.
+	That's very important - *it must be the same card!* When you
+	do that, the snapshot is saved ready for the next time you
+	want to use `runrom', and ZCN is booted.
+
+	In case it's not already been made clear, `runrom.ram' is a
+	snapshot of the NC100's memory, loaded just before the ROM s/w
+	runs, and saved just before ZCN is booted. This means that all
+	your files and configuration settings will be intact - in fact
+	it also means that, in effect, the ROM never knows ZCN has
+	been running!
+
+	Since `runrom.ram' is just an ordinary file, you can transfer
+	files to/from the ROM software using it (using `rrxfer'), or
+	backup/restore it, or keep it compressed (with pmarc, say)
+	until you need it.
+
+WHAT TO DO IF THE ROM SOFTWARE CRASHES
+	Yes, in the immortal words of the ZX81 manual, "all software
+	has bugs", and the ROM software is no exception. And of
+	course, m/c programming makes it easy to crash it too. :-)
+
+	If you do manage to crash it somehow, you'll have to reboot
+	the ROM, and clearly after having to do that you won't want
+	`runrom.ram' to be updated when you return to ZCN! You can
+	avoid this by, instead of simply pressing Function-X, holding
+	down *both* shift keys, and *while you're doing that* pressing
+	Function-X. If you do that, `runrom.ram' won't be updated, and
+	the next time you do `runrom' your old data will still be
+	intact.
+
+FILES
+	runrom.ram - used to save the contents of memory, along with
+		the stack pointer and the contents of 0066h.
+
+BUGS
+	The screen is briefly corrupted when switching. This isn't
+	actually a bug, but is mentioned here in case it worries
+	anybody. :-)
+
+SEE ALSO
+	rrxfer

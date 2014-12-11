@@ -1,0 +1,1165 @@
+;ZCN v1.3 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2000 Russell Marks. See `zcn.txt' for license details.
+
+;ccp routines and main loop
+
+
+subtail equ 0e880h	;tmp. sav for cmdtail used with SUB file
+cmdbuf	equ 0e900h	;buffer used for reading command line
+cmdsiz	equ cmdbuf+1	;address of 'chars read' count for above
+cmdtail equ 080h	;command tail passed to program
+
+userfcb1 equ 05ch	;the two preset fcbs.
+userfcb2 equ 06ch
+
+;these should stay in same order and stay consecutive.
+conout: defb 0
+conin:  defb 0
+
+;possible values of (conin) and (conout) other than 0, which = 'crt'.
+;(or perhaps that should be 'lcd' :-))
+auxin	equ 1
+auxout	equ 1
+lstout	equ 2
+
+realbeep: defb 0	;make a noise for ^G if non-zero
+batwarn:  defb 1	;warn if any batteries are low
+
+subpos: defw 0		;position in current record of .sub file
+
+;insub, subfcb, and comfcb are in main.z
+
+;prompt string (initialised by init.z, poss. altered by `%' cmd).
+;max 25 chars - extra char below as it's asciiz.
+maxprm	equ 25		;max prompt len
+prompt:
+defb 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0
+
+
+;warm boot starts ccp at mainloop
+mainloop:
+crlf_op: ld a,0		;modified by `crlf' and start.z
+forcecrlf:	;enter here to force CR/LF if a is non-zero (used by `"')
+and a
+call nz,do_crlf
+
+;an alternative exit for internal commands wishing to skip the crlf
+;printed before the ccp prompt.
+skipcrlf:
+
+mainlp2:
+ld sp,(cpmstack)
+
+;reset screen location in case program changed it
+if IS_NC200
+ld a,0e0h
+else
+ld a,0f0h
+endif
+out (0),a
+;and reset font address
+ld hl,0ea00h
+ld (fontdata),hl
+
+xor a
+ld (tightint),a	;full interrupt-handling
+ei
+ld a,(insub)
+and a
+jr nz,ccpskp2	;if not running .sub...
+
+call battchk	;do battery checks
+call doprompt	;print prompt
+
+ccpskp2:
+
+;save 080h in case it's a hitech C exit() value.
+;doing this means people can check it with `ifpeek', from programs, etc.
+ld a,(080h)
+ld (3),a	;this is reasonable since ZCN doesn't have IOBYTE
+
+;init comfcb/cmdbuf
+call getcmd_init
+;read command line
+call getcmd
+
+gotcmd:		;jumped to from internal.z by `ifpeek'
+;fixup command line and get ready to run program
+call grokclin
+and a
+jr z,mainlp2	;if it was blank, try again
+
+;make the two fcbs from cmdline at cmdbuf
+call makefcbs
+call fixstars	;turn * into ?s if needed
+
+;check against list of internal programs and run if a match found
+call runint
+
+;run program, if external
+;if it succeeds, it jumps (rather indirectly) to mainloop.
+call runext
+
+;try running a .sub file
+call runsub
+
+;it didn't do that, so no such command.
+;I'm not fond of the traditional error, so I use a (slightly)
+; more meaningful one, "Command not found".
+call ilprint
+defb 'Com',_ma,'n',_d_,_no,'t found',0
+jr mainloop
+
+
+;              12345678
+spcscom: defb '        COM'
+
+;get ready for reading a command-line
+;(blanks out comfcb and cmdbuf)
+getcmd_init:
+;blank out our COM loading fcb ready for loading/running command.
+;zero all
+ld hl,comfcb
+push hl
+ld bc,33
+call zeroblk
+;set filenameext to <spaces>COM
+ld hl,spcscom
+pop de
+inc de		;comfcb+1
+;b still zero from zeroblk
+ld c,11
+ldir
+
+;blank cmdline buf
+ld hl,cmdbuf
+;b still zero from ldir
+ld c,128
+call zeroblk
+ret
+
+
+;gets a command line into cmdbuf
+getcmd:
+;get a command line
+ld a,(insub)
+and a
+jp nz,getsubln
+
+ld hl,cmdbuf	;use cmdline as buffer
+ld (hl),125
+ex de,hl
+call bgetbuf	;fill buffer with input
+ld a,10
+jp tputchar	;linefeed
+
+
+;groks command line at cmdbuf.
+;uppercases, splits, builds buffer at 80h, builds com-loading fcb
+;DOES NOT build the two cmdline fcbs.
+grokclin:
+;if len=0 give up now.
+ld a,(cmdsiz)
+and a
+ret z
+
+;put a zero after the command line.
+ld a,(cmdsiz)
+ld hl,cmdbuf+2
+ld b,0
+ld c,a
+add hl,bc
+ld (hl),b
+
+;if 1st char is a double quote (") then echo the rest.
+;also, if 1st char is a single quote (') echo but without crlf.
+;the prompt-set command (%) needs similar provision
+; (the routine jp'd to for that is in internal.z, BTW).
+ld a,(cmdbuf+2)
+cp '"'
+jr z,gclprdo
+cp 027h		;guess :-)
+jr z,gclprdo
+cp '%'
+jp z,iprompt
+jr gclpreh
+
+gclprdo:
+;hl still points to byte after cmdline, so...
+ld (hl),'$'
+ld de,cmdbuf+3
+call bdprint
+ld a,(cmdbuf+2)
+cp '"'
+jp z,forcecrlf
+jp skipcrlf
+
+gclpreh:
+;uppercase the lot (it sucks, but cp/m does it so I have to really...)
+ld hl,cmdbuf+2
+ld a,(cmdsiz)
+ld b,a
+gcl0:
+ld a,(hl)
+call islower
+jr nc,gcl0a
+res 5,a
+ld (hl),a
+gcl0a:
+inc hl
+djnz gcl0
+
+;now split it up into 'head' - command name
+;...and 'tail' - everything after
+;first, remove any whitespace at start of line.
+dec b	;was `ld b,0ffh' - b was zero from djnz, so... :-)
+ld hl,cmdbuf+1
+gcl1:
+inc b
+inc hl
+ld a,(hl)
+and a
+ret z		;if a=0, nothing real entered - exit with error
+call isblank
+jr z,gcl1
+
+;reduce (cmdsiz) by right amount if needed
+ld a,b
+and a
+jr z,gcl1a
+
+ld a,(cmdsiz)
+sub b
+ld (cmdsiz),a
+
+;ok, found 1st real char - now copy that back
+ld b,0
+ld c,a
+inc c		;make sure we copy the zero too
+ld de,cmdbuf+2
+ldir
+
+gcl1a:
+;check if char at cmdbuf+3 is a colon - that is, if we have a filename
+;like 'a:wibble'.
+ld a,(cmdbuf+3)
+cp ':'
+jr nz,gcl1b
+ld hl,cmdbuf+4
+ld de,cmdbuf+2
+ld a,(de)
+sub 64
+ld (comfcb),a
+ld a,(cmdsiz)
+sub 2
+ld (cmdsiz),a
+ld b,0
+ld c,a
+inc c		;make sure we copy the zero too
+ldir
+
+ld a,(cmdbuf+2)
+call isblank
+jr z,gcldone	;if no more after x: give up
+
+gcl1b:
+;now find 1st whitespace char after command name.
+;when finished, c will hold length of cmdname.
+ld hl,cmdbuf+2
+ld c,0
+gcl2:
+inc c
+inc hl
+ld a,(cmdsiz)
+cp c
+jr z,gcl2a	;end of cmdline
+ld a,(hl)
+call isblank
+jr nz,gcl2
+
+gcl2a:
+push hl
+push bc
+
+;so hl is pointing at first blank char. after command name.
+;copy command name into fcb
+ld a,c
+cp 8
+jr c,gcl3
+ld c,8
+gcl3:
+ld hl,cmdbuf+2
+ld de,comfcb+1
+ld b,0
+ldir
+
+;now copy the rest of the cmdline to the buffer at 80h.
+;(well, 81h. the byte count goes at 80h.)
+;first, zero the cmdline buffer
+ld hl,cmdtail
+;b still zero from ldir
+ld c,128
+call zeroblk
+
+pop bc
+pop hl
+ld a,(cmdsiz)	;command-line size
+sub c		;minus length of cmdname
+ld (cmdtail),a
+jr z,gcldone
+
+ld b,0
+ld c,a
+ld de,cmdtail+1
+ldir
+
+gcldone:
+ld a,1		;grokked ok
+ret
+
+
+;returns zero flag set if 'blank' or 'whitespace', i.e. TAB or SPC or
+;NUL (yes, NUL is a curious thing to have as whitespace, but it's
+;really useful to include it, in the context this routine is used).
+isblank:
+and a
+ret z
+cp 9
+ret z
+cp 32
+ret
+
+
+;expand * into ?s in fcbs as needed.
+fixstars:
+ld de,userfcb1
+call fixstar
+ld de,userfcb2
+;FALLS THROUGH
+
+;* -> ?s in fcb (in zero page) at de.
+fixstar:
+inc e
+ld b,8
+call fstrbit
+ld b,3
+;FALLS THROUGH
+
+fstrbit:
+ld c,0		;non-zero if '*' found
+fstrlp1:
+ld a,c
+and a
+jr z,fstr0
+fstrm1:
+ld a,'?'
+call putfcbck	;like 'ld (de),a'
+fstr0:
+ld a,(de)
+cp 0f7h
+jr nz,fstr0a
+ld a,(real66)	;must be (66)
+fstr0a:
+cp '*'
+jr nz,fstr1
+inc c
+jr fstrm1	;what is this? spag basic? :-)
+fstr1:
+inc e		;we know it's in zero page
+djnz fstrlp1
+ret
+
+
+;generate the preset fcbs from cmdline now at 081h.
+makefcbs:
+ld hl,cmdtail
+ld b,(hl)
+inc hl
+ld de,05ch
+call genfcb
+
+ld de,06ch
+;FALLS THROUGH
+
+;entry: b=size of remaining cmdlin
+;	hl=addr of remaining cmdlin
+;	de=fcb addr
+;exit:	b=size of *new* remaining cmdlin
+;	hl=addr of *new* remaining cmdlin
+
+;this currently allows filenames of the form '.xxx', i.e. no filename,
+;only an extension - is this a bad idea?
+;this means it allows filenames like 'ditdedat....' :-)
+genfcb:
+ld (tmpde),de
+
+;zero (or blank) first 16 bytes of fcb (which is all we setup)
+call clrfcb16
+
+;don't bother if cmdlin is len 0
+ld a,b
+and a
+ret z
+
+;set user num.
+;de still fcb (clrfcb16 saves de)
+push hl
+ld hl,fcbuserno
+add hl,de
+ld a,(curuser)
+ld (hl),a
+pop hl
+
+;look for non-blank in cmdlin
+dec hl
+
+gflp1:
+inc hl
+ld a,(hl)
+call isblank
+jr nz,gf1
+djnz gflp1
+ret z
+gf1:
+
+;got it. check for drive identifier.
+inc hl
+ld a,(hl)
+dec hl
+cp ':'
+jr nz,gf1a
+
+ld a,(hl)
+sub 64
+push hl
+ld hl,(tmpde)
+ld (hl),a
+pop hl
+inc hl
+inc hl
+dec b
+dec b
+ret z	;finish if drive id. was all that was left
+
+;start copying to fcb, and keep going until we reach
+;whitespace again.
+;to deal with the problem of filename=8 chars max., we keep a count of
+;chars done so far in c.
+gf1a:
+ld c,0
+ld de,(tmpde)
+inc de	;move fcb ptr. to start of filename
+
+gflp2:
+ld a,(hl)
+cp '.'
+jr z,gfnowext
+call isblank	;i.e. tab, space, or 00h
+ret z		;finished if blank
+;if we're not past the 8 char. limit...
+ld a,c
+cp 8
+jr nc,gf2	;skip if c>=8
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+ld (de),a
+inc de
+
+gf2:
+inc c
+inc hl
+djnz gflp2
+ret z
+
+gfnowext:
+;we're currently pointing at a dot.
+inc hl
+
+;do much the same for the extension.
+ld c,0
+push hl
+ld hl,(tmpde)
+ld de,9
+add hl,de
+ex de,hl
+pop hl
+;fcb ptr. now at start of extension
+
+gflp3:
+ld a,(hl)
+call isblank	;i.e. tab, space, or 00h
+ret z		;we're done if it's a blank
+;if we're not past the 3 char. limit...
+ld a,c
+cp 3
+jr nc,gf3	;skip if c>=3
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+call putfcbck	;put char in (de) but check for 066h
+inc de
+
+gf3:
+inc c
+inc hl
+djnz gflp3
+
+;done
+ret
+
+
+;like 'ld (de),a' but puts a in (real66) if de=066h.
+;preserves all but flags
+putfcbck:
+push de
+push hl
+ex de,hl
+ld de,066h
+and a
+sbc hl,de
+pop hl
+pop de
+jr z,pfc66
+;nope, it's ok.
+ld (de),a
+ret
+
+pfc66:
+;better use (real66).
+ld (real66),a
+ret
+
+
+;clear fcb, being careful about 066h.
+;de=fcb
+;preserves bc/de/hl
+clrfcb16:
+push bc
+push de
+push hl
+ex de,hl
+ld (hl),0
+inc hl
+ld d,h
+ld e,l
+inc de
+ld bc,8		;filename and 1st char of ext. (i.e. 8+1 but -1 too)
+ld a,32
+ld (hl),a
+ldir
+call putfcbck
+inc de
+ld (de),a
+inc de
+;now four more bytes to zero
+ex de,hl
+;b still zero from ldir (putfcbck saves bc)
+ld c,4
+call zeroblk
+pop hl
+pop de
+pop bc
+ret
+
+
+;returns with a=0 if couldn't open, a!=0 otherwise
+opencom:
+;try in current user
+ld de,comfcb
+call bfopen
+inc a
+ret nz		;ret if ok
+
+;try user 0 (just in case we didn't then)
+ld a,(curuser)
+ld d,a
+push de
+xor a
+ld (curuser),a
+ld de,comfcb
+call bfopen
+pop de
+inc a
+ret nz		;ret if ok
+ld a,d
+ld (curuser),a	;change unum back
+ld e,d
+
+;try A: (user 0) if not on A: and no drive specified.
+ld a,(comfcb)
+ld d,a
+and a
+ld a,0
+ret nz
+ld a,(curdrive)
+and a
+ret z
+xor a
+ld (curuser),a
+inc a
+ld (comfcb),a
+;ok, try again on A: user 0
+push de
+ld de,comfcb
+call bfopen
+pop de
+inc a
+ret nz		;exit if ok
+ld a,d
+ld (comfcb),a	;restore drive/user if not
+ld a,e
+ld (curuser),a
+xor a
+ret
+
+
+
+;load and execute com file.
+olduser: defb 0
+runext:
+;save old usernum
+ld a,(curuser)
+ld (olduser),a
+
+;open file
+call opencom
+and a
+ret z
+
+;load it
+ld hl,0100h
+rprdlp:
+ld (dmapos),hl
+push hl
+ld de,comfcb
+call bfread
+pop hl
+ld de,128
+add hl,de
+push af
+ld de,(0006h)
+dec d
+ld a,h
+cp d
+jr nc,retoobig
+pop af
+and a
+jr z,rprdlp
+
+ld a,(olduser)
+ld (curuser),a	;put usernum back
+
+;see if there's a ^C in the keyboard buffer - but be careful
+;not to remove a character if it's not!
+call kseechar
+jr nc,runext1
+cp 3
+jr nz,runext1
+
+call kgetchar	;there is a ^C, so remove it.
+call submtfin	;quit any running .sub and delete any current $$$.SUB
+jp bctrlc	;print "^C" and quit to ccp (via warm boot)
+
+runext1:
+;pass control to program
+ld hl,080h
+ld (dmapos),hl
+ld sp,(cpmstack)
+ld hl,mainloop
+push hl
+jp 0100h
+
+retoobig:
+ld a,(olduser)
+ld (curuser),a	;put usernum back
+call ilprint
+defb 'Com',_ma,'n',_d_,'fil',_e_,'i',_s_,'larger than TPA',0
+jp mainloop
+
+
+;see if there's a .sub file matching the command name.
+subuser: defb 0
+runsub:
+ld hl,comfcb+9
+ld (hl),'S'
+inc hl
+ld (hl),'U'
+inc hl
+ld (hl),'B'
+
+ld a,(curuser)
+ld (olduser),a	;save unum
+
+;open file
+call opencom
+and a
+ret z
+
+;if we could open it ok, then:
+;save unum it's in
+ld a,(curuser)
+ld (subuser),a
+;restore old user
+ld a,(olduser)
+ld (curuser),a
+
+;set the 'take commands from file' flag...
+ld a,1
+ld (insub),a
+
+;...copy cmdtail to tmp. cmdtail sav in case first line is 
+;'submit foo.sub'...
+;(this buffer will only be valid until the 'find free block'
+;routine is called, i.e. until 'stat' or any file create/write)
+ld hl,cmdtail
+ld de,subtail
+ld bc,128
+ldir
+
+;...copy fcb to subfcb...
+ld hl,comfcb
+ld de,subfcb
+;b still zero from ldir
+ld c,33
+ldir
+
+;...and zero pos. in dma
+ld hl,080h
+ld (subpos),hl
+;and zero rand. rec stuff
+ld (subfcb+fcbrand),bc
+jp skipcrlf
+
+
+;redir. stuff
+redirbit:
+ld hl,conout
+ld a,(comfcb+2)
+ld b,2
+cp 'P'
+ret z
+dec b
+cp 'S'
+ret z
+dec b
+ret
+
+redirout:
+call redirbit
+ld (hl),b
+rst 0
+
+redirin:
+call redirbit
+redirin2:
+ld a,b
+and 1		;so `<p' is equivalent to `<'
+inc hl
+ld (hl),a
+rst 0
+
+redirbth:
+call redirbit
+ld (hl),b
+jr redirin2	;so `|p' is like `|' then `>p'
+
+
+;check for internal command and run it if found.
+runint:
+;put rst 28h stuff in place (used by internal commands) in case
+;one is run.
+ld a,0c3h
+ld (028h),a
+ld hl,ilprint
+ld (029h),hl
+
+;first check for drive change, e.g. "B:"
+;this will show as (comfcb)!=0 and (comfcb+1)==32
+ld hl,comfcb
+ld a,(hl)
+inc hl
+and a
+ld b,a
+ld a,(hl)	;(comfcb+1)
+jr z,runint0	;skip if there's no drive spec.
+cp 32
+ld a,b
+jp z,ichngdrv
+;if we got here, it has a drive spec. and a name. That's fine, but it
+;means it can't be an internal command, so ret.
+ret
+
+runint0:
+;now check for console in/out redir to serial/printer
+;a is still (comfcb+1)
+cp '>'
+jr z,redirout
+cp '<'
+jr z,redirin
+cp '|'
+jr z,redirbth
+
+;and now, actually check for internal commands
+ld a,32
+ld (comfcb+9),a	;so space marks end of command typed
+ld hl,intlist
+
+rilp1:
+ld a,(hl)
+inc a
+jr z,rifin	;no more entries - give up
+
+;set riop+1 to be addr of next entry.
+;a is (hl)+1 - we want to add (hl)+3
+ld b,0
+ld c,a
+inc c
+inc c
+add hl,bc
+ld (riop+1),hl
+;the add won't have carried, so carry is zero
+sbc hl,bc	;quicker than push/pop
+
+;test one entry
+ld de,comfcb+1
+ld b,(hl)
+inc hl
+rilp2:
+ld a,(de)
+cp (hl)
+jr z,ri1
+rinext:
+riop: ld hl,0	;modified to be addr of next entry
+jr rilp1
+ri1:
+inc hl
+inc de
+djnz rilp2
+
+;if here, we've matched it. but if this isn't the end of the command
+;name, i.e. (de) isn't a space, then loop again.
+ld a,(de)
+cp 32
+jr nz,rinext	;this makes sure hl is set appropriately
+
+;ok, we have an internal command which matches.
+;get the address and run it.
+ld e,(hl)
+inc hl
+ld d,(hl)
+
+ld sp,(cpmstack)
+ld hl,mainloop
+push hl
+ld hl,080h
+ld (dmapos),hl
+ex de,hl
+jp (hl)		;on entry, de=80h (may be useful to save space?)
+
+rifin:
+;none matched, put back the 'C' of 'COM'
+;this is suitably unpleasant, but them's the breaks
+ld a,'C'
+ld (comfcb+9),a
+ret
+
+
+;stuff for .sub reading
+readsubr:
+;set .sub unum
+ld hl,curuser
+ld a,(hl)
+ld (olduser),a
+ld a,(subuser)
+ld (hl),a
+
+ld hl,080h
+ld (dmapos),hl
+ld de,subfcb
+call brread
+and a
+ld a,(olduser)
+ld (curuser),a	;reset unum
+ret z
+;if not, end of file - stop subbing and return to ccp main loop
+call submtfin
+jp mainloop
+
+newsubrd:
+push bc
+push de
+ld hl,(subfcb+fcbrand)
+inc hl
+ld (subfcb+fcbrand),hl
+call readsubr
+ld hl,080h
+pop de
+pop bc
+ret
+
+
+;get line from .sub file into cmdbuf+2, writing length of line at
+;cmdbuf+1.
+getsubln:
+call readsubr
+ld hl,(subpos)
+ld de,cmdbuf+2
+ld c,0		;cmdline size count
+
+;loop around, showing one char per time
+getsublp:
+ld a,c
+cp 120
+jr nc,getsbdun	;do this one and quit if it's got too big
+
+ld a,h
+and a
+call nz,newsubrd	;read more if needed
+
+ld a,(hl)
+inc hl
+ld (subpos),hl
+cp 26		;is it ^Z?
+jr z,getsbdun	;last line if so
+cp 13		;is it CR?
+jr z,getsublp	;ignore it if so
+cp 10		;is it LF?
+jr z,getsublf
+ld (de),a
+inc de
+inc c
+jr getsublp
+
+;newline
+getsublf:
+ld a,c
+ld (cmdbuf+1),a
+ret
+
+;finished - do this, but it's the last one
+getsbdun:
+call submtfin	;quit the .sub and delete any current $$$.SUB
+jr getsublf
+
+
+;battery checks (happens before prompt printed)
+battchk:
+ld a,(batwarn)
+and a
+ret z
+
+in a,(0a0h)
+ld b,a		;safe to put it in b as ilprint preserves bc
+if IS_NC200	;WTF did they juggle these!? :-(
+bit 2,b
+else
+bit 3,b
+endif
+jr z,mchk1
+call ilprint
+defb _twostr,'* ',_caps+_ma,_in,' batterie',_s_,'low',__str,_twostr,_crlf,0
+mchk1:
+if IS_NC200
+bit 5,b
+else
+bit 2,b
+endif
+jr z,mchk2
+call ilprint
+defb _twostr,'* Lithium backup',0
+call batlowms
+mchk2:
+bit 4,b
+ret nz		;yes, nz, because it's true when zero
+call ilprint
+defb _twostr,'* Mem',_or,'y card',0
+;falls through
+
+;saves a few bytes...
+batlowms:
+call ilprint
+defb ' battery low',__str,_twostr,_crlf,0
+ret
+
+
+
+;bit of fcb for $$$.sub
+submtfcb: defb 0,'$$$     SUB'
+
+;run $$$.SUB if it exists in current user
+;this is done after a warm boot
+;any already-running SUB file will be forgotten about if $$$.SUB is
+;found!
+ccpsub:
+ld hl,submtfcb
+ld (hl),0
+ld de,comfcb
+ld bc,12
+ldir
+
+;open file
+ld de,comfcb
+call bfopen
+cp 255
+ret z		;error - couldn't open it
+
+;check we weren't already reading it
+ld a,(insub)
+and a
+jr z,ccpsub2
+ld hl,(subfcb+1)
+ld de,02424h		;'$$'
+;carry is still clear from 'and a' above
+sbc hl,de
+ret z	;we were already reading it, so return now or we'll mess things up.
+
+ccpsub2:
+;copy fcb to subfcb
+ld hl,comfcb
+ld de,subfcb
+ld bc,33
+ldir
+
+;set the 'take commands from file' flag.
+ld a,1
+ld (insub),a
+ld a,(curuser)
+ld (subuser),a
+
+;zero pos. in dma, and rand rec. stuff in fcb
+ld hl,080h
+ld (subpos),hl
+ld l,h
+ld (subfcb+fcbrand),hl
+ret
+
+
+
+;quit any current .sub file, and delete any $$$.SUB
+submtfin:
+;first quit .sub
+xor a
+ld (insub),a
+
+;now deal with $$$.sub
+ld hl,submtfcb
+ld de,subfcb
+push de
+ld bc,12
+ld (hl),b	;zero
+ldir
+pop de		;subfcb
+ld hl,curuser
+ld a,(hl)
+push af
+ld a,(subuser)
+ld (hl),a
+call bfdel
+;don't care whether it worked or not
+pop af
+ld (curuser),a
+ret
+
+
+;print the ccp prompt
+dphlsav		equ dphlsavop+1
+doprompt:
+;effectively print ^C, with the advantage that calling the
+;routine like this doesn't *actually* send a ^C, which is a
+;thoroughly bletcherous thing to do when using a serial console.
+;(it makes sure the cursor is on, BTW)
+call tctrlc
+
+;now print the actual prompt
+ld hl,prompt
+dprmlp:
+ld a,(hl)
+and a
+ret z
+cp '%'
+jr z,dprm1
+dprmcon1:
+call putchar
+dprmcon2:
+inc hl
+jr dprmlp
+
+dprm1:
+inc hl
+ld (dphlsav),hl
+ld a,(hl)
+and a
+ret z
+
+;%% - literal `%'
+cp '%'
+jr z,dprmcon1
+
+sub 'a'
+jr c,dprmcon2
+jr nz,dprm2
+
+;%a - user area
+dprmuser:
+ld a,(curuser)
+cp 255
+jr nz,dprmu1
+
+ld a,'*'
+jr dprmcon1
+
+dprmu1:		;also used by `%c' below
+ld e,a
+ld d,0
+call dispdec
+dphlsavop: ld hl,0	;as modified above (restores hl)
+jr dprmcon2
+
+
+dprm2:
+dec a
+jr nz,dprm3
+
+;%b - user area, but only if non-zero
+;the user number, if not 0, or '*' if 255
+ld a,(curuser)
+and a
+jr nz,dprmuser
+jr dprmcon2
+
+
+dprm3:
+dec a
+jr nz,dprm4
+
+;%c - free space on drive (slow)
+xor a		;check current drive
+call bchkdrv
+ld a,'?'
+ld hl,(dphlsav)
+jr nc,dprmcon1
+ld a,(curdrive)
+ld d,a
+call diskfree
+jr dprmu1	;this restores hl, so we're ok
+
+
+dprm4:
+dec a
+jr nz,dprm5
+
+;%d - drive letter
+ld a,(curdrive)
+add a,'A'
+jr dprmcon1
+
+
+dprm5:
+dec a
+jr nz,dprmcon2
+
+;%e - drive letter (lowercase)
+ld a,(curdrive)
+add a,'a'
+jr dprmcon1

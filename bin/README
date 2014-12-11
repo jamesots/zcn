@@ -1,0 +1,18 @@
+README for `bin' directory
+----------------------------
+
+This directory contains almost all the programs which make up ZCN -
+`zcn.bin' which is the operating system itself, `rrinit.bin' which
+runs under the ROM s/w and makes an initial `runrom.ram' snapshot
+file, and various .COM files which run under ZCN.
+
+(Note that some of the less useful programs have been moved to the
+`extra' subdirectory.)
+
+See `zcn.txt' in ../doc for details of how to transfer these, how to
+use them, etc.
+
+Also, see the README in ../support, which describes the many other
+included programs you can run on ZCN.
+
+-Rus.

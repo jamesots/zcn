@@ -1,0 +1,33 @@
+NAME
+	bmp - draw bitmaps
+
+SYNOPSIS
+	bmp bitmap_spec
+
+DESCRIPTION
+	Draw one or more character bitmaps. This is primarily useful
+	for drawing graphics in SUB files.
+
+	While there is a limit to how many bitmaps you can print with
+	`bmp' from a single command-line, `bmp' is re-entrant, so you
+	can use `!!' for consecutive runs. If you do `crlf 0'
+	beforehand, you can build up even quite a large graphic using
+	multiple runs.
+
+OPTIONS
+	`bitmap_spec' defines the bitmaps like so:
+
+	- Six hex `digits' (0..9, A..F) define a char bitmap which is
+	then printed. If there are fewer than six in a row, the char
+	is printed with remaining lines set to zero.
+
+	- `_' prints a space.
+
+	- `.' causes a line-break (CR/LF).
+
+	- `=' prints the most recently defined char again.
+
+	Any other chars are ignored.
+
+SEE ALSO
+	utils/pbmtosub.c (in ZCN distribution)

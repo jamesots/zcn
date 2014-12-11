@@ -1,0 +1,442 @@
+;dmp2txt - convert a screen.dmp format file to a text file.
+
+org 0100h
+
+jr start
+
+bdos		equ 5
+userfcb1	equ 05ch
+ufcb2org	equ 06ch
+userfcb2	equ 0f00h	;fcb2 copied here
+scrndmp		equ 01000h	;original screen dump loaded here
+txtdmp		equ 02000h	;full 120x10 text version
+txtdmp2		equ 02800h	;final version with trailing spaces cut
+d2size:		defw 0		;size of dump at txtdmp2 (inc. ^Z)
+
+bfopen		equ 15
+bfclose		equ 16
+bfread		equ 20
+bfwrite		equ 21
+bfmake		equ 22
+bsetdma		equ 26
+
+fontdata	equ 0eac0h
+
+start:
+;needs ZCN (for font data)
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;do a *very* crude check to see the font data's there
+;(this is more a sanity check than anything important)
+ld hl,(0eacch)
+ld de,0aaaah
+and a
+sbc hl,de
+ret nz
+
+ld hl,ufcb2org
+ld de,userfcb2
+ld bc,16
+ldir
+
+ld a,(userfcb1+1)
+cp 32
+jp z,usage
+ld a,(userfcb2+1)
+cp 32
+jp z,usage
+
+;read screen dump file
+call doread
+
+;make full 120x10
+call maketxt1
+
+;remove unnecessary spaces
+call maketxt2
+
+;write final version
+call dowrite
+
+ret
+
+
+usage:
+call ilprint
+defb 'usage: dmp2txt in.dmp out.txt',0
+rst 0
+
+inerr:
+call ilprint
+defb 'Error opening input file',0
+rst 0
+
+readerr:
+call ilprint
+defb 'Premature EOF on input file',0
+rst 0
+
+outerr:
+call ilprint
+defb 'Error opening output file',0
+rst 0
+
+writeerr:
+call ilprint
+defb 'Error writing to file',0
+rst 0
+
+
+
+doread:
+ld de,userfcb1
+ld c,bfopen
+call bdos
+inc a
+jp z,inerr
+
+ld hl,scrndmp
+ld b,30		;(480/8)*60/128
+readlp:
+push bc
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,userfcb1
+ld c,bfread
+call bdos
+pop hl
+ld de,128
+add hl,de
+and a
+jp nz,readerr
+pop bc
+djnz readlp
+ret
+
+
+maketxt1:
+ld hl,scrndmp
+ld ix,txtdmp
+ld c,10
+mt1ylp:
+ld b,60
+mt1xlp:
+push bc
+push hl
+call grokleft
+pop hl
+ld (ix),a
+inc ix
+push hl
+call grokright
+pop hl
+ld (ix),a
+inc ix
+inc hl
+pop bc
+djnz mt1xlp
+ld de,64*6-60
+add hl,de
+dec c
+jr nz,mt1ylp
+ret
+
+
+grokleft:
+ld e,0f0h
+jr grokmain
+
+grokright:
+ld e,0fh
+jr grokmain
+
+;entry: hl=addr of char `onscreen', e=char mask
+;exit:	a=char
+;f/bc/d/hl/iy corrupt
+;this is pretty bloody horrible
+spsav: defw 0
+grokmain:
+ld (spsav),sp
+
+;try to match normal attr. char
+ld iy,fontdata
+ld c,96
+gmlp1:
+push hl
+push iy
+ld b,6
+gmlp2:
+ld a,(iy)
+xor (hl)
+and e
+jr nz,gmskip1
+ld a,e
+ld de,64
+add hl,de
+ld e,a
+inc iy
+djnz gmlp2
+ld sp,(spsav)
+ld a,128
+sub c
+ret		;matches char
+gmskip1:
+pop iy
+pop hl
+ld a,e
+ld de,6
+add iy,de
+ld e,a
+dec c
+jr nz,gmlp1
+
+;that didn't work, try to match inverse attr. char
+ld iy,fontdata
+ld c,96
+gmlp3:
+push hl
+push iy
+ld b,6
+gmlp4:
+ld a,(iy)
+cpl
+xor (hl)
+and e
+jr nz,gmskip2
+ld a,e
+ld de,64
+add hl,de
+ld e,a
+inc iy
+djnz gmlp4
+ld sp,(spsav)
+ld a,128
+sub c
+ret		;matches char
+gmskip2:
+pop iy
+pop hl
+ld a,e
+ld de,6
+add iy,de
+ld e,a
+dec c
+jr nz,gmlp3
+
+;that didn't work, try to match italic attr. char
+ld iy,fontdata
+ld c,96
+gmlp5:
+push hl
+push iy
+ld b,6
+gmlp6:
+ld a,(iy)
+ld d,b
+;this crock lifted from ZCN :-)
+dec b
+jr z,dcattr2
+dec b
+jr z,dcattr2
+dec b
+jr z,dcattr2
+rrca
+dcattr2:
+ld b,d
+xor (hl)
+and e
+jr nz,gmskip3
+ld a,e
+ld de,64
+add hl,de
+ld e,a
+inc iy
+djnz gmlp6
+ld sp,(spsav)
+ld a,128
+sub c
+ret		;matches char
+gmskip3:
+pop iy
+pop hl
+ld a,e
+ld de,6
+add iy,de
+ld e,a
+dec c
+jr nz,gmlp5
+
+;that didn't work, try to match bold attr. char
+ld iy,fontdata
+ld c,96
+gmlp7:
+push hl
+push iy
+ld b,6
+gmlp8:
+ld a,(iy)
+ld d,a
+rrca
+or d
+xor (hl)
+and e
+jr nz,gmskip4
+ld a,e
+ld de,64
+add hl,de
+ld e,a
+inc iy
+djnz gmlp8
+ld sp,(spsav)
+ld a,128
+sub c
+ret		;matches char
+gmskip4:
+pop iy
+pop hl
+ld a,e
+ld de,6
+add iy,de
+ld e,a
+dec c
+jr nz,gmlp7
+
+;doesn't match any, use a space.
+ld a,32
+ret
+
+
+maketxt2:
+ld hl,txtdmp
+ld de,txtdmp2
+ld b,10
+mt2lp:
+push bc
+push hl
+ld bc,120
+add hl,bc
+ld b,c
+mt2lp2:
+dec hl
+ld a,(hl)
+cp 32
+jr nz,mt2skip
+djnz mt2lp2
+jr mt2skip2	;all spaces, so skip copy
+mt2skip:
+pop hl
+push hl
+ld c,b
+ld b,0
+ldir
+mt2skip2:
+pop hl
+ld a,13
+ld (de),a
+inc de
+ld a,10
+ld (de),a
+inc de
+
+ld bc,120
+add hl,bc
+pop bc
+djnz mt2lp
+
+ex de,hl
+ld (hl),26
+inc hl
+ld de,txtdmp2
+and a
+sbc hl,de
+ld (d2size),hl
+ret
+
+
+dowrite:
+ld de,userfcb2
+ld c,bfmake
+call bdos
+inc a
+jp z,outerr
+
+;get no. records to write in b
+ld hl,(d2size)
+ld bc,127
+add hl,bc
+ld a,h
+rl l
+rla
+ld b,a
+
+ld hl,txtdmp2
+writelp:
+push bc
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,userfcb2
+ld c,bfwrite
+call bdos
+pop hl
+ld de,128
+add hl,de
+and a
+jp nz,writeerr
+pop bc
+djnz writelp
+
+ld de,userfcb2
+ld c,bfclose
+call bdos
+ret
+
+
+
+;(from zcnlib)
+;
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+call putchar
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)
+
+;(this is actually `putbyte' but it's good enough)
+putchar:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret

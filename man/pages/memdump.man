@@ -1,0 +1,12 @@
+NAME
+	memdump - give hex/ASCII dump of memory
+
+SYNOPSIS
+	memdump hex_address
+
+DESCRIPTION
+	Give a hex and ASCII dump of 128 bytes of the memory starting
+	at the specified address (which must be in hex).
+
+SEE ALSO
+	dump

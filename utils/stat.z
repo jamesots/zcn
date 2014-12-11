@@ -1,0 +1,150 @@
+;stat.z - quick hack to emulate old `stat' command
+
+org 0100h
+
+ld de,mupgrd1
+ld c,9
+call 5
+
+ld a,(2)
+dec a
+ld h,a
+ld l,15
+ld e,(hl)
+inc hl
+ld d,(hl)
+call itoa
+ld c,9
+call 5
+
+ld de,mupgrd2
+ld c,9
+call 5
+
+;now write $$$.sub and exit
+;doesn't do error-checking terribly well :-)
+ld de,subfcb
+ld c,22 ;make
+call 5
+inc a
+ret z
+
+ld hl,msub
+ld de,080h
+ld bc,128
+ldir
+
+ld de,subfcb
+ld c,21 ;write sequential
+call 5
+
+ld de,subfcb
+ld c,16 ;close
+call 5
+rst 0		;must do warm boot so it runs $$$.sub
+
+
+;from zcnlib, mildly hacked :-)
+
+div10:
+ld b,h
+ld c,l
+
+ld de,0
+ld h,d
+ld l,d
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+and a
+rl e
+rl d
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+push de
+ld de,10
+and a
+sbc hl,de
+pop de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+ld a,1
+or e
+ld e,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp	equ 06ch
+
+;convert number in de to ascii in internal buffer
+;entry: de=number
+;exit:  de=addr of number in internal buffer, '$' terminated
+itoa:
+ld hl,numtmp+5
+ld (hl),'$'
+
+dispnlp:
+push hl
+ex de,hl
+
+call div10
+
+ld a,e
+add a,48
+
+ex de,hl	;so de now is result of division
+pop hl
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ret
+
+
+
+mupgrd1: defb 'Sys upgrd spc: $'
+mupgrd2: defb ' bytes$'
+
+;now the $$$.sub file
+msub:
+defb 39,'Max prog size: ',13,10,'k3',13,10
+defb 39,'Free on drivs: ',13,10,'df',13,10
+defb 26
+
+subfcb:
+defb 0,'$$$     SUB'
+;rest of fcb doesn't need to be initialised

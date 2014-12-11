@@ -1,0 +1,14 @@
+submit setbaud.sub *
+rem this treats zero as an error, since junk will have that
+rem result for the poke.
+poke 5b 0$1
+ifpeek 5b 1 quitsub stty 300
+ifpeek 5b 2 quitsub stty 600
+ifpeek 5b 3 quitsub stty 1200
+ifpeek 5b 4 quitsub stty 2400
+ifpeek 5b 5 quitsub stty 4800
+ifpeek 5b 6 quitsub stty 9600
+ifpeek 5b 7 quitsub stty 19200
+rem if still here, none of the above
+"setbaud <spd>  4=2400 6=9600 7=19200
+

@@ -1,0 +1,49 @@
+Program:	PIPE   File Transfer Utility     PUBLIC DOMAIN
+Author:		Rob Friefeld   Long Beach, CA
+Purpose:	Small (1k) program intended as RAM disk resident
+Usage:		pipe [du:|dir:]<afn> [du:|dir:][afn]
+		i.e.  pipe <what> [where]
+Assembly:	Requires Z80 machine and assembler.
+Version:	1.5   2/87
+Version:	1.6   8/87
+
+Version:	1.7   10/87 
+	- R/O files not handled at all in previous version
+	- Frequent check for ^C to abort operation
+
+	This utility is a fast file copier that uses full TPA buffering.
+The syntax is different from pip's, i.e. the source file is named first,
+then the destination.  Both source and destination may be ambiguous file
+names.  (Wild card renaming of the destination can be dangerous to your
+mental health, however.)  If the optional destination is omitted, files
+will be fetched to the current DU:.
+
+	If the destination file exists, you will be asked ERASE? (y/N/q).
+No is the default answer.  A 'Y' will abort the copy and a 'Q' aborts the
+run.
+
+	If the destination disk is filled, the incomplete copy is deleted
+and a disk reset is done.  (If this is not done, DIR will still report
+0k free space.)  Otherwise, PIPE does NOT do a disk reset.
+
+
+	No installation is needed.  Since most of the logic is in the DOS,
+named directories under ZCPR3 will work.  Also, PIPE is reentrant.
+
+
+EXAMPLES:
+
+  B5>PIPE A0:*.Z80    (You enter...then PIPE prints...)
+	Copying --> A0: FILE1   .Z80 to B5:
+	Copying --> A0: FILE2   .Z80 to B5:
+	Copying --> A0: ANOTHER1.Z80 to B5:
+
+  B5>GO THIS.FIL A0:THAT.FIL
+	Copying --> B5: THIS    .FIL to A0:THAT     .FIL
+
+  A0>PIPE TEST.* ROOT:WORKS.*
+	Copying --> A0: TEST    .Z80 to A15:WORKS   .Z80
+	Copying --> A0: TEST    .DOC to A15:WORKS   .DOC
+	Copying --> A0: TEST    .COM to A15:WORKS   .COM
+
+

@@ -1,0 +1,12 @@
+README for `bin/extra' directory
+--------------------------------
+
+This directory contains a few of the less useful .COM files which come
+with ZCN. (They were moved here so that the `bin' dir wouldn't contain
+too much to fit on a single bootable ZCN drive along with things like
+qterm and vde.)
+
+See `zcn.txt' in ../../doc for details of how to transfer these, how
+to use them, etc.
+
+-Rus.

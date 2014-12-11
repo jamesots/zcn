@@ -1,0 +1,58 @@
+To-do file for ZCN
+------------------
+
+The NC200 documentation isn't up to much; in particular, most of
+zcn.txt and zcnprog.txt pretty much ignores the '200. This is arguably
+a feature, but is probably a bit confusing.
+
+NC200 fixes needed for almost all graphics-using programs. At the very
+least, everything graphical should bomb out if we're running on a
+'200. Don't know what to do about zcnlib - may be unfixable in the
+general case, but I might be able to kludge up something if I add a
+zcnfunc for paging in/out video memory. (Well, better to return
+address of function to directly call to do both, to save BDOS
+overhead.) But it may be better not to do it, than to do it badly.
+
+`note' should stop when there's no more room in memory. An overrun
+isn't likely in normal use, but if using it for file transfer via
+serial console, it could well happen. Checking bit 7 of h would be
+easiest, and should be possible in 4 bytes.
+
+Make submit complain if it can't write to $$$.sub (currently only
+complains if it can't make the file!).
+
+expr.z is `finished' but (like the original) has a bug as documented
+at start of file. Whether or not I fix this should more fully test
+expr by generating loads of test expressions, and comparing output
+with that of original program.
+
+Would be nice if zcnclock could enable/disable seconds display, and
+not assume local time is GMT and default city London.
+
+`get' should be able to work with only one arg (the filename), such
+that `get foo.com' is equivalent to `get 100 foo.com'.
+
+`undel' command to undelete files. Should be able to make this an
+external command, probably based on zdbe.
+
+bbcbas:
+
+- needs NC200 support.
+
+- copy cursor should work for chars in range 128-255, or at the very
+  least the pound sign as that can be entered from the keyboard.
+
+- should provide a *KEY for changing user areas (but would need to
+  deal with currently-open files possibly being in different areas!).
+
+- consider changing copy cursor to beep and copy nothing if char to
+  copy is unrecognised (as on BBC). (Currently it copies a space.)
+
+Could do with more appropriate zap file for spell.
+
+
+[All things below this point are very unlikely to ever get done]
+
+Fix any funcs that write to card to give error if it's r/o.
+
+Update hardware details (e.g. sound) from nciospec.doc.

@@ -1,0 +1,34 @@
+NAME
+	makezapd - make a0:zapdesc.bin from *.zap
+
+SYNOPSIS
+	makezapd
+
+DESCRIPTION
+	Makezapd makes the zapdesc.bin file as required by zap, from
+	all the zap files in the current drive/user.
+
+ZAP FILE FORMAT
+	Blank lines and those starting with `#' are ignored. Other
+	lines must be in one of the following forms:
+
+	"progname name"		`name' is the displayed name, `_' = space.
+	"progfile program.com"	`program.com' is the program to run.
+	"filetype ext"		associates *.ext with the program, up
+				to 32 allowed.
+	"filetype ?"		prompt for drive/user instead.
+	"filetype ?d"		prompt for drive (not user) instead.
+	"opt noret"		don't restart zap after running.
+	"opt keywait"		zap waits for key when restarted.
+	"opt needfile"		program *must* be run on a file.
+	"bmphex <hex>"		specify one line of the 32x24 icon bitmap.
+	"bmpbin <binary>"	same, but in binary.
+
+	For a less terse explanation, see zcn.txt.
+
+FILES
+	a0:zapdesc.bin - the generated file, containing `compiled'
+		versions of the zap files.
+
+SEE ALSO
+	zap

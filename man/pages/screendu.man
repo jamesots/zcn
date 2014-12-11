@@ -1,0 +1,10 @@
+NAME
+	screendump - how to get a screen dump in ZCN
+
+SYNOPSIS
+	do Control-LeftShift-S
+
+DESCRIPTION
+	Do this to get a `screen.dmp' screen dump file in ZCN. It must
+	be the physical Control key (or after `capsctrl 1', Caps
+	Lock).

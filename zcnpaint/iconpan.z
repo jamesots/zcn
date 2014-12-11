@@ -1,0 +1,164 @@
+;zcnpaint
+;iconpan.z - icon panel routines and bitmap
+;converted from iconpan.pbm
+
+
+showicons:	defb 1
+iconpanx:	defw 0
+iconpany:	defw 0
+
+oldipx: defw 0
+oldipy: defw 0
+
+;these for dragging iconpan, set when dragging starts
+ipdrag: defb 0
+ipxofs: defw 0
+ipyofs: defw 0
+
+
+;size
+;it's a 48x40 bitmap
+
+ipxsiz	equ 48
+ipysiz	equ 40
+
+iconpan:
+defb 055h,055h,055h,055h,055h,055h
+defb 080h,000h,000h,000h,000h,003h
+defb 01Eh,069h,071h,094h,0B8h,001h
+defb 084h,08Dh,04Ah,056h,090h,001h
+defb 008h,08Bh,073h,0D5h,090h,001h
+defb 09Eh,069h,042h,054h,090h,001h
+defb 040h,000h,000h,000h,000h,003h
+defb 0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
+defb 000h,000h,000h,000h,000h,000h
+defb 018h,018h,03Ch,010h,067h,044h
+defb 031h,031h,04Dh,021h,054h,045h
+defb 060h,060h,0F4h,044h,056h,054h
+defb 041h,047h,099h,0FDh,054h,06Dh
+defb 028h,078h,0F0h,074h,057h,044h
+defb 001h,001h,001h,025h,000h,001h
+defb 02Ah,02Ah,02Ah,02Ah,02Ah,0AAh
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,000h,0AEh,044h,044h,048h
+defb 007h,045h,0EBh,029h,04Ah,0ADh
+defb 018h,04Ch,000h,010h,04Ah,0ECh
+defb 061h,055h,0CFh,029h,04Ah,0ADh
+defb 000h,064h,0AAh,044h,064h,0A8h
+defb 001h,041h,0EFh,001h,000h,001h
+defb 02Ah,02Ah,02Ah,02Ah,02Ah,0AAh
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,040h,064h,0ACh
+defb 07Dh,07Dh,06Dh,061h,04Ah,0A9h
+defb 044h,06Ch,000h,050h,06Eh,0ACh
+defb 045h,055h,005h,079h,02Ah,0E9h
+defb 07Ch,07Ch,074h,044h,06Ah,04Ch
+defb 001h,001h,001h,001h,000h,001h
+defb 02Ah,02Ah,02Ah,02Ah,02Ah,0AAh
+defb 000h,000h,000h,00Eh,000h,000h
+defb 038h,038h,028h,006h,075h,05Ch
+defb 045h,055h,055h,00Bh,045h,049h
+defb 044h,06Ch,028h,050h,062h,048h
+defb 045h,055h,055h,061h,045h,049h
+defb 038h,038h,028h,070h,075h,048h
+defb 001h,001h,001h,001h,000h,001h
+defb 02Ah,02Ah,02Ah,02Ah,02Ah,0AAh
+
+
+;the 48x40 scrn save buffer for the icon panel
+ipsav:
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0
+
+
+
+;save/restore iconsav routines
+
+
+;save a 48x40 block to ix from (de&~7,c)
+;af/bc/de/hl/ix corrupt
+save48x40:
+call pos2addr
+
+ld de,64-6
+ld c,40
+
+s48loop:
+ld b,6
+
+s48lp2:
+ld a,(hl)
+ld (ix),a
+inc l
+inc ix
+djnz s48lp2
+
+add hl,de
+dec c
+jr nz,s48loop
+ret
+
+
+;restore a 48x40 block from ix to (de&~7,c)
+;af/bc/de/hl/ix corrupt
+rstr48x40:
+call pos2addr
+
+ld de,64-6
+ld c,40
+
+r48loop:
+ld b,6
+
+r48lp2:
+ld a,(ix)
+ld (hl),a
+inc l
+inc ix
+djnz r48lp2
+
+add hl,de
+ret c		;stop if going off screen
+dec c
+jr nz,r48loop
+ret
+
+
+
+;ipdraw - save screen data and draw icon panel if (showicons).
+ipdraw:
+ld a,(showicons)
+and a
+ret z
+
+ld de,(iconpanx)
+ld bc,(iconpany)
+ld (oldipx),de
+ld (oldipy),bc
+ld ix,ipsav
+call save48x40
+
+ld de,(iconpanx)
+ld bc,(iconpany)
+ld ix,iconpan
+call rstr48x40
+ret
+
+
+;ipundraw - restore old screen data if (showicons).
+ipundraw:
+ld a,(showicons)
+and a
+ret z
+
+ld de,(iconpanx)
+ld bc,(iconpany)
+ld ix,ipsav
+call rstr48x40
+ret

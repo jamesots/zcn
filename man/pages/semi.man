@@ -1,0 +1,31 @@
+NAME
+	semi - run multiple commands from one command-line
+
+SYNOPSIS
+	semi command1 [args][; command2 [args][; command3 [args] ;...]]
+
+DESCRIPTION
+	This command lets you run multiple commands one after another.
+	It simply writes a $$$.sub (like `submit') which contains each
+	of the semicolon-separated commands you gave on the
+	command-line, on a separate line.
+
+	Due to the way it works, it's not a good idea to call this
+	from a SUB file as-is - you should instead prefix it with
+	`quitsub'. (This will also abort the SUB file, I'm afraid.)
+
+	You may prefer to rename this command from `semi.com' to
+	`;.com'. (This may explain where the name comes from. :-))
+
+EXAMPLE
+	Here's a simple example showing how to run the commands `foo',
+	`bar', and `baz' one after the other:
+
+		semi foo;bar;baz
+
+FILES
+	$$$.sub - this file is created, and ZCN runs it to run the
+		commands.
+
+SEE ALSO
+	submit, quitsub

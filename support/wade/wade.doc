@@ -1,0 +1,1285 @@
+
+                        WADE - Wagners Debugger
+
+                              User Manual
+                         Version 1.5 - 85-04-27
+
+
+        WADE  is an interactive symbolic Z80 debugger with  full 
+        assembly and disassembly using standard ZILOG mnemonics. 
+        Up to eight conditional and/or unconditional breakpoints 
+        plus a temporary breakpoint may be defined. Full tracing 
+        with  or  without list and with real-time  execution  of 
+        subroutines  on  command or automatic  (using  protected 
+        areas)  is provided.  Tracing may be controlled by inst-
+        ruction count or a conditional expression. A full set of 
+        operators provides for arithmetic,  logical,  shift, and 
+        relational operations on hex,  decimal, binary, and cha-
+        racter data,  and on registers,  variables, and symbols, 
+        including  embedded assignments to registers and  varia-
+        bles.  Extended  addressing can be provided for  systems 
+        with banking or memory management capabilities.
+
+        WADE supports parameterised command macros and conditio-
+        nal command execution.
+
+        WADE  is  supplied  with complete source  code  for  the 
+        Digital Research RMAC assembler.  System dependent  rou-
+        tines  like  console i/o,   file i/o,  and  banking  are 
+        collected in a single module to allow easy adaptation to 
+        other  operating systems or stand-alone ROM-based appli-
+        cations.
+
+                              No Copyright
+
+        Wade was written 1984-1985 by
+
+             Thomas Wagner
+             Patschkauer Weg 31
+             D-1000 Berlin 33
+             West Germany
+
+             BIX mail: twagner
+
+        It has been released to the public domain in 1987.
+
+        You may use and modify this program, its sources, or any 
+        parts  of it,  in any way you choose.  No part  of  this 
+        program  is  copyrighted any longer,  even if  copyright 
+        notices still appear in some of the files.
+
+        No  contribution  in any way is  requested  or  expected 
+        (although I wouldn't reject it :-)).  I've given up CP/M 
+        and  Z80  programming,  so  this software is  no  longer 
+        supported. 
+
+        I'll  try  to  help  and  answer  questions  about  this 
+        software, but I haven't touched it for quite a while, so 
+        don't expect too much.
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 2
+
+
+                            Command Summary
+
+        A  {addr}             Assemble
+
+        B                     Display Breakpoints
+        B  adr {adr..}        Set Breakpoints
+        BI mexpr ;adr {adr..} Set Conditional Breakpoints
+        BX                    Clear all Breakpoints
+        BX adr {adr..}        Clear specified Breakpoints
+        BXI                   Clear Break Condition
+
+        C  {N}{J} {count}     Trace over calls {Nolist}{Jumps}
+        C  {N}{J} W mexpr     ..While
+        C  {N}{J} U mexpr     ..Until
+
+        D  {from {to}}        Dump memory
+
+        E  mexpr ;command     Execute command conditionally
+
+        F  {command line}     Specify Filename & command line
+
+        G  {to} {; breakadr}  Go {with temp breakpoint}
+
+        H                     Display Low and High addr of file
+        H  expr {expr..}      Display result of expression(s)
+
+        I  {port}             Input from port
+
+        J  file {params}      Jump to macro file
+
+        K                     Kill macro file
+
+        L  {from {to}}        List disassembled code
+
+        M  begin end dest     Move memory
+
+        N                     Name (Symbol) list
+        N  expr symname ...   Define Names
+        NF filename           Define Symbol File Name
+        NS num                Reserve Space for symbols
+        NX                    Delete all Names
+        NX symname ...        Delete specified Names
+        NR {offset}           Read Symbol File
+        NW                    Write Symbol File
+
+        O  {byte {port}}      Output a byte to port
+
+        P                     Display protect condition
+        P  mexpr              Define protect condition
+        PX                    Delete protect condition
+
+        Q  {J} begin end str  Query {justified} for bytes
+
+        R  {offset}           Read a File
+
+        S  {addr}             Substitute memory
+        S  addr bytestring    Substitute immediate
+
+        T  {N}{J} {count}     Trace {Nolist} {Jumps only}
+        T  {N}{J} W mexpr     ..While
+        T  {N}{J} U mexpr     ..Until
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 3
+
+
+
+        U                     User input trap
+
+        V  begin end begin2   Verify (compare) memory
+
+        W  start end {offset} Write a file to disk
+
+        X                     Examine CPU state
+        X'                    Display alternate Registers
+        X  regname            Display & Change Register
+        X  regname expr       Change Register
+
+        Y                     Display Y-Variables
+        Y  n                  Display & Change Y-Variable n
+        Y  n  expr            Change Y-Variable n
+
+        Z  begin end bytestr  Zap (fill) memory with a string
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 4
+
+
+                               Using WADE
+
+        Syntax:  WADE  { filename { symbol-filename }}
+
+        WADE is called like any other CP/M command. It relocates 
+        itself  below the BDOS and sets the address at 6 corres-
+        pondingly (for CP/M 3,  this is done by the system using 
+        the RSX mechanism).
+
+        If a filname is specified in the command line, this file 
+        is  then read into memory,  as if an R-command had  been 
+        entered. Please note that you have to issue an F-command 
+        to  clear the filename from the default FCB if the  pro-
+        gram under test expects parameters.
+
+        If  a second (symbol-) filename is given in the  command 
+        line,  this file is read as a Symbol File,  as if an  NR 
+        command  had  been entered.  Note for CP/M 3,  that  the 
+        program file is read first, so if a program with attach-
+        ed RSX is loaded,  there may be not enough space to read 
+        all  symbols.  In this case,  the symbols should be read 
+        before the program (see NF, NR and R commands).
+
+        Example:    WADE myprog.com myprog.sym
+
+
+        To  exit  WADE under CP/M,  issue a G command  with  the 
+        parameter 0. This will reset the BDOS-pointers and warm-
+        boot the operating system.
+
+        Example:    g0
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 5
+
+
+                             Command input
+
+        Commands  and  parameters  may be entered  in  upper- or 
+        lowercase.  Spaces  may be used freely as separator  be-
+        tween operands,  commas may be used to separate  parame-
+        ters.  The  maximum  accepted  input line length  is  79 
+        characters.
+
+        The  line  is interpreted only after a CR has  been  en-
+        tered,  so  you can edit the input using the DEL  or  BS 
+        key.  A TAB is interpreted as a space,  a LF is ignored. 
+        All other control characters are refused.
+
+
+                          Auto Command Repeat
+
+        All  entered  commands except 'G' are saved and  re-exe-
+        cuted if a carriage return only is entered.  Parameters, 
+        however,  are not saved,  so the default values will  be 
+        used if applicable. If parameters must be specified with 
+        a command, auto repeat is not possible.
+
+
+                            Display Control
+
+        Display output can be stopped at each line end by  ente-
+        ring  ^S (control + S),  and continued by ^Q (control  + 
+        Q).  Hitting  the space key once will also stop the dis-
+        play,  hitting it again (or entering ^Q) will let output 
+        continue.
+
+
+                             Command abort
+
+        Every  command  which produces output can be aborted  at 
+        the  end of each output line by entering  any  character 
+        other than space,  ^S,  or ^Q. Also, a trace with Nolist 
+        can  be aborted at any time the program does not execute 
+        in real-time.  Aborting a command will also kill a  cur-
+        rently active command macro.
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 6
+
+
+                              Expressions
+
+        All  numbers  in commands and assembly lines may  be  an 
+        expression,  except  for "X regname",  where a  register 
+        name, not a register designation (Rx) must be used.
+
+        An expression has the general form
+
+           factor { operator factor ...}
+
+        where operator is one of the following:
+
+           +       addition
+           -       subtraction
+           *       multiplication
+           /       integer division
+           %       remainder of integer division (modulus)
+
+           &       bitwise AND
+           !       bitwise OR
+           |       bitwise OR  (alternate representation)
+           #       bitwise XOR
+           ^       bitwise XOR (alternate representation)
+
+           <<      circular 16-bit left shift
+           >>      circular 16-bit right shift
+
+           <       less than
+           <=      less than or equal to
+           >       greater than
+           >=      greater than or equal to
+           =       equal
+           <>      not equal
+
+           &&      boolean AND
+           ||      boolean OR
+           !!      boolean OR (alternate representation)
+
+           :=      assignment (word)
+           ==      assignment (byte)
+                   where  the factor which is assigned to may be 
+                   an  unsigned register or variable  specifica-
+                   tion, or an address value. The result of this 
+                   operator  is the value on the right-hand side 
+                   of the assignment operator,  which is at  the 
+                   same time assigned to the register,  variable 
+                   or address specified on the left-hand side.
+                   Size  adjustment  is automatic for  variables 
+                   and  registers.  If an address is used as the 
+                   destination,  a  word is stored.  To store  a 
+                   byte only,  use the operator '=='.  Note that 
+                   to assign to a register or variable,  no sign 
+                   or  expression may be used with the  register 
+                   or variable name, i.e. the expression
+                   RHL := 1234  will assign 1234 to register HL,
+                   whereas  +RHL := 1234 will assign 1234 to the 
+                   address contained in register HL.
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 7
+
+
+           :       extended memory specification
+                   the  value  of this operator is the value  on 
+                   the  right-hand  side of  the  operator.  The 
+                   value on the left-hand side specifies a (sys-
+                   tem  dependent) extended  address,  which  is 
+                   used  in memory references and with  commands 
+                   which expect an address.  In all other cases, 
+                   this value is ignored. An error occurs if the 
+                   extended  address is undefined in the  target 
+                   system,   or   if  extended   addressing   is 
+                   disabled.
+
+        A factor has the form
+
+           { sign } number
+
+        where sign is
+
+           + (plus), - (minus), or ~ (not)
+
+        and number is
+
+           (expression)    the byte at the memory location 
+                           addressed by "expression"
+
+           (expression).   the word at the memory location
+                           addressed by "expression"
+
+           [expression]    the value of the expression
+
+           hhhh    hex number
+           dddd.   decimal number
+           bbbb"   binary number
+           'c'     character
+           string  character string (only the last 2 characters
+                   are significant)
+           Rx      contents of CPU-Register x
+           Yn      contents of Variable Y0..Y9
+           H       special variable H(igh)
+           L       special variable L(ow)
+           M       special variable M(ax)
+           T       special variable T(op)
+           X       special variable eXtended address default
+           $       CPU-register PC
+           .symbol Value of the symbol
+
+           The  variable  L contains the standard  load  address 
+           (100h  for CP/M) and is not changed by the  debugger, 
+           but may be user assigned to a different value.
+
+           The  variable H contains the highest address read  on 
+           the  last file.  It is updated each time an R-command 
+           is executed.
+
+           The  variable M contains the highest address read  on 
+           all previous R-commands.
+
+           The  variable T contains the top address of the  user 
+           TPA. It is updated if symbol table space is expanded.
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 8
+
+
+           The  variable  X  contains the default bank  for  all 
+           operations if extended addressing is enabled.  It may 
+           be  changed by assignment or by changing the PC  with 
+           an extended address.
+
+           The short-form '$' for PC may only be used in expres-
+           sions, not in an X-command.
+
+           The character '_' (underline) may be used in  numbers 
+           to enhance readability. It is completely ignored.
+
+        String:
+
+           Any number of characters delimited by quotes (').
+           Use  a  two quotes ('') to represent a  single  quote 
+           within a string: 'It''s a quote'.
+
+        Register names:
+
+           primary:    A, F, AF, B, C, BC, D, E, DE,
+                       H, L, HL, IX, IY, SP, PC
+
+           alternate:  A', F', AF', B', C', BC', D', E', DE',
+                       H', L', HL'
+
+           control:    IFF  (interrupt enable flip flop)
+                       I    (interrupt register)
+                       R    (refresh register, read only)
+
+        Symbols:
+
+           Any  number  of characters,  of which only the  first 
+           eight  characters  are significant  (the  significant 
+           length  of symbols can be changed  by  reassembling). 
+           The first character must be non-numeric.  Symbols may 
+           consist of letters,  digits,  and the special charac-
+           ters @, ?, _, and $. Lowercase letters are translated 
+           to uppercase. Any underlines (_) are stripped.
+
+
+
+                          Multiple Expressions
+
+        All  commands expecting a condition will accept multiple 
+        expressions  in  sequence.  Only the value of  the  last 
+        expression is used as the condition result.  The general 
+        form for this "mexpr" is
+
+           expression  { {,} expression ... }
+
+
+
+                              Byte-Strings
+
+        The commands Q(ery),  S(ubstitute),  and Z(ap) expect  a 
+        byte-string  as  operand.  In a  byte-string,  character 
+        strings  are  significant over their  full  length.  The 
+        general form is
+
+           expression-or-string { {,} expression-or-string ... }
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 9
+
+
+        only  the lower byte is significant for  expressions  in 
+        byte strings.  Note that a string is evaluated first, so 
+        to  enter  the expression 'N'-40 in a  byte-string,  you 
+        have to use brackets:
+
+           'N'-40  1+2*3  'A'+2      => 'N', -40, 7, 'A', 2
+           ['N'-40] [1+2]*3 ['A'+2]  => '^N', 9, 'C'
+
+
+                          Order of Evaluation
+
+        The precedence of operators is as follows (high to low):
+
+           expression delimiters       (), ()., []
+           signs                       +, -, ~
+           bitwise operators           &, !, |, #, ^
+           multiplication operators    *, /, %, <<, >>
+           addition operators          +, -
+           relational operators        =, <>, <, >, <=, >=
+           boolean operators           &&, ||, !!
+           extended address            :
+           assignment                  :=, ==
+
+        Operators  of  equal  precedence are evaluated  left  to 
+        right,  and  must be bracketed if a different  order  of 
+        evaluation  is desired.  Assignments are evaluated right 
+        to left.
+
+        Examples:
+
+           1 + 2 * -3       => -5
+           5 - 2 : 2 * 3    => Bank 3, Address 6
+           3:5+2 == (3:6)   => Assign contents of 3:6 to 3:7
+           rhl := +rde := 1 => Assign 1 to register HL and the 
+                               address contained in DE
+           rhl := (rde). := 1 => same as above
+
+
+        The  nesting  depth  of expressions is  limited  by  the 
+        available debugger stack space.  In the current release, 
+        256  bytes  are available for the  stack,  so  that  any 
+        reasonable expression should cause no problems.
+
+                                Booleans
+
+        For commands expecting a conditional expression, and for 
+        the  boolean AND/OR operators,  the value  0  represents 
+        FALSE, while any value other than 0 represents TRUE.
+
+        The result of the relational and boolean operators is  0 
+        for TRUE and FFFF for FALSE.
+
+        An  example  to show the difference between bitwise  and 
+        boolean operators:
+
+           1 &  2  is 0
+           1 && 2  is FFFF.
+
+           1 |  2  is 3
+           1 || 2  is FFFF.
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 10
+
+
+                                Commands
+
+                              A - Assemble
+
+        Syntax:    A  { start-address }
+
+        If  a start address is not specified,  the last  address 
+        displayed in an A or S command is used.
+
+        The  current  contents of the location are displayed  in 
+        hex  and in disassembled form,  and a line  of  assembly 
+        code is expected. The code must be specified in standard 
+        ZILOG mnemonics,  with operands separated by a comma. No 
+        abbreviations  are allowed.  The entered instruction re-
+        places the current one,  and the command will advance to 
+        the next instruction.
+        If you enter an empty line,  the command will advance to 
+        the next instruction.  To terminate the command, enter a 
+        dot (.) as first character in a line.
+
+        If an input can be interpreted as both a register and  a 
+        number  (as in   LD  A,C ),  the register interpretation 
+        takes  precedence.  Use LD A,0C to specify an  immediate 
+        value.
+
+        The  displacement  for relative jumps is entered  as  an 
+        absolute address.  The debugger will calculate the  dis-
+        placement for you.
+
+        A  symbol  may  be  defined at the  current  address  by 
+        entering the symbol with a terminating colon (':').
+
+        A  syntax error will exit assembly mode without changing 
+        the address pointer.  Simply entering a carriage  return 
+        will continue assembling at the same location.
+
+
+        Example:
+
+           :a 220
+           220  START:  LD    DE,2345          ld a,b
+           221          LD    B,L              here: ld d,'a'
+           223          JR    NZ,0227   .
+           :
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 11
+
+
+                   B - Breakpoint Set/Delete/Display
+
+        Syntax:    a)  B
+                   b)  B   address { address.. }
+                   c)  BI  multexpr ; address { address.. }
+                   d)  BX
+                   e)  BX  address { address.. }
+                   f)  BXI
+
+        a) All  breakpoints and the conditional break expression 
+           (if present) are displayed.
+
+        b) The  addresses  are entered as  unconditional  break-
+           points. If an address is already defined as conditio-
+           nal  breakpoint,  the  condition is deleted for  this 
+           address.
+
+        c) The expression is stored as break condition,  and the 
+           addresses are defined as conditional breakpoints. Any 
+           previously defined conditional breakpoints are set to 
+           unconditional.
+
+        d) Delete all breakpoints and the condition expression.
+
+        e) Delete the specified breakpoints.
+
+        f) Delete   the   break   condition.   All   conditional 
+           breakpoints are set to unconditional.
+
+
+        Example:
+               :b 4711 .start
+               :bi rc = 15; 5
+               :b
+               4711  0400  0005(If)
+               If: rc = 15
+               :
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 12
+
+
+                          C - Trace over calls
+
+        Syntax:    a)  C {N} {J} {count}
+                   b)  C {N} {J} W multexpr
+                   c)  C {N} {J} U multexpr
+
+        This  command  works  the same as the  T(race)  command, 
+        except  that routines CALLed are executed in  real-time, 
+        i.e. they are not traced.
+
+        The called routine MUST return to the instruction  after 
+        the Call-instruction, or tracing will fail. That is, you 
+        can  not  use this command for routines which  expect  a 
+        parameter list after the call instruction and modify the 
+        return  address,  or  for routines which might  pop  the 
+        return address and return to somewhere else.
+
+        See definition of T for more details on the parameters.
+
+        Example:   cnw rbc <> 0 && rde = 0
+
+
+                                D - Dump
+
+        Syntax:    D   {from-address {to-address}}
+
+        Memory is displayed in hexadecimal and ASCII format from 
+        the from-address up to,  and including,  the to-address. 
+        If  the to-address is not  specified,  the  from-address 
+        plus 7F is used,  resulting in an 8-line display. If the 
+        from-address  is not given,  dumping continues from  the 
+        last  address dumped.  If the to-address is smaller than 
+        the from-address, one line is dumped.
+
+        Example:   d 110 140
+                   d 110 1         (this will dump 110 to 11f)
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 13
+
+
+                   E - Execute Command Conditionally
+
+        Syntax:    E   { multexpr } ; command
+
+        The  debugger command is executed only if the result  of 
+        the  expression is TRUE.  If no expression is specified, 
+        or if the input is not an expression,  the command  will 
+        not  be  executed.  This  command is mainly for  use  in 
+        command macros.
+
+        Example:   e rhl > 1000;j mac2, rhl
+
+
+
+                        F - Specify Command Line
+
+        Syntax:    F   { command-line }
+
+        Execution of this command is system dependent.
+
+        For CP/M,  the command line is inserted at the  standard 
+        location  80,  and  the default FCB's at 5C and  6C  are 
+        filled. For CP/M Plus, the password fields at 51..56 are 
+        also defined.
+
+        Example:   f test.com;pass -f -x
+
+
+                     G - Start Real-Time Execution
+
+        Syntax:    G   {to-address} {; temporary-break-address }
+
+        The user program is entered at the specified to-address. 
+        If the to-address is not specified,  execution begins at 
+        the current PC.
+
+        A temporary breakpoint may be set, which is automatical-
+        ly deleted on any break.
+
+        Example:   g;111
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 14
+
+
+                         H - Display Expression
+
+        Syntax:    a)  H
+                   b)  H   expression  { {,} expression ... }
+
+        a) The  values of the special variables  L(ow),  H(igh), 
+           M(ax),  and T(op) (see "expressions", above) are dis-
+           played.
+
+        b) The  expression  is evaluated and displayed  in  hex, 
+           decimal, binary and charater form, with two's comple-
+           ment  for hex and decimal.  This is repeated for  all 
+           given expressions.
+           This  command may also be used to assign to variables 
+           and registers and to display their values.
+
+        Example:   h y0 + $ << 2 & fffe
+
+
+                          I - Input from port
+
+        Syntax:    I   { port }
+
+        One  byte is read and displayed from the specified port. 
+        If no port is given,  the last port number specified for 
+        this command is used.
+
+        For systems which evaluate the upper half of the address 
+        bus  on I/O,  the port may be specified as a 16-bit num-
+        ber. The upper byte will be output on A8..A15.
+
+        Example:
+
+           :i 2210
+           I(Port=10, B=22): ...
+           :
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 15
+
+
+                       J - Jump to Command Macro
+
+        Syntax:    J   filename { , parameter ... }
+
+        Execution  and  format of this command is system  depen-
+        dent.
+
+        Command input will be read from the specified file.  The 
+        commands  will  be  read until an error  or  end-of-file 
+        occurs.  No nesting of command macros is possible, using 
+        this  command  from within a macro  will  terminate  the 
+        calling macro.
+
+        Macro   execution  may  be  prematurely  terminated   by 
+        entering  a character at the console or by using the  K-
+        command from within the macro.
+
+        Macros may be parameterized. The parameters specified in 
+        the  macro  call will be substituted for  the  parameter 
+        identifier @n in the macro body, where n is the position 
+        of  the  parameter,  counting from 0 to  9.  Spaces  are 
+        significant  in  a parameter except after  a  comma,  so 
+        commas  must  be used to separate parameters.  An  empty 
+        parameter  is generated by two commas in  sequence.  The 
+        parameter identifier will be substituted anywhere,  even 
+        in strings.  To generate a @-character in a  macro,  use 
+        two @'s.
+
+        Example:
+
+        Contents of file TESTMAC:
+
+           g;123
+           e rhl > @0; k
+           e ; *** HL is less than @0 ! ***      (Note 1)
+           e @1; j testmac, @1,@2,@3,@4,@5,@6    (Note 2)
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 16
+
+
+        Invocation:
+
+           j testmac, 100, 50
+
+        Notes:
+
+           1)  The  command in this line will never be executed, 
+               but  the line will be displayed on the  terminal. 
+               It thus may be used to display a message.
+
+           2)  This command will only be executed if the  second 
+               parameter (number 1) is non-empty.
+
+
+                        K - Kill Macro Execution
+
+        Syntax:    K
+
+        A currently active macro will be terminated. If no macro 
+        is active, this command has no effect.
+
+
+                       L - List Disassembled Code
+
+        Syntax:    L   { from-address { to-address }}
+
+        The  code  beginning  at the  from-address  up  to,  and 
+        including,  the  to-address,  is listed in  disassembled 
+        form. If no to-address is given, eight lines are listed. 
+        If no from-address is specified,  listing continues from 
+        the last listed instruction, or from the current PC if a 
+        break has occurred.
+
+        If the to-address is smaller than the from-address,  one 
+        line is listed.
+
+        Example:   l rpc rpc + 5
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 17
+
+
+                            M - Move Memory
+
+        Syntax:    M   begin-address end-address destination
+
+        The   memory  starting  at  begin-address  up  to,   and 
+        including,  the end-address, is moved to the destination 
+        address.
+
+        Overlapping  moves  are  allowed and do  not  result  in 
+        propagating values through memory.
+
+        An error will result if the end-address is smaller  than 
+        the begin-address.
+
+        Example:   m rpc rpc+10 3000
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 18
+
+
+                      N - Name (Symbol) Definition
+
+        Syntax:    a)  N
+                   b)  N   address symbol ...
+                   c)  NF  filename
+                   d)  NX
+                   e)  NX  symbol ...
+                   f)  NS  number
+                   g)  NR  { offset }
+                   h)  NW
+
+        a) The  number  of defined symbols and the current  free 
+           symbol  space is displayed in decimal,  then all  de-
+           fined symbols are listed in ascending address order.
+
+        b) The symbol is defined as having the value  "address". 
+           If the symbol is already defined, it will be assigned 
+           the new value.
+
+        c) Defines the name for the symbol file. The symbol file 
+           name is not changed by the normal 'F'-command. The NF 
+           command  is implied if a second filename is specified 
+           on the initial command line.
+
+        d) All symbols are deleted. This will not release symbol 
+           table memory space.
+
+        e) The specified symbol names are deleted.
+
+        f) The  symbol  table  is  expanded  to  make  room  for 
+           "number" additional symbols. 
+
+        g) The  file  specified by the last NF-command  will  be 
+           read  as  symbol-file.  If an offset is  given,  this 
+           offset  will be added to all symbol values.  The  re-
+           quired  format is:  First value,  then  symbol  name, 
+           separated by spaces or tabs. Value and symbol must be 
+           on  the  same  line.  One line may  contain  multiple 
+           symbol  definitions.  No line may be longer  than  80 
+           characters.
+
+        h) The  symbol  table  will  be  written  to  the   file 
+           specified by the last NF-command.
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 19
+
+
+        Cautions:
+
+           Symbol  table  space is allocated  downwards  (toward 
+           address  0) in memory,  directly below the  debugger. 
+           Expansion of this space is automatic if more  symbols 
+           are  defined  than can be contained in the  available 
+           space.  If  the program stack is within 512 bytes  of 
+           the top of the TPA, the stack will be moved down, and 
+           the  SP will be changed accordingly.
+
+           If  the program under test uses space at the  top  of 
+           the  TPA for data or program storage,  this space may 
+           be  overwritten when symbol table space is  expanded, 
+           or  the  program might overwrite  the  symbol  table, 
+           causing the debugger to crash. To avoid this, reserve 
+           enough  symbol  table space before starting the  pro-
+           gram. To be safe from symbol table expansion, you may 
+           set the M-variable to the top of the TPA,  since WADE 
+           will  never expand the symbol table below Max  (Exam-
+           ple:  h m := t).
+
+           For  CP/M 3 only,  programs with an attached RSX will 
+           cause the M-variable to be set to the Top of the TPA, 
+           since  all  RSXes will be  relocated  there.  Reserve 
+           symbol  space before loading the program,  since  the 
+           symbol  table  cannot  be expanded once  the  RSX  is 
+           loaded.
+
+        Example:
+
+               :n 100 start, 5 bdos, 4711 stinks
+               :ns 40.
+               :nf test.sym
+               :nr 2000
+               :nx bdos
+               :nf new.sym
+               :nw
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 20
+
+
+                           O - Output to Port
+
+        Syntax:    O   { data-byte { port-address }}
+
+        Output the data-byte to the specified port-address.  The 
+        data-byte will also be displayed.
+
+        If the port-address is not given,  the last port-address 
+        specified with an O-command is used. If the data-byte is 
+        not entered, the data of the last O-command is used.
+
+        For systems which evaluate the upper half of the address 
+        bus  on I/O,  the port may be specified as a 16-bit num-
+        ber. The high byte will be output on A8..A15.
+
+        Example:
+
+           :o 'x' 2210
+           O(Port=10, B=22): ...
+           :
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 21
+
+
+                          P - Trace Protection
+
+        Syntax:    a)  P
+                   b)  PX
+                   c)  P   multexpr
+
+        a) Display current protect condition
+
+        b) Delete protect condition
+
+        c) Define protect condition
+
+        The  protect condition is evaluated on each  trace.  The 
+        instruction will be executed in real-time,  with a break 
+        set to the current return address,  if the protect  exp-
+        ression evaluates to a TRUE (nonzero) value.
+
+        CAUTION: If the value at the current stackpointer is NOT 
+        a  return  address when the protect expression is  true, 
+        the  breakpoint will be set at an invalid  address,  and 
+        the program may fail, or it may not return to the debug-
+        ger.
+
+        The  default value of the protect expression is 'RPC  >= 
+        xxxx',  where  xxxx  is  the  starting  address  of  the 
+        debugger.  This  results in BDOS-calls being executed in 
+        real  time.   Be  careful  when  changing  the   protect 
+        expression, since tracing into the BDOS will most likely 
+        not  work  (the debugger also uses BDOS-calls,  and  the 
+        BDOS is not re-entrant).
+
+
+        Example:   p rpc >= (6).
+
+
+                  Q - Query (search) for a byte string
+
+        Syntax:    Q   {J} begin-addr end-addr byte-string
+
+        Memory will be searched for the byte-string starting  at 
+        the begin-addr up to, and including, the end-addr. Every 
+        match  will be displayed as one line of dump,  with  the 
+        dump beginning at the first matching byte,  or,  if J is 
+        specified, at 8 bytes before the first matching byte.
+
+        Example:   qj l h 'Hello' 0d 0a
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 22
+
+
+                      R - Read a File into Memory
+
+        Syntax:    R   { offset }
+
+        Execution of this command is system dependent.
+
+        The  file  specified by the last F-command will be  read 
+        into memory.  An offset,  if specified, will be added to 
+        the standard load address.  If a file has the  extension 
+        HEX,  it is assumed to contain standard INTEL-Hex format 
+        records.  All  other  filetypes are read into memory  as 
+        they are without any editing.
+
+        An error occurs if the file cannot be found, if the load 
+        address is below 80h (CP/M),  or if the file would over-
+        write the debugger.
+
+        For  CP/M 3,  files with an attached RSX will be  loaded 
+        via the system's "load overlay" function,  which handles 
+        the relocation of the RSX.  A file is assumed to have an 
+        attached  RSX if the first byte contains a RET  instruc-
+        tion (C9),  and if the filetype is .COM.  Note that  for 
+        files  with attached RSX,  the High address will not  be 
+        set  to  the  end of the file,  since  this  address  is 
+        unknown.
+
+        Example:   r h-100
+
+
+                         S - Substitute Memory
+
+        Syntax:    a)  S   address byte-string
+                   b)  S   { address }
+
+        a) The byte-string replaces the memory at address.
+
+        b) The  byte at the specified address is displayed,  and 
+           input of a byte-string is expected.  The  byte-string 
+           replaces  the  contents  of  memory,   and  the  next 
+           location is displayed. An empty input advances to the 
+           next location. Use a dot (.) as first input character 
+           to terminate the command.
+           If no address is specified, substitution continues at 
+           the  last  address  displayed by a previous  S  or  A 
+           command.
+
+        Example:
+
+           :s rhl 'Hi, there' 0d 0a
+
+
+
+                               T - Trace
+
+        Syntax:    a)  T   {N}{J}  {count}
+                   b)  T   {N}{J}  W multexpr
+                   c)  T   {N}{J}  U multexpr
+
+        a) "count"  instructions  are  traced.  If no  count  is 
+           given, one instruction is traced.
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 23
+
+
+        b) tracing continues while the expression evaluates to a 
+           TRUE value.
+
+        c) tracing continues until the expression evaluates to a 
+           TRUE value.
+
+        If  N  is given,  the traced instructions  will  not  be 
+        displayed.
+
+        If  J is given,  only instructions which modify the pro-
+        gram counter (Jump,  Call and Return instructions)  will 
+        be  displayed and counted or cause the expression to  be 
+        evaluated.
+
+        If NJ is specified, instructions will not be listed, and 
+        only  instructions which modify the PC will decrease the 
+        count or test the condition.
+
+        Tracing  will terminate independent of count or  expres-
+        sion if a breakpoint is encountered,  or if a  character 
+        (other than ^S or ^Q) is entered at the console.
+
+        If  the  protect condition (see P,  above) becomes  TRUE 
+        during trace,  tracing will be inhibited and the protec-
+        ted part will be executed in real-time.
+
+        CAUTION:  Since it is not possible to break at the  cur-
+        rent  PC,  instructions causing a loop to itself can  be 
+        traced only when the loop is exited.  Instructions other 
+        than DJNZ will cause the debugger to issue an error.
+        That is,
+
+           100       LD    B,10
+           102       DJNZ  102
+
+        will  execute  the DJNZ in real-time and then trace  the 
+        next instruction, whereas
+
+           100       JP    NZ,100
+
+        will cause the debugger to refuse to trace,  even if the 
+        condition is false. You have to change the PC by hand to 
+        allow the program to continue.
+
+        Self-modifying  code can cause the trace to fail if  the 
+        implicit   break   after  the  traced   instruction   is 
+        overwritten by the instruction itself. For example,
+
+               100     LD (103),A
+               103     NOP
+
+        will cause the break at 103 to be missed,  and execution 
+        of the program will continue in real-time.
+
+
+        Example:   tj u y0:=y0+1, rpc > 2000
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 24
+
+
+                          U - User Input Trap
+
+        Syntax:    U
+
+        This command is user-defineable.  Execution and  parame-
+        ters are system dependent.
+
+        The  debugger will prompt for a character.  Entering  CR 
+        will delete any trap character,  entering any other cha-
+        racter will define this char as input trap character. If 
+        a trap char is defined, all console input by the program 
+        under test,  except for the "read console buffer"  func-
+        tion of CP/M, will be checked for equality with the trap 
+        character, and a break will be entered on a match. 
+
+        The  break will be set up such that the program     will 
+        again  read a character if a Go is issued.  This  second 
+        character  read  will  then not again be checked  for  a 
+        match with the trap character.
+
+        Example:
+
+               :u
+               Ch: ~
+               :
+
+
+                           V - Verify Memory
+
+        Syntax:    V   begin-addr end-addr compare-addr
+
+        Memory starting at the begin-addr up to,  and including, 
+        the  end-addr,  is compared with memory starting at  the 
+        compare-addr.  Non-matching  bytes  are  displayed  with 
+        their address.
+
+        Example:   v 100 1ff 200
+        WADE - Wagners Debugger - User Manual - V. 1.5 -  Page 25
+
+
+                        W - Write memory to File
+
+        Syntax:    W   start-address end-address { offset }
+
+        Execution of this command is system dependent.
+
+        Memory  beginning  at  the  start-address  up  to,   and 
+        including,  the  end-address  is  written  to  the  file 
+        specified  by  the last F-command.  If the file type  is 
+
+        An  offset is only accepted for files of type  HEX,  and 
+        then  specifies  the offset to be added to  the  current 
+        write address when generating the Hex-file address.
+
+        Example:   w l h
+
+
+                    X - Examine CPU State/Registers
+
+        Syntax:    a)  X
+                   b)  X'
+                   c)  X   register-name
+                   d)  X   register-name expression {...}
+
+        a) The primary registers,  the current instruction,  and 
+           the bottom stack words are displayed.
+
+        b) The alternate register set is displayed.
+
+        c) The  contents of the register are displayed,  and  an 
+           expression is expected.  The value of the  expression 
+           is assigned to the register.
+
+        d) The  register  is set to the  specified  value.  This 
+           specification may be repeated.
+
+
+        Example:
+
+               :x pc
+               0100  1ac
+               :x a 0a b 0c de 1234
+        X, Intel Hex format will be generated.
+
+
+                        Y - Display Y-Variables
+
+        Syntax:    a)  Y
+                   b)  Y   n
+                   c)  Y   n  expression {...}
+
+        a) Display the contents of all 10 Y-Variables
+
+        b) The  contents of the variable n (n = 0..9)  are  dis-
+           played,  and an expression is expected.  The value of 
+           the expression is assigned to the variable.
+
+        c) The  variable n is set to the specified  value.  This 
+           specification may be repeated.
+
+
+        The Y-Variables are not modified by the debugger and are 
+        thus  available  as counters or event markers  for  user 
+        expressions and command macros.
+
+        Example:
+
+               :y 0
+               0000  123
+               :y 0 123  1 0c  2 0d
+
+
+                         Z - Zap (fill) memory
+
+        Syntax:    Z   begin-addr end-addr byte-string
+
+        Memory starting at begin-addr up to, and including, end-
+        addr is filled with the byte-string.
+
+        Example:   z 2000 2fff 0d 0a
+        X, Intel Hex format will be generated.
+
+
+                                Appendix
+                     Extended Memory Considerations
+
+        The  distribution disk contains a version of WADE  which 
+        supports  extended addressing under CP/M 3.  If you  are 
+        running a banked version of CP/M 3,  this version should 
+        run  on your system without modifications if,  and  only 
+        if, the following is true:
+
+        -  there  is  at least 2 k space in common memory  below 
+           the BDOS entry.  This space is required to allow WADE 
+           to  switch  back into the default bank  (bank  1)  on 
+           return from a breakpoint in a different bank.
+
+        -  the MOVE,  XMOVE and SELMEM entries of your BIOS  are 
+           in common memory.
+
+        If  you  do  not intend to use  tracing  or  breakpoints 
+        outside of the normal bank 1,  you should be able to use 
+        the extended version even if the first condition is  not 
+        true. 
+
+        Please  note that the extended version is much slower in 
+        all  memory access operations due to the need to  access 
+        memory  via the MOVE and XMOVE BIOS routines instead  of 
+        using direct access.  The extended version should there-
+        fore only be used where access to other banks is  neces-
+        sary.
+
+        To verify that you can run the extended version, use the 
+        non-extended WADE and the command macro EXTEST:
+
+           WADE
+           J EXTEST
+
+        and  note where the macro stops execution.  If the macro 
+        exits with a g0,  you can use the extended  version.  If 
+        the  message  'OK to use in non-trace mode' appears  but 
+        the macro then terminats with 'Less than 2 k free',  you 
+        may not trace any routine outside the default bank.
+
+
+                                Cautions
+
+        WADE always operates on a 'default bank',  which is  set 
+        to  1  (the CP/M TPA bank) on entry.  Since there is  no 
+        system  independent  way to obtain  the  current  active 
+        bank,  you have to change the active bank by hand if you 
+        intend  to trace any routine outside of bank 1.  Extreme 
+        caution  must  be employed when tracing  routines  which 
+        might change the current bank,  since tracing might fail 
+        (most likely completely crashing the system) if WADE  is 
+        not informed on the bank switch.  Please note, too, that 
+        the restart location in all banks for which a breakpoint 
+        has  been  defined will be changed while tracing  is  in 
+        progress or any breakpoint has been set and the  program 
+        is  executing in real time.  Although WADE will  restore 
+        the  original contents of this location,  you should not 
+        attempt  to trace any routine which might depend on  the 
+        information  stored at this location (38h to 3ah in  the 
+        current release).
+        X, Intel Hex format will be generated.
+
+
+
+                           Changing the Bank
+
+        The  current  active bank is contained  in  the  special 
+        register  'X'  and  may be displayed using the H  or  X' 
+        command.  It may be changed by assignment:
+
+           H X := 0
+
+        or by changing the program counter with the X-command:
+
+           X PC 0:100
+
+        You  can  also  use all memory reference  commands  with 
+        locations  outside  the current bank  by  specifying  an 
+        extended address:
+
+           L 0:100         Lists Bank 0, Address 100
+           S 5:e000        Substitutes Bank 5, Address E000
+           M 0:0 ff 100    Moves  from Bank 0,  Address 0 to FF, 
+                           to Address 100 in the current Bank
+           Z 7:0 ff 0      Sets Locations 0 to FF in Bank 7 to 0
+
+        You may even assign to locations in other banks:
+
+           H 0:100 := (7:100).
+
+
+                             Customization
+
+        If you own the source version of WADE,  you might possi-
+        bly  change  the  entry 'EBREAK' in  module  MONPEEK  to 
+        obtain   the  currently selected bank in  some  hardware 
+        dependent  way  annge  the  entry 'EBREAK' in  module  MONPEEK  to 
+        obtain   the  currently selected bank in  some  hardware 
+        dependent  way  and  store it in  the  variable  'CBANK' 
+        before switching to the default bank.  This would  allow 
+        tracing  into other banks without setting the X-register 
+        by  hand.  If your BIOS returns the previously  selected 
+        bank in register A on exit from the SELMEM routine,  you 
+        may  simply  set the equate 'MEGA' to TRUE in  the  file 
+        MONOPT.LIB and re-assemble the module MONPEEK.
+

@@ -1,0 +1,264 @@
+Abridged version of nciospec.doc containing only I/O spec; omits
+the ROM software description. Intended for ZCN hackers to keep
+on their NC100s in case of emergency. :-)
+
+The documentation is by Cliff Lawson (clawson@amstrad.com, last I
+heard).
+
+-Rus.
+
+
+	I/O Specification for Amstrad NC100
+        <<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>
+
+All numbers are in hexadecimal unless suffixed with a "b" for binary or
+"d" for decimal. (Address line numbers A19, A18, etc are in decimal).
+
+                        SUMMARY
+                        =======
+
+Address                 Comment                 R/W
+=======                 =======                 ===
+
+E0-FF                   Not Used                -
+D0-DF                   RTC (TC8521)            R/W
+C0-C1                   UART (uPD71051)         R/W
+B0-B9                   Key data in             R
+A0                      Card Status etc.        R
+90                      IRQ request status      R/W
+80-8F                   Not Used
+70                      Power on/off control    W
+60                      IRQ Mask                W
+50-53                   Speaker frequency       W
+40                      Parallel port data      W
+30                      Baud rate etc.          W
+20                      Card wiat control       W
+10-13                   Memory management       R/W
+00                      Display memory start    W
+
+
+                        In Detail
+                        =========
+
+Address = 00                                    Write only
+start address of display memory
+----------------------------------------------------------
+
+        bit 7           A15
+        bit 6           A14
+        bit 5           A13
+        bit 4           A12
+        bits 3-0        Not Used
+
+On reset this is set to 0.
+
+The display memory for the 8 line NC computers consists of a block of 4096
+bytes where the first byte defines the state of the pixels in the top left
+hand corner of the screen. A 1 bit set means the pixel is set to black. The
+first byte controls the first 8 dots with bit 7 controlling the bit on the
+left. The next 59 bytes complete the first raster line of 480 dots. The bytes
+which define the second raster line start at byte 64 to make the hardware
+simpler so bytes 60, 61, 62 and 63 are wasted. There are then another 64 bytes
+(with the last 4 unused) which defines the second raster line and so on
+straight down the screen. That is (all numbers decimal):
+
+                 byte00   byte01   byte02      byte60   byte61     byte63
+Bit Number      76543210 76543210 76543210 .. 76543210 76543210.. 76543210
+
+Pixel Number    01234567 89012345 67890123 .. 23456789  wasted .. wasted
+(read bottom    00000000 00111111 11112222    77777777
+to top decimal) 00000000 00000000 00000000    44444444
+
+....and so on for subsequent lines. (Second line = bytes 64..127 etc.)
+
+
+Address = 10..13                              Read/Write
+Memory management control
+--------------------------------------------------------
+
+        10              controls 0000-3FFF
+        11              controls 4000-7FFF
+        12              controls 8000-BFFF
+        13              controls C000-FFFF
+
+On reset all are set to 0.
+
+For each address the byte written has the following meaning:
+
+        bit 7           together they select ROM, internal RAM, card RAM
+        bit 6                   00b = ROM
+                                01b = internal RAM
+                                10b = card RAM
+
+        bits 5-0        determine address lines 19 to 14.
+
+Therefore, 00 is the first 16K of ROM, 01 is the second 16K, etc.
+           40 is the first 16K of internal RAM, 41=second 16K, etc.
+           80 is the first 16K of card RAM, 81=second 16K, etc.
+
+So, for example, if you want to switch the third 16K of internal RAM so the
+processor sees it at 4000-7FFF you would output the value 42 to I/O address
+11.  42 has bits 7,6 = 01b and bits 5-0 are 00010b which is the third 16K of
+internal RAM.
+
+
+Address = 20                                    Write only
+Memory card wait state control
+----------------------------------------------------------
+
+        bit 7 = 1 for wait states, 0 for no wait
+
+On reset this is set to 1. The bit should be set if the card RAM/ROM is
+200nS or slower.
+
+
+Address = 30                                    Write only
+Baud rate etc.
+----------------------------------------------------------
+
+        bit 7     select card register 1=common, 0=attribute
+        bit 6     parallel interface Strobe signal
+        bit 5     Not Used
+        bit 4     uPD4711 line driver, 1=off, 0=on
+        bit 3     UART clock and reset, 1=off, 0=on
+
+        bits 2-0  set the baud rate as follows
+
+                000 = 150
+                001 = 300
+                010 = 600
+                011 = 1200
+                100 = 2400
+                101 = 4800
+                110 = 9600
+                111 = 19200
+
+On reset all data is set to 1.
+
+If programming the UART directly ensure that TxD clock is operating x16.
+
+Address = 40                                    Write only
+Parallel interface data
+----------------------------------------------------------
+
+The byte written here is latched into the parallel port output register. To
+print it you must then take the Strobe signal (I/O address 30 bit 6) low and
+then high again. If the printer sends ACK this may generate an IRQ if the mask
+bit is set in I/O address 60 - IRQ mask.
+
+Address = 50..53                                Write only
+Sound channels period control
+----------------------------------------------------------
+
+        50      channel A period low
+        51      channel A period high
+
+        52      channel B period low
+        53      channel B period high
+
+On reset all data is set to FF. The top bit in the high byte (51 and 53)
+switches the resepective sound generator on or off - 1=off, 0=on.
+
+The frequency generated is determined as:
+
+        Frequency = 1,000,000d
+                    ----------
+                    data * 2 * 1.6276
+
+So if the data word programmed into 50 and 51 was 7800 (ie 50=0, 51=78) then
+the frequency generated would be:
+
+     freq = 1,000,000           =  1,000,000          = 1,000,000   = 10Hz
+            ---------              ---------            ---------
+            7800h * 2 * 1.6276     30720 * 2 * 1.6276      99,999.7
+
+
+Address = 60                                    Write only
+Interrupt request mask
+----------------------------------------------------------
+
+        bits 7-4        Not Used
+        bit 3           Key Scan interrupt (every 10mS)
+        bit 2           ACK from parallel interface
+        bit 1           Tx Ready from UART
+        bit 0           Rx Ready from UART
+
+On reset all bits are 0. For each bit, 1=allow that interrupt source to
+produce IRQs. 0 = interrupt source is masked.
+
+Address = 70                                    Write only
+Power off control
+----------------------------------------------------------
+
+        bits 7-1        Not Used
+        bit 0           1 = no effect, 0 = power off
+
+On reset this is set to 1.
+
+Address = 90                                     Read/Write
+IRQ status
+-----------------------------------------------------------
+
+        bits 7-4        Not Used
+        bit 3           Key scan
+        bit 2           ACK from parallel interface
+        bit 1           Tx Ready interrupt
+        bit 0           Rx Ready interrupt
+
+When an interrupt occurs this port should be read to determine the source of
+the interrupt. The bit will be set to 0 to identify the interrupting device.
+The interrupt can then be cleared by writing 0 to that bit.
+
+Address = A0                                     Read only
+Memory card/battery status
+----------------------------------------------------------
+
+        bit 7           Memory card present 0 = yes, 1 = no
+        bit 6           Card write protected 1 = yes, 0 = no
+
+        bit 5           Input voltage = 1 if >= to 4 Volts
+        bit 4           Mem card battery. 0 = battery is low
+        bit 3           Alkaline batteries. 0 if >= 3.2 Volts
+        bit 2           Lithium battery. 0 if >= 2.7 Volts
+
+        bit 1           Parallel interface BUSY (0 if busy)
+        bit 0           Parallel interface ACK  (1 if ACK)
+
+
+Address = B0 - B9                                 Read only
+Keyboard data
+-----------------------------------------------------------
+
+        B0..B9          each key of the 64 on the keyboard
+                        will set a bit in one of these bytes
+                        while pressed.
+
+The gate array scans the keyboard every 10mS and then generates an
+interrupt. The program should then read these 10 I/O locations to
+determine which key(s) is pushed. When I/O address B9 is read the
+key scan interrupt is cleared automatically and the next scan cycle
+will start from B0.
+
+Address = C0                                      Read/Write
+UART control/data
+------------------------------------------------------------
+
+        C0              UART data register
+        C1              UART status/control register
+
+The UART is the NEC uPD71051. Programmers are advised to study the data
+sheet for that chip for more information. The Serial interface requires
+that the uPD4711 line driver chip be truned on by writing a 0 to bit 4 of
+I/O address 30. While turned on power consumption increases so this should
+only be done when necessary.
+
+Address = D0                                    Read/Write
+Real Time Clock chip (TM8521)
+----------------------------------------------------------
+
+        D0..DC          Data
+        DD              Control register
+        DE              Control register        (Write only)
+        DF              Control register        (Write only)
+
+See data sheet of chip for more information.

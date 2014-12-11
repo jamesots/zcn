@@ -1,0 +1,2210 @@
+;ZCN v1.2 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-1999 Russell Marks. See `zcn.txt' for license details.
+
+;internal commands like `dir' etc.
+;these are almost exactly the same as external commands,
+;but are simply builtin - as such they can call functions
+;directly and do other interesting things. :-)
+
+;on entry to an internal command, de is 80h. (This was available for
+;free in ccp.z, so I rearranged a couple of instructions to make it
+;the case.)
+
+
+;the list of internal commands.
+;command names must be in caps.
+;format is:
+;	defb 7,'CMDNAME'	(length of cmdname, then cmdname)
+;	defw icmdname		(routine to call for command)
+;
+;be *very* careful to get the format right; everything below any
+;invalid entry will cease working otherwise.
+
+intlist:
+;simple directory displayer
+defb 3,'DIR'
+defw idir
+
+;clear screen and re-init term. emu.
+defb 3,'CLS'
+defw icls
+
+;dump command - hexdumps file
+defb 4,'DUMP'
+defw idump
+
+;cat - nearer to DOS type than Unix `cat', really.
+;(ok, I finally gave in and added `type' as a synonym after seeing
+;that CP/M 2.2's type seems to do *exactly* the same thing as this :-))
+defb 3,'CAT'
+defw icat
+defb 4,'TYPE'
+defw icat
+
+;more - paged version of cat.
+defb 4,'MORE'
+defw imore
+
+;era and rm are the same CP/M-style cmd.
+;note that 'erase' and 'delete' are not supported.
+defb 3,'ERA'
+defw iera
+defb 2,'RM'
+defw iera
+
+;I see no comment here.
+defb 5,'XYZZY'
+defw ixyzzy
+
+;remote execute - read uuencoded .COM file from serial port.
+defb 5,'REXEC'
+defw irexec
+
+;serial test - simple terminal program
+defb 7,'SERTEST'
+defw isertest
+
+;format drive
+defb 6,'FORMAT'
+defw iformat
+
+;add system (make bootable)
+defb 3,'SYS'
+defw isys
+
+;remove system
+defb 5,'UNSYS'
+defw iusys
+
+;show no. of K free (i.e. TPA size)
+defb 2,'K3'
+defw ik3
+
+;show disk space available on all drives
+defb 2,'DF'
+defw idf
+
+;set auto-poweroff timeout.
+defb 7,'TIMEOUT'
+defw itimeout
+
+;show bdos func. num as executed or not
+defb 8,'BDOSDBUG'
+defw ibdosdb
+
+;dump from (hex) address
+defb 7,'MEMDUMP'
+defw imemdump
+
+;run whatever was left at 0100h from last .com file -
+;in other words, *hopefully* run last command again, with new args
+defb 2,'!!'
+defw 0100h
+
+;battery warnings on/off
+defb 7,'BATWARN'
+defw ibatwarn
+
+;change user num.
+;(`cd' does the same)
+defb 4,'USER'
+defw iuser
+defb 2,'CD'
+defw iuser
+
+;move filespec across users
+defb 3,'UMV'
+defw iumv
+
+;rename file
+defb 3,'REN'
+defw iren
+
+;use real beep if 1, else visual beep
+defb 8,'REALBEEP'
+defw irealbp
+
+;set baud rate
+defb 4,'STTY'
+defw istty
+
+defb 4,'SAVE'
+defw isave
+
+;loads in a file at a hex address
+defb 3,'GET'
+defw iget
+
+;displays ZCN and ROM versions
+defb 3,'VER'
+defw iver
+
+defb 4,'POKE'
+defw ipoke
+
+defb 6,'IFPEEK'
+defw ifpeek
+
+defb 7,'IFNPEEK'
+defw ifnpeek
+
+defb 7,'QUITSUB'
+defw iquitsub
+
+;for comments in sub files
+defb 3,'REM'
+defw irem
+defb 1,'#'
+defw irem
+
+defb 8,'CAPSCTRL'
+defw icapsctrl
+
+defb 5,'CBOOT'
+defw icboot
+
+defb 4,'NOTE'
+defw inote
+
+defb 4,'CRLF'
+defw icrlf
+
+defb 3,'VDU'
+defw ivdu
+
+defb 3,'OFF'
+defw ioff
+
+defb 6,'SERIAL'
+defw iserial
+
+if IS_NC200
+defb 5,'LIGHT'
+defw ilight
+endif
+
+defb 255		;end of list
+
+
+;most msgs are inlined to save space, but the following are used
+; more than once or are not simply printed:
+
+mbegin:		defb 'begin'
+
+
+idnum		equ 7		;num. of files listed horizontally by 'dir'
+
+;skeleton boot block (10 bytes)
+btblock:
+defb 0c9h,07eh,'ZCN1'
+defw 0		;size of card - must be filled in
+defb 0		;0 system blocks
+defb 2		;2 dir. blocks
+
+
+;the dir command
+;shows files matching filespec in fcb at 5ch, or *.* otherwise
+
+idir:
+ld hl,userfcb1+1
+ld a,(hl)
+cp 32		;if no filespec given...
+jr nz,idir1
+
+;...put '*.*' in place
+ld a,'*'
+ld (hl),a
+ld (userfcb1+9),a
+
+idir1:
+;hl is still userfcb1+1, so this is like `ld de,userfcb1':
+ex de,hl
+dec de
+call bsfirst
+inc a
+jp z,nofile	;if none match, display 'no files' message
+
+;get drive letter
+ld a,(userfcb1)
+and a
+jr nz,idir2
+ld a,(curdrive)
+inc a
+idir2:
+or 64
+ld hl,idirmod
+ld (hl),a
+ld b,a
+ld c,32
+exx		;so hl' is idirmod,  b' is drive letter, c' is space
+
+xor a		;zero files-printed-this-line count
+
+idirlp:
+ex af,af'	;store count
+
+rst 028h	;ilprint
+idirmod: defb ' : ',0	;dir. list 'splitter', first space poss. modified
+
+;write a space to above
+exx
+ld (hl),c
+exx
+
+;print the filename from fcb created at DMA
+ld hl,(dmapos)
+call pfcbname
+
+;look for more
+;(we do this here instead of end-of-loop so we don't do CR/LF
+;if there's no more files.)
+ld de,userfcb1
+call bsnext
+inc a
+ret z		;stop if all done
+
+ex af,af'	;get count
+inc a
+cp idnum
+jr nz,idirlp
+call do_crlf	;this also zeroes A
+exx
+ld (hl),b	;make sure we print drive letter on the new line
+exx
+jr idirlp
+
+
+
+;print the filename contained in fcb pointed at by hl.
+;WIBBLE.DAT comes out as 'wibble  .dat'.
+pfcbname:
+inc hl
+ld b,8
+call plcase
+
+;using rst 028h wouldn't save space here, as we'd need to save
+;hl and b somehow.
+ld a,'.'
+call putchar
+
+ld b,3
+;FALLS THROUGH
+
+;print num. bytes in b from hl, smashing case to all-lower
+;returns hl *after* last byte printed and b=0
+plcase:
+ld a,(hl)
+call isupper
+jr nc,pfn1
+set 5,a
+pfn1:
+call putchar
+inc hl
+djnz plcase
+ret
+
+
+;the cls command
+icls:
+call clrscrn	;clear screen and re-init term. emu.
+call curseit	;draw cursor
+jp skipcrlf	;avoids crlf before prompt
+
+
+;'dump' command
+idump:
+;de is 80h on entry (see top of file), so this zeroes our printed file offset.
+ld e,d
+push de
+;try loading first record of file in userfcb1
+ld de,userfcb1
+call bfopen
+inc a
+jr nz,idumpgo
+
+nofile:		;(used by other things too)
+rst 028h	;ilprint
+defb _caps+_no,' file',0
+jrrst0:
+rst 0		;stuff on stack (for us at least), mustn't use ret
+
+idumplp:
+pop de
+ld hl,080h
+call hexdump2
+push de
+
+scf
+
+idumpgo:	;we start here first time round the loop
+;nc if first time round loop
+push af
+ld de,userfcb1
+call bfread
+and a
+jr nz,jrrst0
+pop af
+jr nc,idumplp	;skip the `more' prompt for first one
+
+rst 028h	;ilprint
+defb '-- M',_or,_e_,'--',0
+
+call getkeycc	;wait for key (checking ^C)
+call do_crlf
+call do_crlf	;make sure the `more' prompt scrolls off
+jr idumplp
+
+
+;the more command
+imore:
+inc d
+;FALLS THROUGH
+
+;the cat command
+icat:
+ld hl,0100h
+ld e,l		;l is zero
+
+;d is 1 if like acting like `more' else 0;
+;e is number of lines on screen so far;
+;hl is pointer to pos. in DMA (100h means we need to read a record)
+;these are saved with `exx' where needed.
+
+;try opening file in userfcb1
+exx
+ld de,userfcb1
+call bfopen
+exx
+inc a
+jr z,nofile
+
+;loop around, showing one char per time
+itypelp:
+ld a,h
+and a
+call nz,ityperd
+
+ld a,(hl)
+and 07fh	;strip high bit (for wordstar-style files)
+cp 26		;is it ^Z?
+ret z		;end if so
+cp 10		;is it LF?
+call z,itypelf
+call putchar
+inc hl
+jr itypelp
+
+;newline
+itypelf:
+inc e		;incr no. lines on screen
+if IS_NC200
+ ld a,21	;check for 21 lines
+ cp e
+ ld a,10	;need this back in A
+else
+cp e		;see if there's ten lines on screen
+		;(current char in A is LF, so we can use that as the 10 (!))
+endif
+ret nz		;ret if not
+
+ld e,0		;zero lines
+
+;check for ^C without waiting or reading non-^C keys
+exx
+call kseechar
+jr nc,itypnbrk
+cp 3
+jr nz,itypnbrk
+call kgetchar	;remove ^C from buffer
+exx		;not really needed, but I prefer having matching exx's
+rst 0
+itypnbrk:
+exx
+
+ld a,d
+and a
+ld a,10
+ret z		;ret if not acting like `more'
+
+;need to wait for a key
+;no prompt, as this would waste a line:
+;instead move cursor to end of screen as a hint.
+exx
+call curseit
+ld a,119
+ld (xloc),a
+call curseit
+call getkeycc	;wait for key (checking ^C)
+rst 028h	;ilprint
+defb 13,0
+exx
+ld a,10
+ret
+
+
+;read in 128 more bytes and reset hl
+ityperd:
+exx
+ld de,userfcb1
+call bfread
+exx
+ld hl,080h
+and a
+ret z
+
+;end of file - return to ccp
+rst 0
+
+
+;erase a file
+;XXX this should prompt when file(s) to delete is a wildcard.
+iera:
+ld de,userfcb1
+call bfdel
+inc a
+jp nz,skipcrlf	;success
+;error
+jp nofile
+
+
+;change drive
+;special bit of code in `runint' detects command of form "B:" and
+;jumps (yes, not `call', but `jp') to this routine.
+;entry: a=drive spec as num. in range 1-4
+ichngdrv:
+ld hl,mainloop
+push hl		;add return address
+dec a
+cp 4
+jr nc,icderr	;if >=E:, not valid drive
+ld (comfcb),a
+inc a
+call bchkdrv
+ld a,(comfcb)
+jp nc,invfmt	;`bad crd/drv/format' error
+ld (curdrive),a
+jp skipcrlf	;exit
+
+icderr:
+rst 028h	;ilprint
+defb _caps+_in,'vali',_d_,'drive',0
+ret
+
+
+;you are in a little maze of twisty passages, all different
+ixyzzy:
+rst 028h	;ilprint
+defb _caps+_no,'th',_in,'g hap',_pe,'ns.',0
+rst 0	;must be rst 0 as used by others with junk on stack
+
+
+;remote exec uuencoded com file
+;this is pretty ugly.
+irxpos:	defw 0		;position to put binary at
+irexec:
+;first, ditch any pending serial stuff
+call bauxinp
+and a
+jr z,ire1
+call bauxin
+jr irexec
+
+ire1:
+call chktail
+
+;prompt to send uuencoded com file
+rst 028h	;ilprint
+defb _caps+_se,'n',_d_,'uuencode',_d_,'file.',_crlf,0
+
+ld hl,cmdbuf	;reuse the ccp's internal command-line buffer
+push hl
+call srdline	;read a line of text (and exit if ^C pressed)
+pop hl
+ld a,c
+cp 5
+jr c,ire1	;can't be 'begin' line if <5 chars!
+
+;check for 'begin' at start of line
+;hl is still cmdbuf
+ld de,mbegin
+ld b,5
+ire2:
+ld a,(de)
+cp (hl)
+jr nz,ire1	;skip back if not 'begin'
+djnz ire2
+
+;ok, we've got it then.
+;start decoding each input line.
+ld hl,0100h
+ld (irxpos),hl
+
+irelp:
+rst 028h	;ilprint
+defb '.',0
+
+ld hl,cmdbuf	;reuse the ccp's internal command-line buffer
+push hl
+call srdline	;read a line of text (and exit if ^C pressed)
+
+;get size of line
+pop hl		;cmdbuf
+ld a,(hl)
+cp 'e'
+jr z,irxdone	;must be 'end' line
+call irxfix
+jr z,irelp	;ignore zero-byte lines
+
+ld b,a
+ld ix,cmdbuf
+ld hl,(irxpos)
+inc ix		;skip past 'bytes on line' char
+
+irelp2:
+;turn ascii into 6-bit values
+push hl
+push ix
+pop hl
+ld d,4
+irelp4:
+ld a,(hl)
+call irxfix
+ld (hl),a
+inc hl
+dec d
+jr nz,irelp4
+pop hl
+
+;need three bytes like: 00000011 11112222 22333333
+;1st byte
+ld a,(ix+0)
+rlca
+rlca
+ld d,a
+ld a,(ix+1)
+rrca
+rrca
+rrca
+rrca
+and 3
+or d
+ld (hl),a
+inc hl
+
+;2nd byte
+ld a,(ix+1)
+rlca
+rlca
+rlca
+rlca
+and 0f0h
+ld d,a
+ld a,(ix+2)
+rrca
+rrca
+and 15
+or d
+ld (hl),a
+inc hl
+
+;3rd byte
+ld a,(ix+2)
+rrca
+rrca
+and 0c0h
+or (ix+3)
+ld (hl),a
+inc hl
+
+;incr, decr, and loop
+ld de,4
+add ix,de
+dec b
+jr z,ire3
+dec b
+jr z,ire3
+djnz irelp2
+ire3:
+ld (irxpos),hl
+
+;get another line
+jr irelp
+
+irxdone:
+;transferred ok, now write it.
+ld de,userfcb1
+call bfmake
+inc a
+jp z,nofile	;if couldn't open file, say so
+ld a,(irxpos+1)
+ld b,a
+ld hl,0100h
+ire4:
+push bc
+;write 256 bytes at a time (necessary if we use b alone to loop)
+call irxwrcd
+call irxwrcd
+pop bc
+djnz ire4
+
+;file close not necessary on ZCN
+rst 0		;warm boot
+
+irxfix:
+;fix char from uuencoded line in a.
+sub 32
+and 63
+ret
+
+irxwrcd:
+push hl
+ld (dmapos),hl
+ld de,userfcb1
+call bfwrite
+pop hl
+ld de,128
+add hl,de
+ret
+
+
+;wait for key, ret in A, but abort if ^C pressed.
+getkeycc:
+call bdgetkey
+jr nc,getkeycc
+cp 3
+ret nz
+rst 0		;warm boot if ^C pressed
+
+
+
+;read a text line from the serial port.
+;entry: hl=buffer
+;exit:  c=num. chars read
+;CRs are dropped. LF is the eol character, not part of the retnd line.
+srdline:
+ld b,128	;stop after 128 chars, for sure
+ld c,0
+srdl0:
+push bc
+push hl
+
+srdl1:
+call kchkchar
+call c,getkeycc	;wait for key (checking ^C)
+call sgetbyte
+jr nc,srdl1
+
+pop hl
+pop bc
+cp 13
+jr z,srdl3
+cp 10
+ret z		;end if LF found
+ld (hl),a
+inc c
+inc hl
+srdl3:
+djnz srdl0
+ret
+
+
+;simple term. prog.
+isertest:
+call istin
+call istout
+jr isertest
+
+istout:
+;if key, send it
+;we check for key first - that way, we can send ctrl+@, good for emacs
+;check for key
+call bconstat
+rra
+ret nc
+
+;read key
+call bdgetkey
+
+cp 28		;is it ^\?
+jr nz,istskip
+
+call getkeycc	;busy-wait for next key (using this means ^C quits also)
+cp 28
+jr z,istskip	;send literal ^\
+cp 'q'
+ret nz		;any other key after ^\ is ignored
+rst 0		;warm boot
+
+istskip:
+ld e,a
+push de
+;check output possible
+call bauxoutp
+pop de
+and a
+ret z	;don't bother if not
+
+jp bauxout
+
+
+istin:
+;check for input
+call bauxinp
+and a
+ret z
+
+;if so, get and display it
+call bauxin
+jp tputchar
+
+
+;format card - formats a logical drive
+ifmtdrv		equ ifdrvop+1
+iformat:
+ld a,(userfcb1)
+and a
+jr z,ifmtm1	;usage if no drive id given
+
+;if <'A'-64 or >='E'-64, give usage
+cp 1		;usage if < A:
+jr c,ifmtm1
+cp 5		;ok if >= A: and < E:
+jr c,ifmt0
+
+ifmtm1:
+rst 028h	;ilprint
+defb 'f',_or,_ma,'t',0
+jp drvspec	;print " <drvspec>" and rst 0
+
+ifmt0:
+dec a
+ld (ifmtdrv),a
+
+;see if there's a card in
+call iscard
+jr c,ifmt0a
+rst 028h	;ilprint
+defb _caps+_no,' car',_d_,_in,__s,'lot',0
+ret
+
+ifmt0a:
+;the drive to format is >A:, A: must be formatted already
+ifdrvop: ld a,0	;ifmtdrv
+and a
+jr z,ifmt0b
+ld d,0
+call iszcn1
+jr c,ifmt0b
+rst 028h	;ilprint
+defb 'A: must b',_e_,'f',_or,_ma,'tt',_ed,'!',0
+ret
+
+ifmt0b:
+;see if the card is already formatted.
+;it's probably formatted if there are bytes other than 0 and FFh
+;in the first record.
+;since we'll be using the card a lot, we keep it switched in.
+ld hl,cardout
+push hl		;ret via 'cardout'.
+ld a,(ifmtdrv)
+ld b,a
+xor a
+call cnvblkno
+call cardin
+
+ld hl,04000h
+ld b,128
+ifmtlp1:
+ld a,(hl)
+and a
+jr z,ifmt1
+cp 255
+jp nz,ifmtask
+ifmt1:
+inc hl
+djnz ifmtlp1
+
+ifmt2:
+;if we get here, it's ok to format the card.
+;see if writing to the card makes any difference.
+;if not, it must be write-protected.
+ld hl,04000h
+ld a,(hl)
+cpl
+ld (hl),a
+cp (hl)
+;if the same, it's ok.
+jr z,ifmt3
+
+;otherwise, it's write-protected
+rst 028h	;ilprint
+defb 'Car',_d_,'R/O',0
+ret
+
+ifmt3:
+;we now need to find out how big it is.
+;this is not fun. it seems that the PCMCIA memory ports allocated
+;(80h-BFh) all map to real memory on the card - any size card ends
+;up looking like a 1024k card, with the contents repeating every
+;<card size>. we have to use this to find out how big it is.
+
+;grab a chunk from font data to use as our unique stuff to put there
+;and look for.
+;
+;well - we don't *quite* do that. If we did only that, the font in any
+;`zcn.com' which could have been on the drive (as it may be being
+;*re*formatted) could be on a 16k boundary (very unlikely, but not
+;impossible). So, we stick a word just before the font data by hand
+;(and check from there) to prevent that. (This is the reason
+;`intstack' starts a word before the font data - it's purely to
+;leave room for us to do this.)
+
+ld hl,0eabeh
+ld (0eabeh),hl	;why not just use that, in fact... :-)
+		;(the last byte of the ZCN system code is always C9h,
+		; so this is guaranteed to be different.)
+ld de,04000h
+ld bc,256
+ldir
+
+ld c,1		;port num. offset
+ld b,64		;max. possible size in 16k chunks
+ifmtlp2:
+push bc
+ld a,(ifmtdrv)
+ld b,a
+ld a,c
+;can't use cnvblkno as it mods at 256k, so...
+;add 16*drive num.
+rlc b
+rlc b
+rlc b
+rlc b
+add a,b
+and 63
+or 080h
+call cardin
+ld hl,04000h
+ld de,0eabeh
+ld b,0
+ifmtlp3:
+ld a,(de)
+cp (hl)
+jr nz,ifmt4
+inc hl
+inc de
+djnz ifmtlp3
+;it matched ok
+pop bc
+ld a,c
+jr ifmt5
+
+ifmt4:
+pop bc
+inc c
+djnz ifmtlp2
+;no match - must be a 1024k card
+ld a,64
+
+ifmt5:
+;size of card in 16k chunks is now in a
+ld l,a
+ld h,0
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+
+push hl
+ld a,(ifmtdrv)
+ld b,a
+xor a
+call cnvblkno
+call cardin
+
+ld hl,04000h
+push hl
+ld bc,0400h
+call zeroblk
+
+ld hl,btblock
+pop de		;4000h
+ld bc,10
+ldir
+pop hl
+
+ld (04000h+cf1size),hl
+
+pop hl	;remove 'cardout' as return address
+ld a,041h
+ld (savbop+1),a	;re-init that since we used cardin several times
+call cardout
+
+;we can use normal record-writing functions now
+ld hl,cardbuf
+ld de,cardbuf+1
+ld bc,127
+ld (hl),0e5h
+ldir
+
+;write that dirblks*8 times
+ld a,(btblock+cf1dirb)
+rlca
+rlca
+rlca
+
+ld b,a
+ifmtlp4:
+push bc
+dec b	;put in range 0-(dirb*8-1)
+ld a,b
+and 7
+ld c,a
+ld a,b
+rrca
+rrca
+rrca
+and 01fh
+ld b,a
+ld a,(ifmtdrv)
+ld d,a
+ld hl,cardbuf
+call writeblkrcd
+pop bc
+djnz ifmtlp4
+
+;formatted ok
+rst 028h	;ilprint
+defb 'F',_or,_ma,'tt',_in,'g complete',0
+ret
+
+
+;ask if it's ok to reformat
+ifmtask:
+rst 028h	;ilprint
+defb 'Data on card; ref',_or,_ma,'t? (Y/N) ',0
+ifmtask1:
+call bdgetkey
+cp 'n'
+ret z
+cp 'y'
+jr nz,ifmtask1
+jp ifmt2
+
+
+;sys - make drive bootable by writing current system to card
+;the command is used like 'sys a:'.
+isysdrv		equ isdrvop+1
+isys:
+ld a,(userfcb1)
+and a
+jr nz,isys0
+rst 028h	;ilprint
+defb 'sys',0
+
+drvspec:	;also used by format and unsys
+;print " <drvspec>" then rst 0
+rst 028h
+defb ' <drvs',_pe,'c>',0
+rst 0
+
+isys0:
+dec a
+ld (isysdrv),a
+inc a
+call bchkdrv
+jr c,isys0a
+jp invfmt
+
+isys0a:
+;ok, the card is reasonable.
+;find how many system blocks need to be added/deleted.
+isdrvop: ld b,0		;modified
+xor a
+ld hl,cf1sysb
+call creadone
+ld e,a
+;e=num. existing system blocks.
+push de
+;get num. blocks needed for system
+;we find this by doing:
+;num_blocks=(size+1023)/1024
+ld hl,zcn_eof-start+576		;length of entire ZCN system (576=siz of font)
+ld de,1023
+add hl,de
+ld a,h
+rrca
+rrca
+and 03fh
+pop de
+
+;so now a=needed num., e=current num.
+;if a=e we can just rewrite the system.
+cp e
+jr z,isyswrt
+;if a<e we need to delete e-a blocks.
+jr c,isysnd
+
+;so a>e, and we need to add a-e blocks.
+sub e
+;see if we can shift the data blocks up without losing anything
+push af
+ld a,(isysdrv)
+ld d,a
+pop af
+push af
+call syschkrm
+jr c,isys1
+pop af
+rst 028h	;ilprint
+defb 'Can',_no,'t ',_in,'cr ',_no,'. of',__s,'y',_s_,'blks',0
+ret
+
+isys1:
+;yep, we can.
+pop af
+;a=num. extra sys blks needed.
+ld b,a
+isyslp1:
+push bc
+rst 028h	;ilprint
+defb 'addblk..',0
+call sysbkadd
+pop bc
+djnz isyslp1
+jr isyswrt	;now write the system stuff
+
+isysnd:
+;need to delete e-a blocks
+ld d,a
+ld a,e
+sub d
+;a=num. sys blks to remove.
+ld b,a
+isyslp2:
+push bc
+call delblkms
+call sysbkdel
+pop bc
+djnz isyslp2
+
+isyswrt:
+rst 028h	;ilprint
+defb 'copy',_in,'g...',0
+
+;now rewrite the system (and boot block booting bits)
+;page in the card to do this.
+ld a,(isysdrv)
+ld b,a
+xor a
+call cnvblkno
+call cardin
+
+;first 16k of drive is now at 4000h-7fffh.
+;zero the cf1zero area (40h-7fh)
+ld hl,04040h
+ld bc,040h
+call zeroblk
+;add cf1jump[12]
+ld hl,07e18h
+ld (04000h),hl
+;add cf1boot
+ld hl,cbootst
+ld de,04000h+cf1boot
+ld bc,cbootend-cbootst
+ldir
+;add cf1fnx
+ld hl,cboot2st
+ld de,04000h+cf1fnx
+ld bc,cboot2end-cboot2st
+ldir
+;add system blocks
+ld hl,start
+ld de,04400h	;start of 1st system block
+ld bc,zcn_eof-start
+ldir
+;add font
+ld hl,0eac0h
+ld bc,96*6
+ldir
+
+call cardout
+
+;that's it.
+jp done
+
+
+;check if the drive has enough room to insert num. sys. blks in a.
+;entry: a=num. extra sys. blks needed (>=1), d=drive number base val 0
+;exit: carry set if ok, else false.
+syschkrm:
+push af
+call findfblk
+;now ffreebuf contains a 256-byte table where each value is
+;zero if that block is used, and 1 if it is free.
+ld a,(ffbndat)
+ld l,a
+pop af
+;l=num. of data blocks, used or free.
+
+;we need to check that the (a) bytes *before* hl (see below) are 1.
+;if not, the blocks we need are used and there's 'no room'.
+ld h,0
+ld de,ffreebuf
+add hl,de
+ld b,a
+scrmlp:
+dec hl
+ld a,(hl)
+and a
+ret z		;and nc - one or more of the reqd blocks is used.
+djnz scrmlp
+scf
+ret
+
+
+sysbkbuf equ 03000h
+sysbkbf2 equ sysbkbuf+1024
+
+;add one system block.
+;cf1sysb is updated.
+;takes drive num. from (isysdrv).
+;uses 2k at 3000h as buffer.
+;
+; the copying works like this:
+;      __________            ______________________  04000h
+;     | sysbkbuf | ----------> xx                  |
+;      ^^^^^^^^^^       3.  |--xx------------------| 04400h
+;          ^           	    |  xx -_ 2.  yy        |
+;          | 4.             |  xx   -_   yy        |  ...
+;      __________ 	    |  xx     -> yy        |
+;     | sysbkbf2 | <--_ 1.  |------------yy--------| 07c00h
+;      ^^^^^^^^^^      ---------	 yy        |
+;			     ^^^^^^^^^^^^^^^^^^^^^^  08000h
+;
+; step 3 obviously doesn't happen first time around the loop.
+;
+sysbkadd:
+call sysbkpag
+
+;a=card page as value to write to bank-switching port,
+;b=number of pages on drive.
+ld c,1	;c=1 if first time around loop.
+sbalp:
+push bc
+push af
+call cardin
+pop af
+
+;step 1. copy 7c00h-7fffh to sysbkbf2.
+ld hl,07c00h
+ld de,sysbkbf2
+ld bc,1024
+ldir
+
+;step 2. copy 15k down.
+ld hl,07bffh
+ld de,07fffh
+ld bc,03c00h
+lddr	;need to do it backwards
+
+pop bc
+push bc
+;if not first time...
+bit 0,c
+jr nz,sba2
+
+;step 3. copy sysbkbuf to 04000h.
+ld hl,sysbkbuf
+ld de,04000h
+ld bc,1024
+ldir
+
+sba2:
+;step 4. copy sysbkbf2 to sysbkbuf.
+ld hl,sysbkbf2
+ld de,sysbkbuf
+ld bc,1024
+ldir
+
+push af
+call cardout
+pop af
+pop bc
+ld c,0		;zero 'first time?' flag
+inc a
+djnz sbalp
+
+;now incr cf1sysb by one.
+ld a,(isysdrv)
+ld b,a
+push bc
+xor a
+ld hl,cf1sysb
+call creadone
+pop bc
+inc a
+ld c,a
+xor a
+ld hl,cf1sysb
+jp cwrtone
+
+
+;used by sysbk{add,del}
+;ret. with a=1st card page for drive, b=num pages on drive.
+sysbkpag:
+ld a,(isysdrv)
+ld b,a
+xor a
+ld hl,cf1size
+call creadone
+;divide by 16.
+rrca
+rrca
+rrca
+rrca
+and 0fh
+;if it's zero, it was 256k drive, so let a=256/16=16.
+and a
+jr nz,sba1
+ld a,16
+sba1:
+ld b,a
+push bc
+
+ld a,(isysdrv)
+ld b,a
+xor a
+call cnvblkno
+pop bc
+ret
+
+
+;remove one system block.
+;cf1sysb is updated.
+;takes drive num. from (isysdrv).
+;uses 3k at 3000h as buffer.
+;
+; the copying works like this:
+;      __________            ______________________  04000h
+;     | sysbkbuf | <---------- xx                  |
+;      ^^^^^^^^^^       2.  |--xx------------------| 04400h
+;          |           	    |  xx <_ 3.  yy        |
+;          v 1.             |  xx   -_   yy        |  ...
+;      __________ 	    |  xx     -_ yy        |
+;     | sysbkbf2 | ---_ 4.  |------------yy--------| 07c00h
+;      ^^^^^^^^^^      -------->	 yy        |
+;			     ^^^^^^^^^^^^^^^^^^^^^^  08000h
+;
+; this means that at the end, the boot block is in sysbkbuf.
+; this is copied back to 04000h.
+;
+sysbkdel:
+call sysbkpag
+
+;a=card page as value to write to bank-switching port,
+;b=number of pages on drive.
+;want to start at the other end of the drive, so let a=a+b-1
+add a,b
+dec a
+
+sbdlp:
+push bc
+push af
+call cardin
+pop af
+
+;step 1. copy sysbkbuf to sysbkbf2.
+ld hl,sysbkbuf
+ld de,sysbkbf2
+ld bc,1024
+ldir
+
+;step 2. copy 1k at 4000h to sysbkbuf.
+ld hl,04000h
+ld de,sysbkbuf
+ld bc,1024
+ldir
+
+;step 3. move 15k up.
+ld hl,04400h
+ld de,04000h
+ld bc,03c00h
+ldir
+
+;step 4. copy sysbkbf2 to 7c00h.
+ld hl,sysbkbf2
+ld de,07c00h
+ld bc,1024
+ldir
+
+push af
+call cardout
+pop af
+pop bc
+dec a
+djnz sbdlp
+
+;restore boot block and decr cf1sysb by one.
+inc a
+call cardin
+ld hl,sysbkbuf
+ld de,04000h
+ld bc,1024
+ldir
+
+ld hl,04000h+cf1sysb
+dec (hl)
+jp cardout
+
+
+;unsys - make drive unbootable again, saving the space previously used,
+;  for use as data blocks.
+;the command is used like 'unsys a:'.
+iusys:
+ld a,(userfcb1)
+and a
+jr nz,iusys0
+rst 028h	;ilprint
+defb 'unsys',0
+jp drvspec	;print " <drvspec>" and rst 0
+
+iusys0:
+dec a
+ld (isysdrv),a
+inc a
+call bchkdrv
+jr c,iusys0a
+jp invfmt
+
+iusys0a:
+;ok, the card is reasonable.
+;find how many system blocks need to be added/deleted.
+ld a,(isysdrv)
+ld b,a
+xor a
+ld hl,cf1sysb
+call creadone
+and a
+jr nz,iusys1
+rst 028h	;ilprint
+defb _caps+_no,__s,'y',_s_,'blk',_s_,'u',_se,'d',0
+ret
+
+iusys1:
+ld b,a		;b=num. existing system blocks.
+
+iusyslp:
+push bc
+call delblkms
+call sysbkdel
+pop bc
+djnz iusyslp
+
+;mark it 'not bootable'
+ld a,(isysdrv)
+ld b,a
+xor a
+ld c,0c9h
+ld hl,cf1jump1
+push bc
+call cwrtone
+
+;and screw up the 'NC100PRG' signature to stop Fn-X booting
+;just zeroing the 1st byte is sufficient
+pop bc
+ld c,0
+xor a
+ld hl,cf1fnx
+call cwrtone
+
+jp done
+
+
+;k3 - report free memory (TPA) in k.
+;it actually prints (bdos_address-512)/1024.
+ik3:
+ld a,(0007h)
+dec a		;-256 to allow for stack
+dec a		;-256 again to allow for zero page
+rrca
+rrca
+and 03fh
+ld e,a
+;d is already zero (as de was 80h on entry - see top of file)
+call dispdec
+rst 028h	;ilprint
+defb 'k',0
+ret
+
+
+;set baud rate - this replaces the old `setbaud'
+istty:
+call chktail
+;for the supported baud rates, (sbaud)=log2(rate/150).
+ld hl,userfcb1+1
+call asciinum_dec
+ld de,150
+call divide
+;must have no remainder and have hl<256, i.e. h,d,e must be zero
+ld a,h
+or d
+or e
+jr nz,isttyerr
+
+;must also have an integer base 2 log; so this is (I think)
+;the most efficient way to look the value up and check that...
+ld a,l
+ld hl,isttytbl
+ld bc,8
+cpir
+jr nz,isttyerr
+ld a,c
+ld (sbaud),a
+call sinit
+;it doesn't re-enable ints, but soon after skipcrlf is an `ei'
+jp skipcrlf
+
+isttyerr:
+rst 028h	;ilprint
+defb 'Bad',__s,_pe,_ed,0
+ret
+
+;we don't need the `1' because the opcode for `ld bc,NN' following
+;it is 01h - errr, hi to Mel if he's watching... :-)
+isttytbl: defb 128,64,32,16,8,4,2 ;,1
+
+;df - shows something like `A:=124k B:=253k' [for as many drives as exist]
+;(NB: don't move the first op here or change it or put anything before it
+;without thinking about it - see `isttytbl' above.)
+idf:
+ld bc,0400h	;b=test all four drives if present, c=current drive to check
+istatlp:
+push bc
+ld a,c
+inc a		;bchkdrv wants 1=A:
+call bchkdrv
+jr nc,idf1
+pop bc
+push bc
+ld a,c
+add a,'A'
+call putchar
+rst 028h	;ilprint
+defb ':=',0
+pop bc
+push bc
+ld d,c
+call diskfree
+ld e,a
+ld d,0
+call dispdec
+rst 028h
+defb 'k ',0
+idf1:
+pop bc
+inc c
+djnz istatlp
+ret
+
+
+;set auto-poweroff timeout.
+itimeout:
+ld hl,05dh
+ld a,(hl)
+cp 32
+jr nz,ito1
+rst 028h	;ilprint
+defb 'timeout <m',_in,'s> 0=',_no,' auto-off',0
+ret
+
+ito1:
+call asciinum_dec
+ld a,h
+and a
+jr nz,ito2
+ld a,l
+cp 11
+jr c,ito3
+
+ito2:
+;number too big - >10 mins
+rst 028h	;ilprint
+defb '10 ',_ma,'x',0
+ret
+
+ito3:
+;number ok. multiply by 6000. (60 sec/min, and 100 ints/sec.)
+ex de,hl
+ld bc,6000
+call multiply
+
+;re-init poweroff stuff.
+di
+ld (pwrofftm),hl
+ld (potimout),hl
+ei
+jr skipcrjr2
+
+
+;bdos debugging aid - switch on/off
+ibdosdb:
+ld hl,bdosdbug
+jr boolcmd
+
+
+;real beep set
+irealbp:
+ld hl,realbeep
+jr boolcmd
+
+
+;make caps lock key act as (yet another :-)) control key
+icapsctrl:
+ld hl,capsctrl
+jr boolcmd
+
+
+;turn on/off battery warnings.
+;for use if you have low batteries but want to carry on anyway:
+; use 'batwarn 0' to do this.
+ibatwarn:
+ld hl,batwarn
+;FALLS THROUGH
+
+;generic boolean setting command.
+;entry: hl=addr of byte var to change
+boolcmd:
+ld a,(05dh)
+sub 48
+jr c,boolerr
+cp 2
+jr nc,boolerr
+ld (hl),a
+jr skipcrjr2
+
+boolerr:
+rst 028h	;ilprint
+defb 'U',_se,' 1 f',_or,' on, 0 f',_or,' off',0
+ret
+
+
+;disable/enable CR/LF after each command finishes
+icrlf:
+ld hl,crlf_op+1
+jr boolcmd
+
+
+;for comments in sub files (or anywhere else) - ignored, of course
+irem:
+;however, we do need to make sure 0003h isn't changed to the
+;new value of 0080h. I guess the obvious way is to do this:
+ld a,(3)
+ld (de),a	;de is 80h on entry (see top of file)
+;well, what the heck, it works. :-)
+skipcrjr2:	;jumped to from other local bits to get to skipcrlf
+jp skipcrlf
+
+
+imemdump:
+call chktail
+ld hl,userfcb1+1
+call asciinum_hex
+jp hexdump
+
+
+;variant of chktail which checks for two args
+;af corrupt
+chktailboth:
+ld a,(userfcb2+1)
+cp 32
+jr z,chkterr
+;FALLS THROUGH
+
+;warm boot and simple error message if no tail
+;af corrupt
+chktail:
+ld a,(userfcb1+1)
+cp 32
+ret nz
+chkterr:
+rst 028h	;ilprint
+defb 'Args?',0
+rst 0
+
+
+;change user num
+iuser:
+ld hl,userfcb1+1
+ld a,(hl)
+sub 32
+jr z,iuok	;if no arg, go to user 0
+ld a,(082h)	;only way to check if it's really an asterisk
+cp '*'
+ld a,255
+jr z,iuok
+ld a,(hl)	;userfcb1+1 is good enough for this
+cp '-'
+ld a,(prevuser)
+jr z,iuok
+;hl still userfcb1+1
+call asciinum_dec
+ld a,h
+and a
+jr nz,iuerr
+ld a,l
+cp 255		;255=read all, no write
+jr z,iuok
+cp 16
+jr nc,iuerr
+iuok:
+ld hl,curuser
+ld b,(hl)
+ld (hl),a
+ld a,b
+ld (prevuser),a
+jr skipcrjr2
+
+;usrnum too big
+iuerr:
+rst 028h	;ilprint
+defb 'Ba',_d_,'u',_se,'rnum',0
+ret
+
+
+;move file(s) across to new usernum
+iumv:
+call chktailboth
+
+ld a,(curuser)
+ld (iumvop+1),a
+
+ld hl,userfcb2+1
+call asciinum_dec
+ld a,h
+and a
+jr nz,iuerr
+ld a,l
+cp 16
+jr nc,iuerr
+ex af,af'
+
+;moveuser doesn't check for files of same name in new user; we have
+;to do that here. if any is found then *none* of the files are moved.
+;so here we go through each file we want to move and check a file of the
+;same name doesn't exist in the dest. user. Normally this wouldn't be
+;possible on CP/M (need to check a file exists in the middle of a
+;bsfirst/next operation) but it's ok on ZCN as long as I use the
+;user-level bsfirst/next for the loop and the internal fexist for the
+;file test.
+
+ld de,userfcb1	;filespec
+call bsfirst
+and a
+jr nz,iumvnof
+
+iumvlp:
+ex af,af'	;get dest. user in a
+ld (curuser),a
+ex af,af'
+ld de,080h	;FCB gen'd by bsfirst/next at DMA
+call fexist
+and a
+iumvop: ld a,0	;modified above
+ld (curuser),a
+jr z,irenbad	;reuse ren's "file exists" message
+
+call bsnext
+and a
+jr z,iumvlp
+
+;so it's ok, now move the files.
+ld de,userfcb1
+ex af,af'
+call moveuser
+inc a
+jp nz,skipcrlf	;ok, done
+
+;this is a "can't happen" as we already checked there's at least one
+;matching file in the source user area, but FWIW...
+
+iumvnof:
+jp nofile
+
+
+;rename file (only one)
+iren:
+call chktailboth
+
+ld de,userfcb2
+call bfopen
+inc a
+jr nz,irenbad	;if it worked, the filename's already used
+
+ld de,userfcb1
+call bfrename
+inc a
+jp nz,skipcrlf	;ok, done
+
+jp nofile
+
+irenbad:
+rst 028h	;ilprint
+defb 'Fil',_e_,'exists',0
+ret
+
+
+;note command
+inote:
+;de is currently 80h
+ex de,hl
+ld (hl),125
+
+call chktail
+
+ld de,0100h
+inotelp:
+;put a ^Z at the end of current stuff, so that if they ^C by accident,
+;they can still rescue the text with `save'.
+ld a,26
+ld (de),a
+
+push de
+ld de,080h
+push de
+call bgetbuf	;fill buffer with input
+rst 028h
+defb 10,0	;output LF (CR already output)
+pop hl		;80h
+pop de
+inc hl
+ld a,(hl)
+inc hl		;hl now 82h
+and a
+jr z,inoteskip2	;skip copy if length is zero
+ld b,h		;h is zero
+ld c,a
+;check it was one char
+dec a
+jr nz,inoteskip
+;so it was was one char - if the char was `.', end
+ld a,(hl)
+cp '.'
+jr z,inote_eof
+inoteskip:
+ldir		;copy the line
+inoteskip2:
+;write CR/LF after it
+ex de,hl
+ld (hl),13
+inc hl
+ld (hl),10
+inc hl
+ex de,hl
+jr inotelp
+
+inote_eof:
+;we'll use the guts of the save command to save it, so put *256*
+;^Z's after it, not the 128 we might usually do.
+ex de,hl
+;b is still zero
+inotelp2:
+ld (hl),26
+inc hl
+djnz inotelp2
+
+;now work out number of `pages' to save
+dec h	;account for starting at 100h
+
+;that's it in fact :-), no. pages now in h.
+ld l,h
+ld h,b	;zero
+ld de,userfcb1
+jr isave2	;let save do the rest
+
+
+;save command
+;save N (dec) 256-byte pages from 100h to file.
+isave:
+call chktailboth
+
+ld hl,userfcb1+1
+call asciinum_dec
+ld de,userfcb2
+isave2:			;entry point used by `note' command to save text
+ld a,h
+and a
+jr nz,isverr
+
+push de			;fcb addr is kept on the stack
+push hl
+call bfmake
+pop hl
+inc a
+jr nz,isvok
+
+isverr:
+;may as well just use the 'nothing happens' response from 'xyzzy'. :-)
+jp ixyzzy	;this does rst 0, so junk on stack is ok
+
+isvok:
+;so we want to save L pages from 100h.
+add hl,hl
+ld b,h
+ld c,l
+ld hl,0100h
+
+;quit now if they're saving 0 pages
+ld a,b
+or c
+jr z,done	;this also does rst 0, so junk on stack is again ok
+
+isvloop:
+ld (dmapos),hl
+exx
+pop de		;fcb addr
+push de
+call bfwrite
+exx
+and a
+jr nz,isvwrerr
+ld de,128
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,isvloop
+
+;FALLS THROUGH
+
+;commonly-used messages
+;(or in fact, any message used more than once which it's more
+; space-efficient to pull out into a separate routine.)
+done:
+rst 028h	;ilprint
+defb 'done.',0
+rst 0		;must be rst 0, may be junk on stack
+
+
+;cboot command (here so it can fall through if card isn't bootable)
+icboot:
+;unplug ZCN
+di
+ld a,e		;since de is 080h...
+out (010h),a
+;if an NMI happens now it will just boot ZCN, if the card is bootable.
+;usually this won't happen, of course!, so we test the card minimally
+;before jumping to 66h by hand.
+ld a,(0)
+cp 018h
+jp z,066h
+;otherwise it's not bootable
+ld a,040h
+out (010h),a
+ei
+;FALLS THROUGH
+
+invfmt:
+rst 028h	;ilprint
+defb 'Ba',_d_,'crd/drv/f',_or,_ma,'t',0
+ret
+
+delblkms:
+rst 028h	;ilprint
+defb 'delblk..',0
+ret
+
+
+isvwrerr:
+;write error in `save'. since file open checks for card and valid
+;drive, this will almost always mean the disk is full.
+rst 028h	;ilprint
+defb 'Disk full',0
+rst 0
+
+
+
+
+;load a file in at a (hex) address
+;usage: get hex_addr filename
+iget:
+call chktailboth
+
+;open file
+ld de,userfcb2
+call bfopen
+inc a
+jp z,nofile
+
+ld hl,userfcb1+1
+call asciinum_hex
+;now hl=address
+
+;load it
+igetlp:
+ld (dmapos),hl
+push hl
+ld de,userfcb2
+call bfread
+pop hl
+ld de,128
+add hl,de
+and a
+jr z,igetlp
+
+;that's it
+jr skipcrjr
+
+
+;`ver' command
+;this sort of isn't worth the space it takes up, but it seems only
+;fair to have a `check OS version' command, somehow.
+;
+;note that this *MUST NOT* use `rst 0' or `rst 028h', as in addition
+;to being an internal command it's called by init.z to display the
+;startup banner at boot time.
+;
+iver:
+;the output should be like 'ZCN v1.2 (1998-09-21 02:37) ROM v1.06' or whatever.
+
+call ilprint		;can't use rst 028h here...
+include asmver.z	;auto-generated by Makefile
+defb ' ',0
+
+;for ROM bit, look for 'ROM v' in rom0.
+xor a
+call cardin
+ld hl,cardout
+push hl		;make sure we return via cardout
+call romvfind
+;if nz, couldn't find it
+ret nz
+
+;otherwise, display from bc up to '(' of the '(c)' bit
+push bc
+pop hl
+
+ivromlp:
+ld a,(hl)
+cp '('
+if IS_NC200
+ jr nz,ivrom1
+ ld a,041h
+ ld (savbop+1),a  ;re-init old cardin state we messed up via putchar :-)
+ ret
+ ivrom1:
+else
+ret z
+endif
+call putchar
+inc hl
+jr ivromlp
+
+
+;find 'ROM v' in rom0
+;assumes rom0 is paged in at 4000h
+;entry: hl=asciiz string
+;exit:	if found z set, and hl=addr of first occurance of needle;
+;	else (if not found) nz
+;adapted from zcnlib 'strstr'
+romv: defb 'ROM v',0
+romvfind:
+ld d,040h	;close enough to 'ld de,04000h' for our purposes
+
+strstrlp:
+ld hl,romv
+bit 7,d		;got to 8000h?
+ret nz
+ld a,(de)
+ld b,d
+ld c,e
+strstrl2:
+inc de
+cp (hl)
+jr nz,strstrlp
+inc hl
+ld a,(hl)
+and a
+ret z		;got it, at bc
+ld a,(de)
+jr strstrl2
+
+
+;poke command
+ipoke:
+call getnums	;get first num in hl, 2nd in a
+ld (hl),a
+skipcrjr:
+jp skipcrlf
+
+getnums:
+call chktailboth
+ld hl,userfcb1+1
+call asciinum_hex
+push hl
+ld hl,userfcb2+1
+call asciinum_hex
+ld a,l
+pop hl
+;the cp is for ifpeek/ifnpeek, but doesn't hurt for poke
+cp (hl)
+ret
+
+
+;ifpeek command
+ifpeek:
+call getnums	;get first num in hl, 2nd in a, and compare
+jr nz,skipcrjr
+jr ifpeektrue
+
+;ifnpeek command
+ifnpeek:
+call getnums	;get first num in hl, 2nd in a, and compare
+jr z,skipcrjr
+
+ifpeektrue:
+;run rest of cmdline - so we have to search for the 3rd arg.
+;we can do this by (from 81h) looking for non-space, space, non-space,
+; space, non-space.
+call getcmd_init	;blank comfcb/cmdbuf
+ld hl,080h
+ld bc,02ffh
+ifplp:
+call ifp_nspc
+;ifp_spc only used here, so it's inlined
+ifp_spc:
+call ifp_main
+jr nz,ifp_spc
+djnz ifplp	;do that twice
+qsubentry:		;jumped to here by quitsub
+;if we're on a zero, there's no command, so do nothing.
+ld a,(hl)
+and a
+ret z
+call ifp_nspc
+
+ld a,(080h)
+sub c
+ld (cmdsiz),a
+ld de,cmdbuf+2
+ld b,0
+ld c,a
+inc bc		;crude way to prevent any possibilty of bc being zero
+ldir	;copy command
+
+;now jump to special entry point in ccp.z to run it
+ld sp,(cpmstack)
+jp gotcmd
+
+;find non-space
+ifp_nspc:
+call ifp_main
+jr z,ifp_nspc
+ret
+
+ifp_main:
+;common to ifp_spc/ifp_nspc
+inc c
+inc hl
+ld a,(hl)
+jp isblank	;ret via this
+
+
+;set prompt
+;this is jumped to from ccp before normal cmdline has been created,
+;so we use the internal buffer directly like ' and " do.
+iprompt:
+ld hl,cmdbuf+3
+ld de,prompt
+ld bc,maxprm
+ldir
+;the cmdline was already asciiz, and even a maxprm-size prompt will
+;have the extra zero byte after it (see def. of `prompt'), so that's it!
+jr skipcrjr
+
+
+;quitsub command
+iquitsub:
+push de		;save the 80h (see top of file)
+xor a
+ld (insub),a	;quit any .sub we might be running
+;delete $$$.SUB in case we were running one of them.
+call submtfin
+;now run command, if any.
+call getcmd_init	;blank comfcb/cmdbuf
+pop hl		;hl=80h
+ld c,0ffh
+jr qsubentry
+
+
+;vdu command
+ivdu:
+call chktail
+
+;ret to skipcrlf rather than mainloop
+ld hl,skipcrlf
+ex (sp),hl
+
+ld hl,userfcb1+1
+call ivdu_donum
+ld hl,userfcb2+1
+ld a,(hl)
+cp 32
+ret z
+;FALLS THROUGH
+
+ivdu_donum:
+call asciinum_dec
+ld a,l
+call putchar
+ret
+
+
+;off command
+ioff:
+;pretty noddy way to do it, but hey, it works. :-)
+di
+call 066h
+ei
+ret
+
+
+;serial command, disables/enables serial line driver
+iserial:
+;can't use boolcmd for this one; can use boolerr for error though.
+ld hl,linedrvop+1
+ld a,(05dh)
+sub 48
+jp c,boolerr
+cp 2
+jp nc,boolerr
+;must be 16 to enable, 0 to disable
+rlca
+rlca
+rlca
+rlca
+ld (hl),a
+;reinit serial, being sure to reenable ints after
+call sinit
+ei
+jp skipcrlf
+
+
+if IS_NC200
+;light - backlight on/off
+ilight:
+;can't use boolcmd for this one; can use boolerr for error though.
+ld a,(05dh)
+sub 48
+jp c,boolerr
+cp 2
+jp nc,boolerr
+;must be 1 for on, 7 for off
+and a
+jr nz,ilight1
+ld a,7
+ilight1:
+ld (lightop+1),a
+out (070h),a
+jp skipcrlf
+endif

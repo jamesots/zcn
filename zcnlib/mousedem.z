@@ -1,0 +1,75 @@
+;mouse demo
+
+org 0100h
+
+jr test
+
+oldmx: defw 0
+oldmy: defw 0
+
+test:
+call minit
+call mouseon
+call mstat
+ld (oldmx),de
+ld (oldmy),bc
+
+loop:
+call mevents
+call mstat
+
+push de
+push bc
+
+;left button to draw, right button to undraw
+
+bit 1,a
+push af
+call nz,dopset
+pop af
+
+bit 0,a
+push af
+call nz,dopreset
+pop af
+
+pop bc
+pop de
+ld (oldmx),de
+ld (oldmy),bc
+
+;quit if key pressed
+ld c,11
+call 5
+and a
+jr z,loop
+
+;read the key
+ld c,1
+call 5
+
+call mouseoff
+call muninit
+jp 0
+
+
+dopset:
+ld hl,pset
+psetbit:
+push de
+push bc
+call pixstyle
+call mouseoff
+pop bc
+pop de
+ld hl,(oldmx)
+ld a,(oldmy)
+ld b,a
+call drawline
+call mouseon
+ret
+
+
+dopreset:
+ld hl,preset
+jr psetbit

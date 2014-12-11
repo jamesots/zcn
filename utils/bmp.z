@@ -1,0 +1,199 @@
+;bmp - draw one or more char-sized bitmaps given in hex on cmdline.
+;
+;actually, it's not quite that simple:
+;
+;- strings of hex chars print char bitmaps, six hexits for each char,
+;  non-hexits end a char.
+;- underscores print a space.
+;- dots give a CR/LF.
+;- `=' prints the most-recently-defined char again.
+;
+;be careful when modifying this - it *must* remain re-entrant (that
+;is, runnable again with `!!').
+
+
+org 0100h
+
+jr start
+
+mcrlf:		defb 13,10,'$'
+
+pending:	defb 0		;non-zero if bitmap needs printing
+
+bytesleft:	defb 0		;bytes left to fill bitmap
+nextbmpbyte:	defw 0		;addr of next byte to write in bitmap
+
+fontdata:
+defb 0,0,0,0,0,0	;used to print a space
+pendbmp: defs 6		;the pending bitmap
+
+
+start:
+;needs ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+xor a
+ld (pending),a
+ld a,6
+ld (bytesleft),a
+ld hl,pendbmp
+ld (nextbmpbyte),hl
+;clear out bitmap (for sane results after any `!!')
+ld hl,0
+ld (pendbmp),hl
+ld (pendbmp+2),hl
+ld (pendbmp+4),hl
+
+ld hl,080h
+ld a,(hl)
+and a
+ret z		;ret if no tail
+
+ld b,a
+inc hl
+
+exx
+;get ZCN to use our `font'
+ld de,fontdata-192	;so 32 is space, 33 is our bitmap
+ld c,142	;set font base addr
+call 5
+exx
+
+loop:
+ld a,(hl)
+exx
+call isxdigit
+push af
+call c,do_hexit
+pop af
+call nc,do_nothexit
+exx
+inc hl
+djnz loop
+
+call flushbmp	;there may be one right at the end
+
+ret
+
+
+do_hexit:
+ld hl,pending
+ld (hl),1
+ld hl,bytesleft
+dec (hl)
+
+;get the byte
+sub '0'
+cp 10
+jr c,dhex1
+;it's from (uppercased) cmdline, so we know it's A..F not a..f
+sub 7
+dhex1:
+;put it in both nibbles
+ld c,a
+rrca
+rrca
+rrca
+rrca
+or c
+
+ld hl,(nextbmpbyte)
+ld (hl),a
+inc hl
+ld (nextbmpbyte),hl
+ld a,(bytesleft)
+and a
+ret nz
+;FALLS THROUGH
+
+;flush any pending bitmap (display it)
+flushbmp:
+ld a,(pending)
+and a
+ret z
+
+;zero any remaining bytes in bitmap
+ld a,(bytesleft)
+and a
+jr z,fbskip
+ld b,a
+ld hl,(nextbmpbyte)
+xor a
+fblp:
+ld (hl),a
+inc hl
+djnz fblp
+
+fbskip:
+ld e,33
+ld c,2
+call 5
+
+ld hl,pendbmp
+ld (nextbmpbyte),hl
+
+xor a
+ld (pending),a
+ld a,6
+ld (bytesleft),a
+ret
+
+
+do_nothexit:
+;first, flush any bitmap.
+push af
+call flushbmp
+pop af
+
+;now, if it's underscore print a space, if it's equals print most
+;recent char again, if it's a dot give CR/LF, else ignore it.
+
+cp '_'
+jr nz,dnhex1
+ld e,32
+ld c,2
+jp 5	;ret via that
+
+dnhex1:
+cp '='
+jr nz,dnhex2
+ld e,33
+ld c,2
+jp 5
+
+dnhex2:
+cp '.'
+ret nz	;ignore others
+
+ld de,mcrlf
+ld c,9
+jp 5
+
+
+
+
+isdigit:
+cp '0'
+ccf
+ret nc
+cp ':'
+ret
+
+isxdigit:
+call isdigit
+ret c
+call isxdlowr
+ret c
+cp 'A'
+ccf
+ret nc
+cp 'G'
+ret
+isxdlowr:
+cp 'a'
+ccf
+ret nc
+cp 'g'
+ret

@@ -1,0 +1,48 @@
+NAME
+	usernums - a description of user numbers
+
+SYNOPSIS
+	How user numbers (or users, or user areas; the terms all mean
+	the same in this context) work
+
+DESCRIPTION
+	ZCN supports CP/M user numbers 0 to 15 (and also a special
+	user 255, but this is dealt with below). You can change user
+	numbers with the `user'/`cd' command. It's like having 16
+	different directories - all at the same level - rather than
+	one, and having them numbered rather than named. 0 is the
+	default `directory' (user area).
+
+	For the uninitiated - user numbers were in CP/M to allow
+	different users of a CP/M machine to keep their files
+	separate. The way it worked meant that they would have to keep
+	not just data files, but also any programs they wanted to run,
+	in that single user area. It gets worse; the way the feature
+	was used in practice meant that you had a single user wanting
+	to move files across user areas, run programs from other user
+	areas, etc.
+
+	Given the above, it should come as no surprise that user
+	numbers are *separate* from drives - i.e. if you do `a:',
+	`user 1', `dir b:' it will show all files in user area 1 of
+	drive B:.
+
+	The default prompt shows user numbers after the drive letter
+	(like `D5>'), unless you're in user 0 (`D>') or in user 255
+	(`D*>').
+
+USER NUMBER 255
+	In addition to the usual 0-15, ZCN provides user 255. This
+	isn't a user area as such, but acts like all the files on the
+	drive are in the current user.
+
+	User area 255 is mostly read-only, though it does allow `umv',
+	and file deletion.
+
+	For technical reasons (see zcn.txt for details), you should
+	only read files in user area 255 if they only appear in the
+	directory listing once. (The `ls' program will give a warning
+	if two or more files share the same filename.)
+
+SEE ALSO
+	user, cd, umv, ls

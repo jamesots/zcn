@@ -1,0 +1,10 @@
+NAME
+	pause - how to pause output in ZCN
+
+SYNOPSIS
+	hold Control and Symbol
+
+DESCRIPTION
+	Hold these two keys down to pause text output in ZCN. It must
+	be the physical Control key (or after `capsctrl 1', Caps
+	Lock).

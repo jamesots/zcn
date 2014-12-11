@@ -1,0 +1,292 @@
+;/* msort -- an alternative to qsort, with an identical interface.
+;   Copyright (C) 1992 Free Software Foundation, Inc.
+;   Written by Mike Haertel, September 1988.
+;
+;   Z80 transliteration and zap-related changes by Russell Marks,
+;	February 1999.
+
+;(Details of the copyright follow...)
+
+;sortlist is a Z80 transliteration (with some modifications) of the
+;GNU libc's main qsort function msort (which is actually a variant
+;merge sort, I think). This is HUGELY faster than exchange sort which
+;zcnlib's `qsort' uses, and makes sorting potentially hundreds of
+;directory entries virtually instant.
+;
+;Copyright details for this are a little complicated; the original
+;came under the GNU LGPL. One provision of that license is:
+
+;>   3. You may opt to apply the terms of the ordinary GNU General Public
+;> License instead of this License to a given copy of the Library.  To do
+;> this, you must alter all the notices that refer to this License, so
+;> that they refer to the ordinary GNU General Public License, version 2,
+;> instead of to this License.  (If a newer version than version 2 of the
+;[...]
+;>   Once this change is made in a given copy, it is irreversible for
+;> that copy, so the ordinary GNU General Public License applies to all
+;> subsequent copies and derivative works made from that copy.
+;> 
+;>   This option is useful when you wish to copy part of the code of
+;> the Library into a program that is not a library.
+
+;You betcha. :-) That's what I've done here; the full modified copyright
+;for my Z80 conversion of msort is below. Obviously it would be better
+;to read "Z80 msort" for "The GNU C Library" below...
+
+;/* msort -- an alternative to qsort, with an identical interface.
+;   Copyright (C) 1992 Free Software Foundation, Inc.
+;   Written by Mike Haertel, September 1988.
+;
+;   Z80 transliteration and zap-related changes by Russell Marks,
+;	February 1999.
+;
+;This file is part of the GNU C Library.
+;
+;The GNU C Library is free software; you can redistribute it and/or
+;modify it under the terms of the GNU General Public License as
+;published by the Free Software Foundation; either version 2 of the
+;License, or (at your option) any later version.
+;
+;The GNU C Library is distributed in the hope that it will be useful,
+;but WITHOUT ANY WARRANTY; without even the implied warranty of
+;MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+;General Public License for more details.
+;
+;You should have received a copy of the GNU General Public
+;License along with the GNU C Library; see the file COPYING.  If
+;not, write to the Free Software Foundation, Inc., 675 Mass Ave,
+;Cambridge, MA 02139, USA.  */
+
+
+;entry:	hl=base, de=num. entries
+;exit:	af/bc/de/hl/bc'/de'/hl'/ix/iy corrupt
+;
+;NB: It assumes entries are 2 bytes long, cmp func is nodecmp, temp
+;array is sorttmp. (Temp array must be same size as array to be
+;sorted.) This is NOT a general-purpose sort routine like the original
+;C version; it would need some hacking to remove these assumptions
+;(which simplify the code greatly). However, for most purposes it
+;wouldn't be hard to make an array of pointers to entries in the
+;`real' array, write a nodecmp which takes this into consideration,
+;etc., so it could be used as a fairly general-purpose routine without
+;any further hacking on it being required.
+
+sortlist:
+
+;static void
+;DEFUN(msort_with_tmp, (b, n, s, cmp, t),
+;      PTR b AND size_t n AND size_t s AND __compar_fn_t cmp AND char *t)
+;{
+;  char *tmp;
+;  char *b1, *b2;
+;  size_t n1, n2;
+
+;args are kept in:
+;char *b	hl	(not for long though)
+;size_t n	de
+;(size_t s	=2)
+;(cmpfunc cmp	=nodecmp)
+;(char *t	=sorttmp)
+
+;locals are kept in:
+;char *tmp	ix
+;char *b1	hl'
+;char *b2	de'
+;size_t n1	iy
+;size_t n2	bc'
+;
+;(but for most of the time, we run with alternates switched in.)
+
+;  if (n <= 1)
+;    return;
+ld a,d
+or e
+ret z
+dec de
+ld a,d
+or e
+ret z
+inc de
+
+push hl		;save b
+
+;  n1 = n / 2;
+ld h,d
+ld l,e
+srl h
+rr l
+push hl
+pop iy
+
+;  n2 = n - n1;
+;hl is still n1, de is still n
+ex de,hl
+and a
+sbc hl,de
+push hl
+add hl,de	;restore n...
+ex de,hl	;...to de
+exx
+pop bc
+
+;  b1 = b;
+;still using alternates
+pop hl		;restore b into b1, where it's ok until after the recursion
+
+;  b2 = (char *) b + (n1 * s);
+push iy		;n1
+pop bc
+ld d,h
+ld e,l
+add hl,bc
+add hl,bc
+ex de,hl
+
+;ok, we're now about to recurse twice.
+;the amount we have to save here isn't funny. :-(
+;first normal ones.
+;(b is in b1 for now, so only n (de) need be saved.)
+exx
+push de
+exx
+;now ix/iy and alternates
+push ix
+push iy
+push hl
+push de
+push bc
+
+;  msort_with_tmp (b1, n1, s, cmp, t);
+push iy
+push hl
+exx	;return to normal regs
+pop hl
+pop de
+call sortlist
+
+;  msort_with_tmp (b2, n2, s, cmp, t);
+pop de	;really bc' (n2)
+pop hl	;really de' (b2)
+push hl
+push de
+call sortlist
+
+;restore everything
+exx
+pop bc
+pop de
+pop hl
+pop iy
+pop ix
+exx
+pop de
+exx	;back to alternates
+
+;now save b1 (hl', which is still equal to the original b)
+;by modifying the (only) thing later on which uses it.
+;This is ok because the recursion's over now.
+ld (sortbop+1),hl
+
+;  tmp = t;
+ld ix,sorttmp
+
+sortwhile:
+;  while (n1 > 0 && n2 > 0)
+;    {
+
+defb 0fdh
+ld a,h		;ld a,iyh
+defb 0fdh
+or l		;or iyl
+jr z,sortwend
+ld a,b
+or c
+jr z,sortwend
+
+;      if ((*cmp) (b1, b2) <= 0)
+;	{
+call nodecmp	;this'll return carry set if b1>b2.
+jr c,sortl1
+
+;	  MEMCPY (tmp, b1, s);
+;	  b1 += s;
+ld a,(hl)
+ld (ix),a
+inc hl
+ld a,(hl)
+ld (ix+1),a
+inc hl
+
+;	  --n1;
+dec iy
+
+;	}
+jr sortl2
+
+sortl1:
+;      else
+;	{
+;	  MEMCPY (tmp, b2, s);
+;	  b2 += s;
+ld a,(de)
+ld (ix),a
+inc de
+ld a,(de)
+ld (ix+1),a
+inc de
+
+;	  --n2;
+dec bc
+
+;	}
+
+sortl2:
+;      tmp += s;
+inc ix
+inc ix
+
+;    }
+jr sortwhile
+
+sortwend:
+;  if (n1 > 0)
+defb 0fdh
+ld a,h		;ld a,iyh
+defb 0fdh
+or l		;or iyl
+jr z,sortl3
+
+;    memcpy (tmp, b1, n1 * s);
+;only bc' (n2) of hl'/de'/bc' is needed after this, so only save that.
+push bc
+
+push ix	;tmp
+push iy	;n1
+pop bc
+;hl is b1 already
+pop de
+;bc*=2
+sla c
+rl b
+ldir
+
+pop bc
+
+sortl3:
+;  memcpy (b, t, (n - n2) * s);
+;}
+sortbop: ld de,0	;modified
+exx
+push de		;n
+exx
+pop hl
+and a
+sbc hl,bc
+add hl,hl	;*2
+ld b,h
+ld c,l
+ld hl,sorttmp
+ldir
+
+exx
+ret

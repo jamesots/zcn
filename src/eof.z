@@ -1,0 +1,12 @@
+;ZCN v1.2 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-1999 Russell Marks. See `zcn.txt' for license details.
+
+;eof - marks end of assembled stuff so we can tell how big it is
+
+;note that ZCN doesn't need the `protect against ROM OS's stupid
+;post-XMODEM ^Z-stripping' code that rrinit.bin needs, as the font
+;ends zcn.bin (it's added at zcn_eof, effectively), and a 1Ah is
+;impossible in that as the first nibble always matches the low
+;nibble (it makes chars a bit quicker to draw).
+
+zcn_eof:

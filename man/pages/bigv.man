@@ -1,0 +1,35 @@
+NAME
+	bigv - a text file viewer designed for easy reading of books etc.
+
+SYNOPSIS
+	bigv [-<line num>] file
+
+DESCRIPTION
+	Bigv views a single file in much the same way as `man's viewer
+	does. It uses a large, proportionally-spaced font - the intent
+	is that bigv be comfortable to read from, especially for large
+	texts such as online books (`etexts'). It can cope with files
+	of any size ZCN permits, however, it can take a while to start
+	up.
+
+	The keys used to navigate etc. are:
+
+	Q or Esc	quit.
+	Space or ^G	move down a screenful.
+	B or DEL	move up a screenful.
+	<		go to start.
+	>		go to end.
+	^N, ^X or Enter	move down one line.
+	^P or ^E	move up one line.
+
+OPTIONS
+	-<line num>	specify the line number to start on, e.g.
+			`-1234'.
+
+BUGS
+	You can't start at a given percentage, just a line.
+
+	It's a bit slow.
+
+SEE ALSO
+	man, more

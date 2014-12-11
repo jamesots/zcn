@@ -1,0 +1,1382 @@
+;Cpmtris v1.0 - a tetris clone for Z80-based CP/M machines.
+;Copyright (C) 1996 Russell Marks. See 'README' for license details.
+
+;conversion of my OPL tetris for the psion series 3 via my ZX81 tetris
+; (both also free and available on request)
+
+
+org 0100h
+
+jp indirect
+
+defb 0
+
+;cpmtris is, by default, patched to run on a 3.5 MHz 80x24 VT52
+;machine, and ZCN is auto-detected.
+;As such, PCW, +3, and ZCN users shouldn't need to patch cpmtris.
+;(the screen layout fits in 51x24 so it works well on the +3, too)
+;users of other CP/M boxen need to patch cpmtris as below:
+
+;104h - number of columns
+; must have at least 50 columns
+; you don't really need to set this; it isn't used for anything.
+cols: defb 80
+
+;105h - number of lines
+; must have at least 10 lines
+lines: defb 24
+
+;106h - 10*Mhz of your Z80.
+; e.g. on a 3.5MHz Spectrum +3 it would be 35.
+; most CP/M machines have speeds around the 3 to 4 MHz mark,
+; so if you don't know the speed of your box just use 35.
+mhz10: defb 35
+
+;107h - terminal type
+;you can roll your own terminal routines, but there's hard-coded
+;support for a few terminals which saves you the effort. they are:
+; type 1 - VT100
+; type 2 - VT52, PCW, Spectrum +3, etc.
+; type 3 - ZCN
+; type 4 - VC404 (volker-craig)
+;set this to zero if you're writing your own clear screen and cursor
+;move routines.
+;note that the terminal type does not influence the number of lines,
+;columns and the 'mhz10' setting - all those must still be set (above).
+termtype: defb 2
+
+;108h-10fh - reserved (currently unused)
+defb 0,0,0,0,0,0,0,0
+
+;the routines below are allowed to corrupt af/bc/de/hl,
+; but other registers must remain intact. You can use these routines
+; from them:
+;the routine at 180h prints the num. in de in decimal, preserving all regs.
+;the routine at 183h prints the char in a, preserving all regs.
+
+;110h - clear screen
+;this example is for a VT100.
+hackcls:
+ld de,mcls
+ld c,9
+jp 5
+mcls: defb 27,'[H',27,'[J$'
+
+defb 0
+
+;120h - move to (x,y), where (0,0) is top-left
+;entry: (b,c)=(x,y)
+;this example is for a VT100.
+hackmove:
+ld a,27
+call 0183h
+ld a,'['
+call 0183h
+ld e,c
+inc e
+ld d,0
+call 0180h
+ld a,';'
+call 0183h
+ld e,b
+inc e
+;d still 0
+call 0180h
+ld a,'H'
+jp 0183h
+
+;140h - extra patch space, in case the above isn't enough
+;all the space up to 17fh is usable
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+
+;180h - print de as decimal number (for VT100 cursor move)
+;saves af/bc/de/hl
+jp dispdec2
+
+;183h - print char in a
+;saves all regs
+jp putchar
+
+;we jump to here first, so that the 1st jump always stays the same
+; no matter what hacking is done in future, and any binary patches
+; made by overwriting the first record still work.
+indirect:
+jp main
+
+dispdec2:
+push af
+push bc
+push de
+push hl
+call dispdec
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+;the shapes
+shps:
+defb 1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0
+defb 1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0
+defb 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+defb 1,0,0,0,0,1,1,0,1,0,0,0,0,1,1,0
+defb 1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0
+defb 0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+defb 0,1,0,0,1,1,0,0,0,1,0,0,1,1,0,0
+defb 1,1,0,0,0,1,1,0,1,1,0,0,0,1,1,0
+defb 1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+defb 0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0
+defb 1,1,1,1,0,1,0,0,1,1,1,1,0,1,0,0
+defb 0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0
+defb 0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0
+
+defb 0,0,0,0,0,1,0,0,0,1,0,0,0,1,0,0
+defb 1,1,1,0,0,1,1,0,1,1,1,0,1,1,0,0
+defb 0,1,0,0,0,1,0,0,0,0,0,0,0,1,0,0
+defb 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+defb 0,1,1,0,1,0,0,0,0,1,0,0,0,0,0,0
+defb 0,1,0,0,1,1,1,0,0,1,0,0,1,1,1,0
+defb 0,1,0,0,0,0,0,0,1,1,0,0,0,0,1,0
+defb 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+defb 1,1,0,0,0,0,0,0,0,1,0,0,0,0,1,0
+defb 0,1,0,0,1,1,1,0,0,1,0,0,1,1,1,0
+defb 0,1,0,0,1,0,0,0,0,1,1,0,0,0,0,0
+defb 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+;map of the 10x21 screen (and some spare)
+scrn:
+defw 0,0,0,0,0, 0,0,0,0,0
+defw 0,0,0,0,0, 0,0,0,0,0
+defw 0,0,0,0,0, 0,0,0,0,0
+defw 0,0,0,0,0, 0,0,0,0,0
+defw 0,0,0,0,0, 0,0,0,0,0
+
+defw 0,0,0,0,0, 0,0,0,0,0
+defw 0,0,0,0,0, 0,0,0,0,0
+defw 0,0,0,0,0, 0,0,0,0,0
+defw 0,0,0,0,0, 0,0,0,0,0
+defw 0,0,0,0,0, 0,0,0,0,0
+
+defw 0,0,0,0,0, 0,0,0,0,0
+
+
+mtitle: defb 'Cpmtris by RJM 96',0
+mkeys1: defb 'K - left, L - right',0
+mkeys2: defb 'S - rotate, D - drop',0
+mgamovr: defb '*** GAME OVER! ***',0
+mlines:  defb 'Lines: 0',0
+mprskey: defb 'Again? (y/n)',0
+mbotline: defb '--==--==--==--==--==',0
+
+
+ybot equ 20	;bottom of scrn
+timout equ 20	;timeout in frames before block drops one place
+
+shp: defb 0	;current shape
+frm: defb 0	;current frame (rotation)
+xy:
+y: defb 0
+x: defb 0
+timc: defb 0
+tmp: defb 0
+linesdun: defw 0
+xstatpos: defb 30
+
+;terminal-related stuff
+compact: defb 0		;if 1 use doubled-up pixels (" '.:")
+
+pause: defw 0
+
+;for ZCN we make a new font which is basically a copy of ZCN's but
+;with some UDGs on the end.
+zcnfont		equ 0eac0h
+newzcnfont	equ 08000h
+zcnchars: defb 128,129,130,131
+zcncdat:
+defb 000h,022h,000h,000h,022h,000h
+defb 000h,022h,000h,077h,0ffh,0ffh
+defb 077h,0ffh,0ffh,000h,022h,000h
+defb 077h,0ffh,0ffh,077h,0ffh,0ffh
+
+
+main:
+;if on ZCN, we'll be using the 'compact' 2-pixel-per-char mode.
+;since we can (admittedly fairly kludgely) hack up a few udgs, do
+;that. (looks a lot nicer.)
+ld a,(066h)
+cp 0f7h
+call z,zcninit
+
+call srand
+call chkargs
+call playgame
+jr main
+
+
+chkargs:
+ld a,(05dh)
+cp 32
+ret z
+
+;set terminal type if 0<=a<=3
+sub 48
+ret c
+cp 5
+ret nc
+ld (termtype),a
+cp 3
+jr z,carg1
+;set to 24 lines if termtype specified and not ZCN type
+ld a,24
+ld (lines),a
+carg1:
+
+ld a,(06dh)
+cp 32
+ret z
+
+;set mhz10
+ld hl,06dh
+call atoi
+ld a,l
+ld (mhz10),a
+ret
+
+ld d,h
+ld e,l
+call dispdec
+
+ld a,' '
+call putchar
+
+ld a,'$'
+ld (070h),a
+ld de,06dh
+ld c,9
+call 5
+jp 0
+
+
+
+playgame:
+ld a,(lines)
+cp 20
+jr nc,notcpt
+
+ld a,1
+ld (compact),a
+
+notcpt:
+;work out frame pause
+ld a,(mhz10)
+ld h,0
+ld l,a
+ld de,72
+call multiply
+ld (pause),hl
+
+call cls
+
+;show title/keys
+ld a,(xstatpos)
+ld b,a
+ld c,0
+ld hl,mtitle
+call mvaddstr
+ld a,(lines)
+cp 20
+jr c,nokeyhlp
+ld a,(xstatpos)
+ld b,a
+ld c,18
+ld hl,mkeys1
+call mvaddstr
+ld a,(xstatpos)
+ld b,a
+ld c,20
+ld hl,mkeys2
+call mvaddstr
+nokeyhlp:
+
+call initscr
+ld hl,0
+ld (linesdun),hl
+
+ld a,(xstatpos)
+ld b,a
+ld c,7
+ld hl,mlines
+call mvaddstr
+
+blklp:
+;gen new blk
+ld hl,7
+call rand
+ld a,l
+ld (shp),a
+
+call rand16
+ld a,l
+and 3
+ld (frm),a
+
+xor a
+ld (y),a
+ld a,4
+ld (x),a
+
+ld a,timout
+ld (timc),a
+
+;if hit now, game over
+ld bc,(xy)
+ld a,(frm)
+call hitshp
+jp c,endgam
+
+ld a,1
+call drawshp
+
+;frame loop
+hitlp:
+call inkey
+
+cp 'k'		;left (k)
+jr nz,skip1
+
+xor a
+call drawshp
+
+ld bc,(xy)
+dec b
+ld a,(frm)
+call hitshp
+jr c,skip0a
+ld a,(x)
+dec a
+ld (x),a
+skip0a:
+ld a,1
+call drawshp
+jp skipn
+
+skip1:
+cp 'l'		;right (l)
+jr nz,skip2
+
+xor a
+call drawshp
+
+ld bc,(xy)
+inc b
+ld a,(frm)
+call hitshp
+jr c,skip1a
+ld a,(x)
+inc a
+ld (x),a
+skip1a:
+ld a,1
+call drawshp
+jp skipn
+
+skip2:
+cp 's'		;rot (s)
+jr nz,skip3
+
+ld a,(frm)
+inc a
+and 3
+ld (tmp),a
+
+xor a
+call drawshp
+
+ld bc,(xy)
+ld a,(tmp)
+call hitshp
+jr c,skip2a
+ld a,(tmp)
+ld (frm),a
+skip2a:
+ld a,1
+call drawshp
+jp skipn
+
+skip3:
+cp 'd'		;drop (d)
+jr nz,skip4
+
+xor a
+call drawshp
+
+droplp:
+ld bc,(xy)
+inc c
+ld a,(frm)
+call hitshp
+jr c,skip3a
+ld a,(y)
+inc a
+ld (y),a
+jr droplp
+
+skip3a:
+ld a,1
+call drawshp
+jr endhit
+
+skip4:
+cp 27
+jp z,abortgam
+
+ld a,(timc)
+dec a
+ld (timc),a
+jr nz,skipn
+
+xor a
+call drawshp
+
+ld bc,(xy)
+inc c
+ld a,(frm)
+call hitshp
+jr nc,skip5
+
+ld a,1
+call drawshp
+jr endhit
+
+skip5:
+ld a,(y)
+inc a
+ld (y),a
+ld a,timout
+ld (timc),a
+ld a,1
+call drawshp
+
+skipn:
+;pause between frames
+ld bc,(pause)
+pauselp:
+dec bc
+ld a,b
+or c
+jr nz,pauselp
+jp hitlp
+
+endhit:
+call dolines
+ld a,(xstatpos)
+add a,7
+ld b,a
+ld c,7
+call move
+ld de,(linesdun)
+call dispdec
+jp blklp
+
+endgam:
+;draw last hit block.
+;this is messy, but if you get a 1x4 block it looks
+;incredibly unfair otherwise.
+ld a,1
+call drawshp
+
+abortgam:
+ld a,(xstatpos)
+ld b,a
+ld c,5
+ld hl,mgamovr
+call mvaddstr
+
+ld a,(lines)
+ld e,a
+ld a,15
+cp e
+jr c,agam1
+ld a,3
+agam1:
+ld c,a
+dec c
+ld a,(xstatpos)
+ld b,a
+ld hl,mprskey
+call mvaddstr
+call stashcur
+
+;wait for no key
+mpklp:
+call inkey
+and a
+jr nz,mpklp
+
+;wait for key
+mpklp2:
+call inkey
+and a
+jr z,mpklp2
+
+;if key was y, ret
+cp 'y'
+ret z
+
+;if key wasn't n, repeat
+cp 'n'
+jr nz,mpklp2
+
+;otherwise, quit...
+
+bombout:
+call cls
+jp 0
+
+
+;draw/undraw blk on 10x20 scrn
+;entry: (b,c)=(x,y), a=1 to draw, 0 to undraw
+drawblk:
+;do scrn()
+ld h,0
+ld l,c
+call mul10
+ld d,0
+ld e,b
+add hl,de
+ld de,scrn
+add hl,de
+ld (hl),a
+
+ld e,a
+ld a,(compact)
+and a
+ld a,e
+jr nz,compblk
+
+;actually draw
+push af
+rlc b
+call move
+pop af
+and a
+jr z,dblkskip
+
+;think hard before changing these, they're also used by the
+; scrolling stuff. at the very least, it's important to
+; preserve the z flag.
+dblkon:
+ld a,'['
+call putchar
+ld a,']'
+call putchar
+ret
+
+dblkoff:
+dblkskip:
+ld a,' '
+call putchar
+ld a,' '
+call putchar
+ret
+
+
+;multiply hl by 10
+mul10:
+push de
+add hl,hl	;*2
+ld d,h
+ld e,l
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,de	;*10
+pop de
+ret
+
+
+;this draws a 'compact' block, which can be used on a machine
+;with less than 20 lines. It makes the play area only 10x10 onscreen.
+;this is really intended to support ZCN boxes, but should work
+;for other things too.
+;it's called from drawblk when needed.
+;entry: hl points to byte set in scrn, (b,c)=(x,y).
+cbchars: defb ' .',39,':'	;i.e. " .':"
+compblk:
+;scrn() has already been done, we just have to draw/undraw.
+and a
+rr c
+rl e
+;so c=y/2 and bit 0 of e=y&1
+push de
+push hl
+call move
+pop hl
+pop de
+;work out what the char there should be, from looking at scrn().
+;build up the 0-3 offset in cbchars in d.
+ld a,(hl)
+rra
+rl d
+
+ld bc,10
+bit 0,e
+jr z,cblkskip
+ld bc,-10
+cblkskip:
+add hl,bc
+ld a,(hl)
+rra
+rl d
+
+;if y&1=1, bits 0 and 1 of d are the wrong way round.
+;fix that here.
+bit 0,e
+jr z,cblk2
+rr d
+rr b	;bit 0 -> b
+rr d
+rr c	;bit 1 -> c
+rl b
+rl d	;b -> bit 1
+rl c
+rl d	;c -> bit 0
+
+cblk2:
+;get correct char and print it.
+ld a,d
+and 3
+ld h,0
+ld l,a
+ld de,cbchars
+add hl,de
+ld a,(hl)
+jp putchar
+
+
+;draw shape
+;entry: a=1 to draw, 0 to undraw
+dsasav: defb 0
+drawshp:
+ld (dsasav),a
+
+;let hl=offset in shp()
+ld a,(frm)
+ld h,0
+ld l,a
+add hl,hl
+add hl,hl
+ld de,shps
+add hl,de
+ex de,hl
+ld a,(shp)
+ld h,0
+ld l,a
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,de
+
+ld de,(xy)
+
+ld c,4
+dsylp:
+
+ld a,(x)
+ld d,a
+ld b,4
+dsxlp:
+ld a,(hl)
+and a
+jr z,dsskip
+
+push bc
+push de
+push hl
+ld b,d
+ld c,e
+ld a,(dsasav)
+call drawblk
+pop hl
+pop de
+pop bc
+
+dsskip:
+inc hl
+inc d
+djnz dsxlp
+
+push de
+ld de,12
+add hl,de
+pop de
+inc e
+dec c
+jr nz,dsylp
+
+ld a,(dsasav)
+and a
+ret z
+
+;if we're drawing rather than undrawing, move cursor out of the way
+;FALLS THROUGH
+
+;move cursor to safe pos out of the way
+stashcur:
+ld b,22
+ld c,0
+call move
+ret
+
+
+;entry: (b,c)=(x,y), a=frm
+hsxy:
+hsy: defb 0
+hsx: defb 0
+hitshp:
+ld (hsxy),bc
+
+;let hl=offset in shp()
+ld h,0
+ld l,a
+add hl,hl
+add hl,hl
+ld de,shps
+add hl,de
+ex de,hl
+ld a,(shp)
+ld h,0
+ld l,a
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,de
+
+ld de,(hsxy)
+
+ld c,4
+hsylp:
+
+ld a,(hsx)
+ld d,a
+ld b,4
+hsxlp:
+ld a,(hl)
+and a
+jr z,hsskip
+
+;if <0 or >9, always hit
+ld a,d
+cp 10
+ccf
+ret c
+
+;now proper check
+push de
+push hl
+ld h,0
+ld l,e
+call mul10
+ld e,d
+ld d,0
+add hl,de
+ld de,scrn
+add hl,de
+ld a,(hl)
+pop hl
+pop de
+and a
+scf
+ret nz
+
+hsskip:
+inc hl
+inc d
+djnz hsxlp
+
+push de
+ld de,12
+add hl,de
+pop de
+inc e
+dec c
+jr nz,hsylp
+
+and a
+ret
+
+
+initscr:
+ld hl,scrn
+ld de,scrn+1
+ld bc,210
+ld (hl),0
+ldir
+
+ld hl,ybot
+call mul10
+ld de,scrn
+add hl,de
+ld d,h
+ld e,l
+inc de
+ld bc,9
+ld (hl),1
+ldir
+
+;draw blank play area if needed
+ld a,(compact)
+and a
+jr z,iscrncmp
+
+ld c,10
+iscrylp:
+ld b,10
+iscrxlp:
+push bc
+dec b
+dec c
+call move
+ld a,(cbchars)
+call putchar
+pop bc
+djnz iscrxlp
+dec c
+jr nz,iscrylp
+
+iscrncmp:
+;only draw bottom line if (lines)>=ybot+1 (21)
+ld a,(lines)
+ld c,ybot
+inc c
+cp c
+ret c
+
+dec c
+ld b,0
+ld hl,mbotline
+call mvaddstr
+ret
+
+
+dolines:
+ld c,ybot-1
+dlylp:
+;e used as total
+ld e,0
+ld b,10
+dlxlp:
+push de
+ld h,0
+ld l,c
+call mul10
+ld de,scrn
+add hl,de
+ld d,0
+ld e,b
+dec e
+add hl,de
+pop de
+ld a,(hl)
+add a,e
+ld e,a
+djnz dlxlp
+
+ld a,e
+and a
+ret z
+
+cp 10
+jr nz,dlskip
+
+push bc
+call scrlscr
+pop bc
+inc c
+
+dlskip:
+dec c
+jr nz,dlylp
+ret
+
+
+;scroll up from line c
+scrlscr:
+dec c
+
+ssylp:
+push bc
+
+;copy scrn() array line
+ld h,0
+ld l,c
+call mul10
+ld de,scrn
+add hl,de
+push hl
+ld de,10
+add hl,de
+pop de
+ex de,hl
+ld bc,10
+ldir
+
+pop bc
+push bc
+
+;copy to screen
+;right now, hl points to scrn() data for this line,
+; and c+1 is the line to draw it on.
+inc c
+push bc
+push hl
+ld a,(compact)
+and a
+call z,move
+pop hl
+pop bc
+
+ld b,10
+ssxlp:
+ld a,(compact)
+and a
+jr nz,ssskip1
+
+;normal
+ld a,(hl)
+and a
+call nz,dblkon
+call z,dblkoff
+jr ssskip2
+
+ssskip1:
+;compact
+push bc
+ld a,10
+sub b
+ld b,a
+push hl
+call compblk
+pop hl
+pop bc
+
+ssskip2:
+inc hl
+djnz ssxlp
+
+pop bc
+
+dec c
+jr nz,ssylp
+
+ld hl,(linesdun)
+inc hl
+ld (linesdun),hl
+ret
+
+
+
+;move to (b,c) and display asciiz at hl
+mvaddstr:
+push hl
+call move
+pop hl
+mvaslp:
+ld a,(hl)
+and a
+ret z
+call putchar
+inc hl
+jr mvaslp
+
+
+;get non-blocking input.
+;returns a=char or 0 if none pressed
+inkey:
+call kbhit
+ld a,0
+ret nc
+jp getch
+
+
+
+;the built-in terminal support
+cls:
+ld a,(termtype)
+and a
+jp z,hackcls
+
+cp 1
+jr nz,cls2
+
+;VT100
+ld de,mclsvt100
+ld c,9
+jp 5
+
+mclsvt100: defb 27,'[H',27,'[J$'
+
+cls2:
+cp 2
+jr nz,cls3
+
+;VT52
+ld de,mclsvt52
+ld c,9
+jp 5
+
+mclsvt52: defb 27,'H',27,'J$'
+
+cls3:
+cp 3
+jr nz,cls4
+
+;ZCN
+ld a,1
+jp putchar
+
+cls4:
+cp 4
+ret nz
+
+;VC404
+ld a,24
+jp putchar
+
+
+move:
+ld a,(termtype)
+and a
+jp z,hackmove
+
+cp 1
+jr nz,move2
+
+;VT100
+ld a,27
+call putchar
+ld a,'['
+call putchar
+ld e,c
+inc e
+ld d,0
+call dispdec2
+ld a,';'
+call putchar
+ld e,b
+inc e
+;d still 0
+call dispdec2
+ld a,'H'
+jp putchar
+
+move2:
+cp 2
+jr nz,move3
+
+;VT52
+ld a,27
+call putchar
+ld a,'Y'
+call putchar
+ld a,32
+add a,c
+call putchar
+ld a,32
+add a,b
+jp putchar
+
+move3:
+cp 3
+jr nz,move4
+
+;ZCN
+ld a,16
+call putchar
+ld a,32
+add a,c
+call putchar
+ld a,32
+add a,b
+jp putchar
+
+move4:
+cp 4
+ret nz
+
+;VC404
+ld a,16
+call putchar
+ld a,32
+add a,c
+call putchar
+ld a,32
+add a,b
+jp putchar
+
+
+zcninit:
+;we know it's ZCN, so set termtype etc.
+ld a,3
+ld (termtype),a
+ld a,120
+ld (cols),a
+ld a,10
+ld (lines),a
+ld a,46
+ld (mhz10),a
+
+ld hl,zcnchars
+ld de,cbchars
+ld bc,4
+ldir
+ld hl,zcnfont
+ld de,newzcnfont
+ld bc,96*6
+ldir
+ld hl,zcncdat
+ld bc,4*6
+ldir
+;enable the new font
+ld de,newzcnfont-192
+ld c,142
+call 5
+
+;might as well turn off the cursor, too.
+ld a,4
+call putchar
+ret
+
+
+
+;stuff from ZX81 version of zcnlib's maths.z
+;this doesn't require undocumented Z80 ops, which are causing
+;probs on the 'cpm' CP/M emulator I'm testing this on.
+
+;ZX81-friendly (non-ix-using) version; probably slower, but at least
+; it works :-)
+
+;divide
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+dividey: defw 0
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+ld (dividey),de
+
+ld de,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+and a
+rl e
+rl d
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+push de
+ld de,(dividey)
+sbc hl,de
+pop de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+ld a,1
+or e
+ld e,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+;exit: hl=result, de=remainder
+ret
+
+
+;this from zcnlib's maths.z
+
+;this does z=x*y
+;entry: hl=x, de=y
+;exit:  hl=z
+;af/bc/de corrupt
+multiply:
+ld b,h
+ld c,l
+ld hl,0
+ld a,16
+mulp:
+and a
+rr d
+rr e
+jr nc,musp
+add hl,bc
+musp:
+and a
+rl c
+rl b
+dec a
+jr nz,mulp
+ret
+
+
+numtmp: defb '0000000000000000$'	;16 zeroes and '$'
+
+;convert number in de to ascii in internal buffer
+;entry: de=number
+;exit:  de=addr of number in internal buffer, '$' terminated
+itoa:
+ld b,10
+;FALLS THROUGH
+
+;call here for routine with functionality as above but with b=base
+
+;convert number in de to ascii, in given base (unsigned)
+;entry: de=number, b=base (from 2 to 36)
+;exit: af/bc/de/hl corrupt
+itoabase:
+ld hl,numtmp+16
+ld a,'$'
+ld (hl),a
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ret
+
+
+;display number in de, in decimal
+dispdec:
+call itoa
+ld c,9
+jp 5
+
+
+;like C func. entry: hl=addr of number, exit: hl=actual number
+atoi:
+ld b,10
+;FALLS THROUGH
+
+;convert number of specified base as ASCII at hl to number.
+;the ASCII number should be terminated by a non-digit in this base.
+;supports bases from 2 to 36
+;entry: hl=address of first digit of ASCII number,
+;       b=base (e.g. 10 for decimal)
+;exit:  hl=number
+atoibase:
+ld de,0		;total of number so far.
+atoilp:
+ld a,(hl)
+;uppercase it
+call atoiislw
+jr nc,atoi0
+res 5,a
+atoi0:
+sub 48
+jr c,atoidone	;if not digit, end
+cp 10
+jr c,atoi0a
+sub 7		;compensate if we're using letters
+atoi0a:
+cp b
+jr nc,atoidone	;if not digit, end
+;otherwise, multiply our running total by base and add this.
+push hl
+push bc
+push af
+ld l,b
+ld h,0
+call multiply
+pop af
+ld e,a
+ld d,0
+add hl,de
+ex de,hl
+pop bc
+pop hl
+inc hl
+jr atoilp
+
+atoidone:
+;got number in de - put it in hl.
+ex de,hl
+ret
+
+atoiislw:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret

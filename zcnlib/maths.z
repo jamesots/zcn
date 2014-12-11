@@ -1,0 +1,282 @@
+;maths routines (and output routines involving maths)
+;derived from ZCN misc.z
+
+;disphex - print hl as hex
+;hexbyte - print a as hex
+;multiply - hl=hl*de
+;divide - out_hl=hl/de and out_de=hl%de
+;itoa - decimal number in de becomes ascii, with ptr to it retn'd in de
+;itoabase - as itoa but b=output base
+;dispdec - display number in de, in decimal
+;atoi - convert ascii decimal number at hl to actual number in hl
+;atoibase - as atoi but b=input base
+
+;for cpm zmac:
+;ZZglobal disphex
+;ZZglobal hexbyte
+;ZZglobal multiply
+;ZZglobal divide
+;ZZglobal itoa
+;ZZglobal itoabase
+;ZZglobal dispdec
+;ZZglobal atoi
+;ZZglobal atoibase
+
+
+;display number in hl as hex
+disphex:
+ld a,h
+call hexbyte
+ld a,l
+;FALLS THROUGH
+
+;print byte in a as hex
+;saves hl/de/bc
+hexbyte:
+push hl
+push de
+push bc
+push af
+and 0f0h
+rrca
+rrca
+rrca
+rrca
+call hexit
+ld e,a
+ld c,2
+call 5
+pop af
+and 15
+call hexit
+ld e,a
+ld c,2
+call 5
+pop bc
+pop de
+pop hl
+ret
+
+hexit:
+add a,48
+cp 58
+ret c
+add a,7
+ret
+
+
+
+;maths routines
+;these are 'quick' multiply and divide routines;
+;the divide also returns the remainder.
+
+;this does z=x*y
+;entry: hl=x, de=y
+;exit:  hl=z
+;af/bc/de corrupt
+multiply:
+ld b,h
+ld c,l
+ld hl,0
+ld a,16
+mulp:
+and a
+rr d
+rr e
+jr nc,musp
+add hl,bc
+musp:
+and a
+rl c
+rl b
+dec a
+jr nz,mulp
+ret
+
+
+;divide
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+;I've switched to a non-undocumented-opcode-using version, so
+; programs using it work under the Linux 'cpm' emulator. It's probably
+; about the same speed, anyway. And this version doesn't need ix,
+; which is handy.
+dividey: defw 0
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+ld (dividey),de
+
+ld de,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+and a
+rl e
+rl d
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+push de
+ld de,(dividey)
+sbc hl,de
+pop de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+ld a,1
+or e
+ld e,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp: defb '0000000000000000$'	;16 zeroes and '$'
+
+;convert number in de to ascii in internal buffer
+;entry: de=number
+;exit:  de=addr of number in internal buffer, '$' terminated
+itoa:
+ld b,10
+;FALLS THROUGH
+
+;call here for routine with functionality as above but with b=base
+
+;convert number in de to ascii, in given base (unsigned)
+;entry: de=number, b=base (from 2 to 36)
+;exit: af/bc/hl corrupt
+itoabase:
+ld hl,numtmp+16
+ld a,'$'
+ld (hl),a
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ret
+
+
+;display number in de, in decimal
+dispdec:
+call itoa
+ld c,9
+jp 5
+
+
+
+;like C func. entry: hl=addr of number, exit: hl=actual number
+atoi:
+ld b,10
+;FALLS THROUGH
+
+;convert number of specified base as ASCII at hl to number.
+;the ASCII number should be terminated by a non-digit in this base.
+;supports bases from 2 to 36
+;entry: hl=address of first digit of ASCII number,
+;       b=base (e.g. 10 for decimal)
+;exit:  hl=number
+atoibase:
+ld de,0		;total of number so far.
+atoilp:
+ld a,(hl)
+;uppercase it
+call atoiislw
+jr nc,atoi0
+res 5,a
+atoi0:
+sub 48
+jr c,atoidone	;if not digit, end
+cp 10
+jr c,atoi0a
+sub 7		;compensate if we're using letters
+atoi0a:
+cp b
+jr nc,atoidone	;if not digit, end
+;otherwise, multiply our running total by base and add this.
+push hl
+push bc
+push af
+ld l,b
+ld h,0
+call multiply
+pop af
+ld e,a
+ld d,0
+add hl,de
+ex de,hl
+pop bc
+pop hl
+inc hl
+jr atoilp
+
+atoidone:
+;got number in de - put it in hl.
+ex de,hl
+ret
+
+atoiislw:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret

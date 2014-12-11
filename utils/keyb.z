@@ -1,0 +1,270 @@
+;keyb - set keyboard map
+
+org 0100h
+
+jp start
+
+;from keyread.z - these MUST match the settings there
+;(but they haven't changed since 1995, so I'm guessing they will :-))
+
+;--------------------------------------------------------------------
+;'standard' keymappings
+kldel	equ 07fh	;'<-Del' key - used as delete (backspace)
+krdel	equ 7		;'Del->' key - used as ^G (del. char under cursor)
+
+;this keymappings are provisional, and haven't really been thought out.
+;if symbol is to be used as a meta key, perhaps these will need
+;changing? (mind you maybe not, some are only for internal use)
+;
+;95/01/11 might as well just have zde keys...
+kleft	equ 'S'-040h
+kright	equ 'D'-040h
+kdown	equ 'X'-040h
+kup	equ 'E'-040h
+kmenu	equ '`'		;we use 'menu' as backquote
+;these for internal use only
+;the values of ksymbol,kctrl,kfunc,krshift,klshift,kcapslk are deliberately
+;contiguous and must remain so.
+ksymbol	equ 090h
+kctrl	equ 091h
+kfunc	equ 092h
+krshift	equ 093h
+klshift	equ 094h
+kcapslk	equ 095h
+;the special 'none' marker (must stay this value)
+knone	equ 0ffh
+;--------------------------------------------------------------------
+
+
+musage:
+defb 'usage: keyb <type>',13,10
+defb 'supported map types are: uk, ukdvorak$'
+
+mold: defb 'This version of ZCN does not support keyboard remapping.$'
+
+merr: defb 'Unknown map type.$'
+
+ptr_keytbl: defw 0
+ptr_kshsrc: defw 0
+is_nc200: defb 0
+
+
+start:
+;must be ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;must support keymap returning
+ld c,145
+call 5
+ld (ptr_keytbl),hl
+ld (ptr_kshsrc),de
+ld de,mold
+ld c,9
+and a
+jp nz,5
+
+;check for NC200
+ld c,144
+call 5
+cpl
+ld (is_nc200),a
+
+;give usage if no arg
+ld a,(05dh)
+cp 32
+ld de,musage
+ld c,9
+jp z,5
+
+;check arg against table
+ld hl,table
+loop:
+push hl
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+or h
+jr z,nomatch
+ld de,05dh
+ld bc,8
+call strncmp
+pop hl
+inc hl
+inc hl
+jr nc,loop
+
+;if we get here it matched.
+dec hl
+ld a,(hl)
+dec hl
+ld l,(hl)
+ld h,a
+ld de,8
+add hl,de
+
+;now at NC100 key table.
+ld a,(is_nc200)
+and a
+call z,nc100copy
+call nz,nc200copy
+
+;now at shift mappings
+ld de,(ptr_kshsrc)
+ld bc,22*2
+ldir
+
+;done. If we're running on the console, output an Esc to avoid CR/LF.
+ld c,132	;console in/out assignments
+call 5
+ld a,l
+and a
+ret nz
+
+ld e,27
+ld c,2
+jp 5
+
+
+nomatch:
+ld de,merr
+ld c,9
+call 5
+rst 0		;stuff still on stack
+
+
+
+
+nc100copy:
+push af		;must preserve flags
+ld de,(ptr_keytbl)
+ld bc,80
+ldir		;copy main keymap
+ld de,80
+add hl,de	;skip NC200 one
+pop af
+ret
+
+nc200copy:
+ld de,80
+add hl,de	;skip NC100 one
+ld de,(ptr_keytbl)
+ld bc,80
+ldir		;copy main keymap
+ret
+
+
+
+;from zcnlib's string.z
+
+;compare bc bytes at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2, bc=num. to compare
+;exit:	c if they match, nc otherwise
+;af/bc/de/hl corrupt
+strncmp:
+ld a,(de)
+cp (hl)
+jr nz,strncmp2
+inc hl
+inc de
+dec bc
+ld a,b
+or c
+jr nz,strncmp
+;they matched ok
+scf
+ret
+
+strncmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+
+
+
+table:
+defw type_uk
+defw type_ukdvorak
+defw 0
+
+;a type has following structure:
+;name	8 bytes, all caps, padded to 8 chars w/spaces
+;	(matched against part of FCB)
+;nc1map	the main 80-byte map for NC100
+;nc2map	equivalent map for NC200
+;shift	shift-mapping tables, 22 bytes src, 22 bytes dst
+
+;NB: the (UK, at least) NC100 and NC200 keyboards differ only on the
+;number line.
+
+
+;uk, the one normally used by the kernel
+type_uk:
+defb 'UK      '
+
+;nc100 table
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z',knone,'4'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','/','#',		kright,krdel,kdown,'6'
+defb 'k','m','u',kmenu,		kup,'\','7','='
+defb ',','j','i',39,		'[',']','-','8'
+defb '.','o','l',59,		'p',kldel,'9','0'
+
+;nc200 table
+defb knone,knone,knone,13,	kleft,'4',krshift,klshift
+defb '9',knone,knone,knone,	32,27,kctrl,kfunc
+defb knone,'6',knone,'5',	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z','7','8'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','/','#',		kright,krdel,kdown,knone
+defb 'k','m','u',kmenu,		kup,'\','=',knone
+defb ',','j','i',39,		'[',']','-',knone
+defb '.','o','l',59,		'p',kldel,'0',knone
+
+;shift mapping (22 bytes src, 22 bytes dst)
+defb '12','3', '4567890-=[];',027h,'#,./\`'	;027h is ' (single quote)
+defb '!"',09ch,'$%^&*()_+{}:','@', '~<>?|~'	;9ch is the pound sign
+
+
+
+;dvorak on a UK keyboard
+type_ukdvorak:
+defb 'UKDVORAK'
+
+;nc100 table
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'e','o',knone,'.',		',', 39,'2','3'
+defb 'u','p',knone,'a',		'q',';',knone,'4'
+defb 'j','i','f','y',		'k','x',knone,knone
+defb 'b','d','z','\',		kright,krdel,kdown,'6'
+defb 't','m','g',kmenu,		kup,'<','7',']'
+defb 'w','h','c','-',		'/','=','[','8'
+defb 'v','r','n','s',		'l',kldel,'9','0'
+
+;nc200 table
+defb knone,knone,knone,13,	kleft,'4',krshift,klshift
+defb '9',knone,knone,knone,	32,27,kctrl,kfunc
+defb knone,'6',knone,'5',	9,'1',ksymbol,kcapslk
+defb 'e','o',knone,'.',		',', 39,'2','3'
+defb 'u','p',knone,'a',		'q',';','7','8'
+defb 'j','i','f','y',		'k','x',knone,knone
+defb 'b','d','z','\',		kright,krdel,kdown,knone
+defb 't','m','g',kmenu,		kup,'<',']',knone
+defb 'w','h','c','-',		'/','=','[',knone
+defb 'v','r','n','s',		'l',kldel,'0',knone
+
+;shift mapping (22 bytes src, 22 bytes dst)
+defb '1234567890-=[];',027h,'<,./\`'	;027h is ' (single quote)
+defb '!@#$%^&*()_+{}:','"', '><>?|~'

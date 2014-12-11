@@ -1,0 +1,139 @@
+;display the current time/date
+
+org 0100h
+
+
+timebuf1 equ 01000h
+timebuf2 equ timebuf1+6
+
+
+ld a,(066h)
+cp 0f7h
+ret nz
+
+ld c,085h
+ld de,timebuf1
+call 5
+
+ld c,085h
+ld de,timebuf2
+call 5
+
+;now, if t1<t2 then t1:=t2
+
+ld ix,timebuf1
+ld b,6
+tchklp:
+ld a,(ix)
+cp (ix+6)
+jr c,uset2
+inc ix
+djnz tchklp
+
+jr tchkdone
+
+uset2:
+ld hl,timebuf2
+ld de,timebuf1
+ld bc,6
+ldir
+
+tchkdone:
+ld hl,timebuf1
+ld a,(hl)
+and a
+;if it's zero, the year is 1990.
+;given that I'm writing this in 1995, we can safely
+;assume that the time hasn't really been set. :-)
+jp z,notime
+add a,090h
+daa
+ld (hl),a
+;this bit inserts '20' or '19' as appropriate
+;to give a four-digit year like '1994'.
+push af
+call c,prefix20
+pop af
+call nc,prefix19
+
+ld b,3
+datelp:
+ld a,(hl)
+call dispbcd
+ld a,'-'
+call putchar
+inc hl
+djnz datelp
+
+ld a,8
+call putchar
+ld a,32
+call putchar
+
+ld b,3
+timelp:
+ld a,(hl)
+call dispbcd
+ld a,':'
+call putchar
+inc hl
+djnz timelp
+
+ld a,8
+call putchar
+ld a,32
+call putchar
+ret
+
+
+dispbcd:
+push af
+rrca
+rrca
+rrca
+rrca
+and 15
+add a,48
+call putchar
+pop af
+and 15
+add a,48
+call putchar
+ret
+
+
+putchar:
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+
+prefix20:
+ld a,'2'
+call putchar
+ld a,'0'
+call putchar
+ret
+
+prefix19:
+ld a,'1'
+call putchar
+ld a,'9'
+call putchar
+ret
+
+
+mnotime: defb 'No time set - use "timeset" to set the time.$'
+
+notime:
+ld de,mnotime
+ld c,9
+call 5
+jp 0

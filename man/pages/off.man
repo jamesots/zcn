@@ -1,0 +1,8 @@
+NAME
+	off - turn the computer off
+
+SYNOPSIS
+	off
+
+DESCRIPTION
+	Turn the NC100 off (saving context, as ever).

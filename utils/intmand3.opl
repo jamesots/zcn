@@ -1,0 +1,151 @@
+rem intmand3 - PD by RJM 960317
+rem written for series 3, but
+rem may work on the 3a too.
+
+rem this one uses similar idea to
+rem fractint's tesseral mode -
+rem if all colour round edge of box
+rem is same, it's all that colour
+
+proc main:
+global scl&,stp%,xa%,ya%,iter%
+scl&=8000
+stp%=16
+xa%=160
+ya%=80
+iter%=25
+
+drawbrot:(-2.568,-1.25,3.636,2.5)
+endp
+
+
+proc drawbrot:(qa,qb,qasize,qbsize)
+global a&,b&,astp&,bstp&
+global done%(12800) rem 160*80
+global asize&,bsize&
+local m%,n%
+local xan%,yan%
+
+xan%=xa%-stp% :yan%=ya%-stp%
+a&=fixdbl&:(qa)
+b&=fixdbl&:(qb)
+asize&=fixdbl&:(qasize)
+bsize&=fixdbl&:(qbsize)
+
+astp&=asize&/xa%
+bstp&=bsize&/ya%
+
+gat 0,0
+gpatt -1,xa%,ya%,0
+
+m%=0
+while m%<ya%
+  n%=0
+  while n%<xa%
+    dosq:(n%,m%,stp%)
+    n%=n%+stp%
+  endwh
+  m%=m%+stp%
+endwh
+get
+endp
+
+
+proc fixdbl&:(in)
+return int(in*scl&)
+endp
+
+
+proc calcpix%:(n%,m%)
+local posr&,posi&,r&,i&,s&,z&
+local count%
+
+if done%(m%*xa%+n%+1)>0
+  return done%(m%*xa%+n%+1)-1
+endif
+
+posr&=n%*astp&+a&
+posi&=m%*bstp&+b&
+r&=0 :i&=0 :s&=0 :z&=0
+count%=0
+while count%<iter% and s&<=4*scl&
+  z&=r&*r&/scl&-i&*i&/scl&
+  i&=2*r&*i&/scl&+posi&
+  r&=z&+posr&
+  s&=r&*r&/scl&+i&*i&/scl&
+  count%=count%+1
+endwh
+if s&>4*scl& and (count% and 1)
+  done%(m%*xa%+n%+1)=2
+  return 1
+else
+  done%(m%*xa%+n%+1)=1
+  return 0
+endif
+endp
+
+
+proc dosq:(x%,y%,stp%)
+local a%,b%,r%,tot%
+local stpm1%
+
+tot%=0 :stpm1%=stp%-1
+
+rem do all sides
+rem left/right...
+
+b%=0
+while b%<stp%
+  r%=calcpix%:(x%,y%+b%)
+  drawpix:(x%,y%+b%,r%)
+  tot%=tot%+r%
+  r%=calcpix%:(x%+stpm1%,y%+b%)
+  drawpix:(x%+stpm1%,y%+b%,r%)
+  tot%=tot%+r%
+  b%=b%+1
+endwh
+
+rem if stp<=2, we're done
+if stp%<=2
+  return
+endif
+
+rem top/bottom...
+
+a%=1
+while a%<stpm1%
+  r%=calcpix%:(x%+a%,y%)
+  drawpix:(x%+a%,y%,r%)
+  tot%=tot%+r%
+  r%=calcpix%:(x%+a%,y%+stpm1%)
+  drawpix:(x%+a%,y%+stpm1%,r%)
+  tot%=tot%+r%
+  a%=a%+1
+endwh
+
+rem if total=0 or stp*4-4 all are
+rem same, fill in
+
+if tot%=0 or tot%=stp%*4-4
+  gat x%+1,y%+1
+  if tot%=0
+    gfill stp%-2,stp%-2,0
+  else
+    gfill stp%-2,stp%-2,1
+  endif
+else
+  rem ok, recurse
+  a%=stp%/2
+  dosq:(x%,y%,a%)
+  dosq:(x%+a%,y%,a%)
+  dosq:(x%,y%+a%,a%)
+  dosq:(x+a%,y%+a%,a%)
+endif
+
+endp
+
+
+proc drawpix:(x%,y%,z%)
+gat x%,y%
+gfill 1,1,z%
+endp

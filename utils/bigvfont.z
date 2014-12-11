@@ -1,0 +1,326 @@
+;stuff to display converted BDF font, based on vmanpg's font.c,
+;which in turn was based on zgv's font.c.
+
+
+
+;the copyright/license for the bitmap font says that all
+;copies of the font must contain the copyright. Since a copy
+;is embedded in the program, we'd best have this:
+
+defb 'The bitmap font used is: '
+defb 'Copyright 1984-1989, 1994 Adobe Systems Incorporated. '
+defb 'Copyright 1988, 1994 Digital Equipment Corporation.',0
+
+
+cury: defb 0
+
+
+drawstr_init:
+xor a
+ld (cury),a
+
+ld hl,is_nc200
+ld a,(hl)
+and a
+ld a,64
+ld b,0f0h
+jr z,dsi1
+ld a,128
+ld b,060h
+dsi1:
+ld (heightop+1),a
+ld a,b
+ld (addrop+1),a
+
+ld a,(hl)
+and a
+ret z
+
+ld a,043h
+;falls through
+
+setpage:
+;set page and bank1 (see ZCN's start.z)
+ld hl,(6)
+ld l,14
+ld (hl),a
+out (011h),a
+ret
+
+
+drawstr_uninit:
+ld a,(is_nc200)
+and a
+ret z
+
+ld a,041h
+jr setpage
+
+
+
+drawstr:
+ld de,0
+ld a,(cury)
+ld c,a
+call drawtext
+
+ld hl,font1addr+5
+ld a,(cury)
+add a,(hl)
+ld (cury),a
+ret
+
+
+;draw at (de,c) line of text (ending in LF or ^Z) at hl.
+;hl must *not* be in 4000-7fff, or it'll fail on NC200.
+;exit: de=width of text, hl points to string's ending LF
+;f/bc/de/ix/iy/bc'/de'/hl' corrupt
+dt_ox: defw 0
+drawtext:
+ld ix,font1addr
+ld (dt_ox),de
+
+;x pos goes in iy
+push de
+pop iy
+
+dtloop:
+ld a,(hl)
+and a
+jp z,dtdone
+cp 10
+jp z,dtdone
+cp 13
+jp z,dtdone
+cp 26
+jp z,dtdone
+
+;if it's a tab, make it a space
+cp 9
+jr nz,nottab
+ld a,32
+nottab:
+
+push bc
+push iy
+push hl
+
+call dt_isprint
+jr c,dtipskip
+ld a,'_'
+dtipskip:
+sub 32
+ld l,a
+ld h,0
+ld e,(ix+2)	;de=fonttbl
+ld d,(ix+3)
+add hl,hl
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+
+;hl=addr of font data for this char
+
+;iy+=ox
+ld a,(hl)
+defb 0fdh
+add a,l		;add a,iyl
+defb 0fdh
+ld l,a		;ld iyl,a
+ld a,0
+defb 0fdh
+adc a,h		;adc a,iyh (add carry)
+defb 0fdh
+ld h,a		;ld iyh,a
+inc hl
+
+;b=oy
+ld b,(hl)
+inc hl
+
+;de=iy+w
+ld a,(hl)
+defb 0fdh
+add a,l		;add a,iyl
+ld e,a
+ld a,0
+defb 0fdh
+adc a,h		;adc a,iyh
+ld d,a
+inc hl
+
+;now b=oy, (hl)=h
+;work out yst
+ld a,(ix+5)	;font fh
+sub b		;oy
+add a,(ix+6)	;font oy
+sub (ix+4)	;font yofs
+sub (hl)	;h
+;now have yst, so add onto c...
+add a,c
+ld c,a
+;...and do b=c+h
+add a,(hl)
+ld b,a
+inc hl
+
+ld a,(hl)	;dw
+push af
+inc hl
+
+ld (dtxlimop+1),de
+ld a,b
+ld (dteop+1),a
+
+;init bit reader
+ld d,(hl)
+ld e,1
+inc hl
+
+dtylp:
+push iy
+
+dtxlp:
+rl d
+jr nc,dtxnopix
+ld a,c
+push iy
+exx
+pop de
+ld c,a
+call pset
+exx
+dtxnopix:
+;read new byte if needed
+rl e
+jr nc,dtxcont
+ld d,(hl)
+ld e,1
+inc hl
+dtxcont:
+inc iy
+;damn you Zilog, why the *fuck* didn't you implement sbc for IX/IY!?
+;this is really unpleasant :-(((
+push bc
+push hl
+push iy
+pop hl
+dtxlimop: ld bc,0
+and a
+sbc hl,bc
+pop hl
+pop bc
+jr nz,dtxlp
+
+pop iy
+inc c
+ld a,c
+dteop: cp 0	;modified
+jr nz,dtylp
+
+pop af
+pop hl
+pop iy
+pop bc
+;iy+=a
+defb 0fdh
+add a,l		;add a,iyl
+defb 0fdh
+ld l,a		;ld iyl,a
+ld a,0
+defb 0fdh
+adc a,h		;adc a,iyh (add carry)
+defb 0fdh
+ld h,a		;ld iyh,a
+
+inc hl
+jp dtloop
+
+dtdone:
+push hl
+ld de,(dt_ox)	;e=(dt_ox), d=junk
+and a
+push iy
+pop hl
+sbc hl,de
+ex de,hl
+pop hl
+ret
+
+
+dt_isprint:
+cp 32
+ccf
+ret nc
+cp 127
+ret
+
+
+
+;x pos & 7 -> mask table for pos2addr routine
+masktbl:
+defb 080h,040h,020h,010h,008h,004h,002h,001h
+
+;convert pixel position (de=x, c=y) to hl=addr, c=mask w/pixel set at pos
+;af/b/de corrupt
+pos2addr:
+push de
+;get pixel mask byte first
+ld a,e
+and 7
+ld d,0
+ld e,a
+ld hl,masktbl
+add hl,de
+ld a,(hl)
+
+;y pos
+ld h,c
+ld l,d	;d is still 0
+rr h	;carry flag is 0 from the 'add hl,de'
+rr l
+rr h
+rr l
+
+;put mask (from a) into c
+ld c,a
+
+;x pos
+pop de
+ld a,e
+and 0f8h
+rr d	;get the only used bit in d
+rra
+rra
+rra
+or l
+ld l,a
+
+;effectively add 0f000h (or 06000h) to hl
+addrop: ld a,0f0h
+or h
+ld h,a
+ret
+
+
+;set pixel at (de,c)
+;use 'fastpset' to avoid clipping
+;af/bc/de/hl corrupt
+pset:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+heightop: cp 64
+ret nc
+fastpset:
+call pos2addr
+ld a,(hl)
+or c
+ld (hl),a
+ret

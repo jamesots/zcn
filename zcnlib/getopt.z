@@ -1,0 +1,160 @@
+;getopt - a clone of Unix's getopt()
+;needs args (and thus string and ctype)
+
+;WARNING: this is not re-entrant, almost by definition. You may want
+; to put a 'ret' at 0100h when starting up, so people used to using
+; the zero-length .com file trick to re-run an executable get the
+; message and don't screw anything up.
+
+;for the uninitiated, getopt parses Unix-style cmdline options.
+;These basically work like this:
+;
+;- an option-setting argument starts with the '-' char. Then each char
+;  after that in the arg sets an option, unless it takes an arg itself:
+;
+;- options can take an arg, in which case the next arg is absorbed by
+;  that, and option processing continues on the next arg after.
+;
+;- the 1st arg which *doesn't* start with '-' terminates option
+;  processing. (Traditionally, these remaining args tend to be
+;  filenames, but they can be whatever you want.) Most Unix getopts
+;  allow a '--' arg to terminate option processing too; this is not
+;  supported by this implementation (not yet, anyway).
+
+;this probably makes it sound like you call getopt once, and it sorts
+; everything out, right? well, it doesn't work like that. You call
+; getopt once for each option on the cmdline, until they run out and
+; getopt returns "-1" (really 255 in this Z80 version). getopt also
+; signals bad options, etc., similarly.
+
+;see `zcnprog.txt' for further explanation.
+
+
+;for cpm zmac:
+;ZZglobal getopt
+
+
+optopt:	defb 0
+opterr:	defb 0
+optind:	defb 1
+optarg: defw 0
+
+;holds offset in current argv[] value
+optpos:	defb 1
+
+;pointer to option string
+optinstr: defw 0
+
+
+;getopt - parse cmdline options from argc/argv
+;entry:	hl=addr of option string
+;exit:	a=option (or error, etc.)
+;f/bc/de/hl corrupt
+;
+;this routine assumes that the caller is pretty sane and doesn't
+; try passing an invalid option string or varying argc/argv.
+
+getopt:
+ld (optinstr),hl
+
+;check for end of arg list
+ld a,(optind)
+ld hl,(argc)
+cp l
+jr z,goptdone
+
+;a is still optind
+call getargv
+ld a,(hl)
+cp '-'
+jr nz,goptdone
+
+;arg must be at least 2 chars long
+;a is still argv[optind][0]
+and a
+jr z,goptdone
+inc hl
+ld a,(hl)
+and a
+jr z,goptdone
+dec hl
+
+;right, if we got through that, we have an arg with options in.
+;see if the current char is in the option string.
+;hl is still argv[optind]
+ld a,(optpos)
+ld e,a
+ld d,0
+add hl,de
+ld e,(hl)
+ld hl,(optinstr)
+call strchr
+ld a,h
+or l
+jr nz,gopt1
+
+ld a,'?'	;error: unknown option
+ret
+
+gopt1:
+ld a,(hl)
+ld (optopt),a
+inc hl
+ld a,(hl)
+;if it needs an arg...
+cp ':'
+jr nz,gopt2
+
+ld a,(optind)
+ld hl,(argc)
+dec l
+cp l
+jr nz,gopt1a
+
+ld a,':'	;error: missing option
+ret
+
+gopt1a:
+ld a,(optind)
+inc a
+call getargv
+ld (optarg),hl
+ld a,1
+ld (optpos),a
+ld a,(optind)
+inc a
+inc a
+ld (optind),a
+ld a,(optopt)
+ret	;return early, avoiding the normal increment
+
+gopt2:
+;now increment position ready for next time.
+;no checking is done for the end of args yet - this is done on
+;the next call.
+ld a,(optpos)
+inc a
+ld (optpos),a
+;see if we've fallen off the end of the current arg
+ld a,(optind)
+call getargv
+call strlen
+ld a,(optpos)
+cp c
+jr c,gopt3
+
+;if so, skip to next one
+ld a,1
+ld (optpos),a
+ld a,(optind)
+inc a
+ld (optind),a
+
+gopt3:
+ld a,(optopt)	;return the found option
+ret
+
+goptdone:
+;return "-1"
+ld a,255
+ret

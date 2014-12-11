@@ -1,0 +1,9 @@
+NAME
+	codes - list ZCN terminal driver control codes
+
+SYNOPSIS
+	codes
+
+DESCRIPTION
+	`codes' displays a list of most of the control codes that
+	ZCN's terminal driver supports.

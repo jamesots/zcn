@@ -1,0 +1,2409 @@
+;rrxfer - transfer files to/from upper/lower mem in runrom.ram.
+;XXX need to try and squeeze this into 3k if possible.
+; not actually *required*, but it'd be nice.
+
+org 0a000h
+
+
+ld a,(066h)
+cp 0f7h
+ret nz		;needs ZCN
+
+;check there's enough memory
+;(this is just a sanity check, as there should always be)
+ld hl,(6)
+ld l,0
+ld de,minbdos
+and a
+sbc hl,de
+ret c		;not a nice way to quit, but it should never happen!
+
+;copy code to a000h
+ld hl,0100h
+ld de,0a000h
+ld bc,4096
+ldir
+jp start
+
+
+hifree		equ 04d0h	;ROM's count of blocks left in hi mem
+				;(only used for number in dir listings, BTW)
+hiblk		equ 0ae00h	;load 256-byte block from hi mem here
+hifat		equ 0af00h	;for upper memory's FAT
+				;(only one FAT block, as area is so small)
+				;(ah, but 3 blocks on NC200, so, 768 bytes)
+wrtblk		equ 0b200h	;128/256-byte record/block write buffer
+
+alldir		equ 0b300h	;overall dir. of lower and upper files.
+alldirend	equ alldir+1024
+
+minbdos		equ alldirend+256	;the lowest the bdos can reach
+					;(insufficient mem if it's lower)
+					;(the extra 256 is stack space)
+
+inputbuf	equ 0ad80h	;128-byte buffer for text input (filename)
+
+maxcode		equ inputbuf	;the highest code can safely reach
+
+dirptr:		defw 0
+dirend:		defw 0
+numfiles:	defb 0
+
+;[an entry in alldir takes 16 bytes and formatted like this:
+;offset	desc
+;0-12	`asciiz' name, 12 chars max. plus NUL or FFh (13 total)
+;12	if zero, file in lower mem, if FFh, upper mem.
+;13	if above byte zero, = heap handle of file;
+;	if above byte FFh,  = first block of file.
+;14-15	size in bytes (ROM software's max file size is 65535 bytes)
+;
+;dozcndir/scanzcn, which use the alldir array temporarily, don't set
+;the byte at offset 13 and set the size in K rather than bytes.]
+
+
+;whether in-memory copy of low mem has been modified and needs to be saved.
+lowdirty:	defb 0
+
+
+bdos		equ 5
+
+bdprint		equ 9
+bfopen		equ 15
+bfclose		equ 16
+bfdel		equ 19
+bfread		equ 20
+bfwrite		equ 21
+bfmake		equ 22
+bretdsk		equ 25
+bsetdma		equ 26
+bsetuser	equ 32
+brread		equ 33
+brwrite		equ 34
+bfsize		equ 35
+
+snapfcb:
+defb 0,'RUNROM  RAM', 0,0,0,0
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0
+
+filefcb		equ 03ch	;better suited than 5ch
+
+;positions in rom3's jump table of jumps to heap routines:
+;(assuming rom3 is paged in at c000h :-))
+heapaddress	equ 0c00ch
+heapalloc	equ 0c009h
+heapfree	equ 0c00fh
+;heaplock	equ 0c015h	;not used
+heapmaxfree	equ 0c018h
+;heaprealloc	equ 0c012h	;not used
+
+
+;remainder of vars are mostly for the stuff from ls.z
+serial:		defb 0
+idnum:		defb 6	;num. of files listed horizontally
+idhcount:	defb 0	;horiz. file pos. count
+idfirst:	defb 1	;first time around?
+diradd:	defw 0	;skip in bytes to next horiz. entry onscreen
+
+lineslft:	defb 0	;num. horiz lines left
+numlines:	defb 0	;number of horiz lines
+hrizcols:	defb 0	;number of horiz columns
+
+sizebytes:	defb 1	;0 if alldir sizes are in K, non-zero if in bytes
+
+is_nc200:	defb 0
+
+swapbuf:	defw 0,0,0,0,0,0,0,0	;tmp. buf used in sorting
+
+allfcb:
+defb 0,'???????????', 0,0,0,0
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0
+
+
+
+
+
+
+writeerr:
+call ilprint
+defb 'Error writ',0
+jr finerr
+
+readerr:
+call ilprint
+defb 'Error read',0
+finerr:
+call ilprint
+defb 'ing snapshot file',0
+rst 0
+
+
+start:
+ld c,144
+call 5
+cpl
+ld (is_nc200),a
+
+;assume 80-col screen if running via serial
+call serchk
+
+;load lower mem
+call rdlowmem
+
+;load upper mem's FAT
+ld b,0c1h
+call ldhiblk
+call blk2fat
+
+;nc200 has more
+ld a,(is_nc200)
+and a
+jr z,start2
+ld b,0c2h
+call ldhiblk
+call blk2fat2
+ld b,0c3h
+call ldhiblk
+call blk2fat3
+
+start2:
+call main		;run the front-end
+
+;if necessary write low mem.
+call wrlowmem
+
+;done. make sure they don't try to run it again with `!!'; then quit.
+ld a,0c9h
+ld (0100h),a
+rst 0
+
+
+
+
+serchk:
+ld c,132	;console in/out assignments
+call bdos
+ld a,l
+ld (serial),a	;non-zero if via serial or printer
+and a
+ret z
+
+ld a,4
+ld (idnum),a
+ret
+
+
+;scan the lower/upper memory things for files.
+;this should be done when starting up, and also after ANY change is made.
+scanmemdirs:
+ld hl,alldir
+ld (dirptr),hl
+xor a
+ld (numfiles),a
+call addlowdir
+call addhi_dir
+ld hl,(dirptr)
+ld (dirend),hl
+ret
+
+
+showmemdirs:
+;scanmemdirs was already done, so just need to sort/display.
+;but if no files are present, say so and skip that.
+ld a,(numfiles)
+and a
+jr nz,smd_got
+
+call ilprint
+defb 'No files',0
+jr smd_skip
+
+smd_got:
+call sortlist
+call displist
+
+smd_skip:
+ld a,10
+call putchar
+
+;show K free in lower mem.
+ld ix,heapmaxfree
+call heapcall
+call bytes2k	;XXX this rounds up - possibly not what we want here?
+call k_print
+call ilprint
+defb ' free in lower memory',10,0
+ret
+
+
+;load in 100h-9fffh from snap. heap (aka lower memory) only needs
+;from roughly 3dch onwards, but there's no harm loading a little more.
+rdlowmem:
+ld de,snapfcb
+ld c,bfopen
+call bdos
+inc a
+jp z,readerr
+
+call ilprint
+defb 'Reading lower memory from snapshot...',10,0
+
+ld de,080h
+ld c,bsetdma
+call bdos
+
+;lose first two records
+ld de,snapfcb
+ld c,bfread
+call bdos
+ld de,snapfcb
+ld c,bfread
+call bdos
+
+;load in 318 records, i.e. up to 9fffh
+ld hl,0100h
+ld bc,318
+rdmemlp:
+push bc
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,snapfcb
+ld c,bfread
+call bdos
+and a
+jp nz,readerr
+pop hl
+pop bc
+ld de,128
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,rdmemlp
+
+ret
+
+
+;write 100h-9fffh to snap.
+wrlowmem:
+;don't write if not modified
+ld a,(lowdirty)
+and a
+ret z
+
+;re-open file to make sure sequential read/write pos is reset
+ld de,snapfcb
+ld c,bfopen
+call bdos
+inc a
+jp z,writeerr
+
+call ilprint
+defb 'Writing lower memory to snapshot...',10,0
+
+ld de,080h
+ld c,bsetdma
+call bdos
+
+;lose first two records
+ld de,snapfcb
+ld c,bfread
+call bdos
+ld de,snapfcb
+ld c,bfread
+call bdos
+
+;write 318 records, i.e. up to 9fffh
+ld hl,0100h
+ld bc,318
+wrmemlp:
+push bc
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,snapfcb
+ld c,bfwrite
+call bdos
+and a
+jp nz,writeerr
+pop hl
+pop bc
+ld de,128
+add hl,de
+dec bc
+ld a,b
+or c
+jr nz,wrmemlp
+
+call ilprint
+defb 'done.',0
+ret
+
+
+;entry: ix=addr of routine to call in rom3
+heapcall:
+di
+ld a,(is_nc200)
+and a
+ld a,3		;rom 3 on '100
+jr z,hcskip1
+ld a,10		;rom 10 on '200
+hcskip1:
+out (013h),a
+
+call jp_ix
+
+ld a,(is_nc200)
+and a
+ld a,043h
+jr z,hcskip2
+inc a
+hcskip2:
+out (013h),a
+ei
+ret
+
+jp_ix:
+jp (ix)
+
+
+;get filenames from low memory
+addlowdir:
+ld b,63
+lowdlp:
+push bc
+ld ix,heapaddress
+ld d,0
+ld e,b
+call heapcall
+ld a,h
+or l
+jr z,lowd1
+
+dec hl
+dec hl
+bit 7,(hl)
+jr z,lowd1
+inc hl
+ld b,(hl)	;save handle in b
+inc hl
+ld a,(hl)
+;also skip diary files and any other non-printable-1st-char weird ones
+cp 32
+jr c,lowd1
+
+;check there's room in dir list
+push hl
+ld de,(dirptr)
+ld hl,alldirend
+and a
+sbc hl,de
+pop hl
+jr z,lowd1	;no, so have to skip it
+
+;filename at hl
+ld a,b		;put handle in a
+ld bc,13
+ldir
+inc hl		;skip file type
+;write handle
+ld (de),a
+inc de
+;and size
+ldi
+ldi
+ld (dirptr),de
+ld hl,numfiles
+inc (hl)
+
+lowd1:
+pop bc
+djnz lowdlp
+ret
+
+
+;get filenames from upper memory
+dirblk: defb 0
+addhi_dir:
+;the upper memory isn't all loaded at once - for one thing, we don't
+;have the room after loading all the lower memory. :-) So we load 256
+;bytes at a time, as this is the basic unit the upper memory deals
+;with. However, we *do* keep a separate in-memory copy of the FAT,
+;to make things a bit easier.
+
+;load first directory block
+ld a,0c0h
+ld (dirblk),a
+
+ahdlp:
+ld a,(dirblk)
+ld b,a
+call ldhiblk
+
+;loop over the entries in the block
+ld hl,hiblk
+ld b,8
+ahdlp2:
+ld a,(hl)
+and a
+jr z,ahdnofil
+;also skip diary files and any other non-printable-1st-char weird ones
+cp 32
+jr c,ahdnofil
+
+push bc
+push hl
+
+;check there's room in dir list
+push hl
+ld de,(dirptr)
+ld hl,alldirend
+and a
+sbc hl,de
+pop hl
+jr z,ahdskip	;no, so have to skip it
+
+;filename at hl
+ld bc,13
+ldir
+;fix byte 12 to indicate upper-mem file
+dec de
+ld a,0ffh
+ld (de),a
+inc de
+inc hl		;skip file type
+;write block number (currently at hl+6)
+push hl
+pop ix
+ld a,(ix+6)
+ld (de),a
+inc de
+;and write size
+ldi
+ldi
+ld (dirptr),de
+ld hl,numfiles
+inc (hl)
+
+ahdskip:
+pop hl
+pop bc
+
+ahdnofil:
+ld de,32
+add hl,de
+djnz ahdlp2
+
+;see if there's another directory block
+ld a,(dirblk)
+ld b,a
+call blk2fataddr
+ld a,(hl)
+cp 0ffh
+jr z,ahddone
+ld (dirblk),a
+jr ahdlp
+
+
+ahddone:
+ret
+
+
+
+;load 256-byte block from high (upper) memory at hiblk.
+;entry: b=block number
+ldhiblk:
+;block number is really high byte of address, so offset in file
+;is b*256 in bytes = b*2 in records.
+ld h,0
+ld l,b
+add hl,hl
+call nc2blkfix
+ld (snapfcb+33),hl
+xor a
+ld (snapfcb+35),a
+
+ld hl,hiblk
+ld b,2		;read 2 records
+ldhblp:
+push bc
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,snapfcb
+ld c,brread
+call bdos
+and a
+jp nz,readerr
+;next record
+ld hl,(snapfcb+33)
+inc hl
+ld (snapfcb+33),hl
+pop hl
+pop bc
+ld de,128
+add hl,de
+djnz ldhblp
+ret
+
+
+hl2hiblk:
+ld de,hiblk
+ld bc,256
+ldir
+ret
+
+
+;write back upper mem FAT
+;blasts hiblk
+writefat:
+;copy hifat to hiblk
+ld hl,hifat
+call hl2hiblk
+ld b,0c1h
+call wrhiblk
+
+;nc200 has more
+ld a,(is_nc200)
+and a
+ret z
+
+ld hl,hifat+256
+call hl2hiblk
+ld b,0c2h
+call wrhiblk
+
+ld hl,hifat+512
+call hl2hiblk
+ld b,0c3h
+;FALLS THROUGH
+
+
+;write back 256-byte block to high (upper) memory from hiblk.
+;entry: b=block number
+wrhiblk:
+;block number is really high byte of address, so offset in file
+;is b*256 in bytes = b*2 in records.
+ld h,0
+ld l,b
+add hl,hl
+call nc2blkfix
+ld (snapfcb+33),hl
+xor a
+ld (snapfcb+35),a
+
+ld hl,hiblk
+ld b,2		;write 2 records
+wrhblp:
+push bc
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,snapfcb
+ld c,brwrite
+call bdos
+and a
+jp nz,writeerr
+;next record
+ld hl,(snapfcb+33)
+inc hl
+ld (snapfcb+33),hl
+pop hl
+pop bc
+ld de,128
+add hl,de
+djnz wrhblp
+ret
+
+
+;fix block record offset for NC200
+;entry: hl=record offset based on NC100 workings
+;exit:	if NC100, same; if NC200, hl=record offset adjusted for NC200;
+;	af/de corrupt
+;
+;NB: this is a bit crude, and will only cope with a 64k drive. Have to
+;check how big the NC200's ROM OS `upper memory' ramdisk is...
+nc2blkfix:
+ld a,(is_nc200)
+and a
+ret z
+
+;on the NC100, addr goes to just below F000h.
+;on NC200, it goes to just below E000h, then wraps to zero meaning 0
+;in RAM page 4 - for us, that means 10000h in the snap.
+;
+;or, translating to 128-byte record offset:
+;if offset >= 2*C0h, it's ok.
+push hl
+ld de,2*0c0h
+and a
+sbc hl,de
+pop hl
+ret nc
+
+;otherwise, it'll be zero where it should be 2*100h, so add that.
+ld de,0200h
+add hl,de
+
+;actually, that should be all... :-)
+ret
+
+
+
+;copy hiblk to hifat
+blk2fat:
+ld de,hifat
+blk2fatmid:
+ld hl,hiblk
+ld bc,256
+ldir
+ret
+
+blk2fat2:
+ld de,hifat+256
+jr blk2fatmid
+
+blk2fat3:
+ld de,hifat+512
+jr blk2fatmid
+
+
+
+;convert hi mem block number to address (in hifat).
+;entry: b=block number
+;exit:	hl=addr
+blk2fataddr:
+;addr=hifat+2*(b-0xc0)
+ld a,b
+sub 0c0h
+ld d,0
+ld e,a
+and a
+rl e
+rl d
+ld hl,hifat
+add hl,de
+ret
+
+
+
+;zcnlib bits:
+
+;strprint - print asciiz at hl (also allows FF=end of string)
+;entry:	hl=addr of string
+;exit:	hl points to NUL/FF of string
+;af corrupt
+strprint:
+ld a,(hl)
+inc a
+ret z
+dec a
+ret z
+call putchar
+inc hl
+jr strprint
+
+
+;putchar - put char in a
+;puts CR before any LF output
+;f corrupt, others preserved
+putchar:
+cp 10
+jr nz,putbyte
+ld a,13
+call putbyte
+ld a,10
+;FALLS THROUGH
+
+;putbyte - put char in a without translation
+;preserves all regs
+putbyte:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;compare strings at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2
+;exit:	c if they match, nc otherwise
+;af/de/hl corrupt
+strcmp:
+ld a,(de)
+cp (hl)
+jr nz,strcmp2
+and a
+jr z,strcmp1
+inc hl
+inc de
+jr strcmp
+
+strcmp1:
+;they matched ok
+scf
+ret
+
+strcmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+;strchr(hl,e)
+;entry: hl=string, e=char
+;exit:  hl=pointer to first occurrence of char in string, or 0 if
+;	none.
+;af corrupt
+strchr:
+ld a,(hl)
+cp e
+ret z
+inc hl
+and a
+jr nz,strchr
+ld hl,0
+ret
+
+
+
+
+;find a file in alldir.
+;entry: hl=asciiz rom filename 
+;exit:	c if found, and hl=addr of entry in alldir; else nc
+dircmp:
+ld de,alldir
+ld a,(numfiles)
+ld b,a
+dircmplp:
+push bc
+push hl
+push de
+call strcmp
+jr c,dircmpdn
+;if it didn't match but de is on FFh byte,
+;it really *did* match, except for that...
+ld a,(de)
+dec a
+jr z,dircmpdn
+pop de
+ld hl,16
+add hl,de
+ex de,hl
+pop hl
+pop bc
+djnz dircmplp
+
+and a	;nc, failed
+ret
+
+dircmpdn:
+pop hl
+pop bc	;junk
+pop bc	;also junk
+scf	;success
+ret
+
+
+;from zcnlib and hacked:
+
+;make fcb at filefcb from rom filename at hl
+;entry: hl=asciiz rom filename
+;based on 'genfcbs' from ccp.z in ZCN
+tmpde: defw 0
+makefcb:
+ld de,filefcb
+ld (tmpde),de
+
+xor a
+ld (de),a
+push hl
+inc de
+;blank the filenameext bytes of FCB
+ld h,d
+ld l,e
+inc de
+ld bc,10
+ld (hl),32
+ldir
+pop hl
+
+;start copying to fcb, and keep going until we reach
+;whitespace again.
+;to deal with the problem of filename=8 chars max., we keep a count of
+;chars done so far in c.
+ld c,0
+ld de,(tmpde)
+inc de	;move fcb ptr. to start of filename
+
+gflp2:
+ld a,(hl)
+cp '.'
+jr z,gfnowext
+and a
+ret z		;finished if NUL
+;if we're not past the 8 char. limit...
+ld a,c
+cp 8
+jr nc,gf2	;skip if c>=8
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+call mfn_fix
+ld (de),a
+inc de
+
+gf2:
+inc c
+inc hl
+jr gflp2
+
+gfnowext:
+;we're currently pointing at a dot.
+inc hl
+
+;do much the same for the extension.
+ld c,0
+push hl
+ld hl,(tmpde)
+ld de,9
+add hl,de
+ex de,hl
+pop hl
+;fcb ptr. now at start of extension
+
+gflp3:
+ld a,(hl)
+and a
+ret z		;we're done if it's a NUL
+;if we're not past the 3 char. limit...
+ld a,c
+cp 3
+jr nc,gf3	;skip if c>=3
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+call mfn_fix
+ld (de),a
+inc de
+
+gf3:
+inc c
+inc hl
+jr gflp3
+
+
+;fix char in a, i.e. map `funny' ones to underscore, and uppercase.
+mfn_fix:
+push af
+cp 33
+jr c,mfbad
+cp 127
+jr nc,mfbad
+push bc
+push de
+push hl
+ld e,a
+ld hl,badchars
+call strchr
+ld a,h
+or l
+pop hl
+pop de
+pop bc
+jr z,mfbskip
+
+mfbad:
+pop af
+ld a,'_'
+jr mfbskip2
+
+mfbskip:
+pop af
+mfbskip2:
+;uppercase char in a.
+cp 'a'
+ret c
+cp '{'
+ret nc
+;so a is in range 'a' to 'z'. uppercase it.
+xor 020h
+ret
+
+badchars: defb '?*:',0
+
+
+;get a file from snap and write as ZCN file (with ^Z's on the end).
+;entry: hl=asciiz rom filename
+;exit:	c if written ok, else nc
+ghfblk: defb 0
+getfile:
+call dircmp
+ret nc
+
+;make fcb at filefcb from rom filename at hl
+push hl
+call makefcb
+pop ix
+
+ld a,(ix+12)
+and a
+jp z,getfile_low
+
+;ok, it's upper memory.
+
+ld de,filefcb
+ld c,bfmake
+call bdos
+inc a
+jp z,ghffail
+
+;get size
+ld c,(ix+14)
+ld b,(ix+15)
+inc bc		;add one for ^Z
+
+;get start block
+ld a,(ix+13)
+ld (ghfblk),a
+
+ghflp:
+push bc
+ld a,(ghfblk)
+ld b,a
+call ldhiblk
+pop bc
+
+ld h,b
+ld l,c
+ld de,256
+;see if hl>256, i.e. if this isn't last one.
+scf		;make nc mean >, not >=
+sbc hl,de
+jr nc,ghfnotlast
+
+;ok, it's the last one. make sure file ends with 1 or more ^Z's.
+push bc
+ld hl,wrtblk
+ld de,wrtblk+1
+ld bc,0ffh
+ld (hl),26
+ldir
+pop bc
+ld hl,hiblk
+ld de,wrtblk
+ldir
+dec de
+ld a,26
+ld (de),a	;last byte is ^Z, rather than from file
+;bc still zero from ldir
+jr ghfendlp
+
+ghfnotlast:
+;not last, so copy 256 without any ^Z hassle.
+;first decr bc as appropriate - and since hl is currently bc-257...
+inc hl
+push hl		;popped as bc
+ld hl,hiblk
+ld de,wrtblk
+ld bc,256
+ldir
+pop bc
+
+ghfendlp:
+push bc
+
+;write two 128-byte records for 256-byte block
+ld de,wrtblk
+ld c,bsetdma
+call bdos
+ld de,filefcb
+ld c,bfwrite
+call bdos
+and a
+jr nz,ghffail
+
+ld de,wrtblk+128
+ld c,bsetdma
+call bdos
+ld de,filefcb
+ld c,bfwrite
+call bdos
+and a
+jr nz,ghffail
+
+pop bc
+ld a,b
+or c
+jr z,ghfdone
+
+;lookup next block
+push bc
+ld a,(ghfblk)
+ld b,a
+call blk2fataddr
+ld a,(hl)
+ld (ghfblk),a
+pop bc
+jr ghflp
+
+ghfdone:
+scf		;success
+ret
+
+ghffail:
+;delete any partial file
+ld de,filefcb
+ld c,bfdel
+call bdos
+and a		;nc, file get failed
+ret
+
+
+;as above, but for lower file
+getfile_low:
+ld de,wrtblk
+ld c,bsetdma
+call bdos
+
+ld de,filefcb
+ld c,bfmake
+call bdos
+inc a
+jr z,glffail
+
+;get start address via handle
+ld a,(ix+13)
+push ix
+ld ix,heapaddress
+ld d,0
+ld e,a
+call heapcall
+pop ix
+ld de,32
+add hl,de
+;hl points to start of file
+
+;get size
+ld c,(ix+14)
+ld b,(ix+15)
+inc bc		;add one for ^Z
+
+glflp:
+push hl
+ld h,b
+ld l,c
+ld de,128
+;see if hl>128, i.e. if this isn't last one.
+scf		;make nc mean >, not >=
+sbc hl,de
+pop hl
+jr nc,glfnotlast
+
+;ok, it's the last one. make sure file ends with 1 or more ^Z's.
+push bc
+push hl
+ld hl,wrtblk
+ld de,wrtblk+1
+ld bc,07fh
+ld (hl),26
+ldir
+pop hl
+pop bc
+ld de,wrtblk
+ldir
+dec de
+ld a,26
+ld (de),a	;last byte is ^Z, rather than from file
+;bc still zero from ldir, value of hl now unimportant
+jr glfendlp
+
+glfnotlast:
+;not last, so copy 128 without any ^Z hassle.
+;first decr bc as appropriate.
+
+ex de,hl
+ld hl,-128
+add hl,bc
+push hl		;popped as bc
+ex de,hl
+ld de,wrtblk
+ld bc,128
+ldir
+pop bc
+
+glfendlp:
+push bc
+push hl
+
+;write record
+ld de,filefcb
+ld c,bfwrite
+call bdos
+and a
+jr nz,glffail
+
+pop hl
+pop bc
+ld a,b
+or c
+jr nz,glflp
+
+scf		;success
+ret
+
+glffail:
+;delete any partial file
+ld de,filefcb
+ld c,bfdel
+call bdos
+and a		;nc, file get failed
+ret
+
+
+
+;delete file
+;entry: hl=asciiz rom filename
+;exit:  c if succeeded, else nc
+delfile:
+call dircmp
+ret nc
+
+push hl
+pop ix
+ld a,(ix+12)
+and a
+jp z,dellower
+
+;it's an upper mem file, then.
+
+;find filename in dir blocks and zero first byte; based on addhi_dir.
+
+;load first directory block
+ld a,0c0h
+ld (dirblk),a
+
+delhlp:
+ld a,(dirblk)
+ld b,a
+call ldhiblk
+
+;loop over the entries in the block
+ld hl,hiblk
+ld b,8
+delhlp2:
+push ix
+pop de
+push hl
+call strcmp
+pop hl
+jr c,delhgot
+
+ld de,32
+add hl,de
+djnz delhlp2
+
+;see if there's another directory block
+ld a,(dirblk)
+ld b,a
+call blk2fataddr
+ld a,(hl)
+cp 0ffh
+jr z,delhfail
+ld (dirblk),a
+jr delhlp
+
+delhfail:
+and a		;couldn't find file (this should be a can't-happen, though)
+ret
+
+delhgot:
+;make filename zero-length - this is what actually deletes the file.
+ld (hl),0
+ld a,(dirblk)
+ld b,a
+call wrhiblk	;write back dir block
+
+;but we also need to clear the fat entries used by the file...
+ld a,(ix+13)
+fatclrlp:
+ld b,a
+call blk2fataddr
+ld a,(hl)
+ld (hl),0
+inc hl
+ld (hl),0
+;incr count of blocks free
+push hl
+ld hl,(hifree)
+inc hl
+ld (hifree),hl
+pop hl
+cp 0ffh
+jr nz,fatclrlp
+
+ld a,1
+ld (lowdirty),a		;low mem was modified too (hifree)
+
+call writefat
+
+;all done, it worked.
+scf
+ret
+
+
+;as above, for lower.
+;currently a=handle
+;make sure A *really is* a handle though, as this doesn't check!
+dellower:
+;it's trivial for lower memory - just free the mem block
+ld d,0
+ld e,a
+ld ix,heapfree
+call heapcall
+ld a,1
+ld (lowdirty),a
+scf
+ret
+
+
+
+;copy a ZCN file to low memory.
+;entry: hl=nicely-formatted ZCN filename (asciiz)
+;	(no spaces, and should have dot only if there's an extension)
+;	(hl must not point to anywhere in the alldir array)
+;	a=file type (useful ones are: 0=wp, 1=address book, 5=basic)
+;exit:	c if copied ok, else nc
+;NB: filename at hl will be truncated to 12 chars.
+;NB2: failure is always `clean', i.e. there's nothing to clean up.
+putsiz: defw 0
+putname: defw 0
+puttype: defb 0
+
+putfile:
+ld (putname),hl		;save for use as rom filename
+ld (puttype),a		;file's type
+
+;the make-name-from-rom-filename routine is good enough to make the FCB
+call makefcb
+
+;truncate filename
+ld hl,(putname)
+push hl
+pop ix
+ld (ix+12),0
+
+;delete rom file, ignore the result (to make sure we don't duplicate
+; an existing file's name).
+call delfile
+
+;we need to rescan dirs, since they may have been changed by that.
+call scanmemdirs
+
+;open it
+ld de,filefcb
+ld c,bfopen
+call bdos
+inc a
+scf
+ccf	;nc
+ret z
+
+;check file isn't too big. The max file size supported by the rom s/w
+;is exactly 65535 bytes, I think. For low memory there's clearly
+;no way it can cope with >=48k (in fact it's more like 40k at
+;best), so check for less than 48k, i.e. less than 384 records.
+;
+;this doesn't actually test file size against free lower memory, as
+;we rely on the malloc to do that. This is really just to make sure
+;the file size in bytes fits in a 16-bit word. :-)
+
+ld de,filefcb
+ld c,bfsize
+call bdos
+ld hl,(filefcb+33)
+ld de,384
+push hl
+and a
+sbc hl,de
+pop hl
+ret nc		;i.e. if >=384 records
+
+;ok, the overall mem block size we want is 128*hl+32. (32 is for dir entry)
+;this probably isn't the optimal way to do that sum, but what the heck. :-)
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+add hl,hl	;*32
+add hl,hl	;*64
+add hl,hl	;*128
+ld (putsiz),hl	;save actual file size for later
+ld de,32
+add hl,de
+
+ex de,hl
+ld ix,heapalloc
+call heapcall
+ld a,h
+or l
+ret z		;and nc (alloc failed)
+
+ex de,hl	;de=handle
+ld ix,heapaddress
+call heapcall
+
+dec hl
+dec hl
+ld a,080h
+ld (hl),a	;change flags to show that it's a file
+inc hl
+inc hl
+
+;blank out the dir entry
+ld d,h
+ld e,l
+inc de
+ld bc,31
+ld (hl),0
+push hl
+ldir
+pop hl
+
+;copy filename
+ex de,hl	;de=dest
+ld hl,(putname)
+ld bc,13	;max len 12, plus NUL
+ldir
+
+ex de,hl	;hl=dir_entry+13
+;copy file type number
+ld a,(puttype)
+ld (hl),a
+inc hl
+
+;file size
+ld de,(putsiz)
+ld (hl),e
+inc hl
+ld (hl),d
+inc hl
+
+;figure out current time/date in correct format
+push hl
+call makedate
+pop ix
+ld (ix+0),e
+ld (ix+1),d
+ex de,hl
+ld (ix+2),e
+ld (ix+3),d
+
+;we also seem to have a 0x0d here for some reason...
+;(possibly to indicate that data immediately follows dir entry?)
+ld (ix+14),0dh
+
+push ix
+pop hl
+ld de,16
+add hl,de
+
+;hl now points to where actual file data should be loaded.
+;let's do that then...
+
+ld bc,(filefcb+33)	;still number of records in file
+putflp:
+push bc
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,filefcb
+ld c,bfread
+call bdos
+and a
+jr nz,putfail
+pop hl
+ld de,128
+add hl,de
+pop bc
+dec bc
+ld a,b
+or c
+jr nz,putflp
+
+ld a,1
+ld (lowdirty),a		;low mem modified, obviously
+
+scf	;success
+ret
+
+putfail:
+pop hl
+pop bc
+and a	;failure (couldn't read file)
+ret
+
+
+
+timebuf1: defb 0,0,0,0,0,0
+timebuf2: defb 0,0,0,0,0,0
+
+;make rom s/w file time/datestamp from current time/date.
+;entry: none
+;exit:	hl=time, de=date	(both 0 if RTC time/date not set)
+;based on ZCN's time.asm
+makedate:
+ld c,085h
+ld de,timebuf1
+call bdos
+
+ld c,085h
+ld de,timebuf2
+call bdos
+
+;now, if t1<t2 then t1:=t2
+
+ld ix,timebuf1
+ld b,6
+tchklp:
+ld a,(ix)
+cp (ix+6)
+jr c,uset2
+inc ix
+djnz tchklp
+
+jr tchkdone
+
+uset2:
+ld hl,timebuf2
+ld de,timebuf1
+ld bc,6
+ldir
+
+tchkdone:
+ld ix,timebuf1
+ld a,(ix)
+and a
+;if it's zero, the year is 1990.
+;given that I'm writing this in 1995, we can safely
+;assume that the time hasn't really been set. :-)
+jp z,notime
+
+;ok then, let's make the date.
+;on exit, hl needs to be like this:
+;
+;bit fedcba9876543210
+;    yyyyyyymmmmddddd	(y=0..109 (for 1990..2099), m=1..12, d=1..31)
+;
+;that's y*512+m*32+d.
+;we build it up in de.
+;the `and's below are just sanity checks.
+
+;year
+ld a,(ix+0)
+call convbcd
+and 07fh
+rlca
+ld e,0
+ld d,a		;put y*512 in place
+
+;month
+ld a,(ix+1)
+call convbcd
+and 15
+ld l,a
+ld h,0
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+add hl,hl	;*32
+add hl,de	;and m*32
+ex de,hl
+
+;day-of-month
+ld a,(ix+2)
+call convbcd
+and 31
+ld l,a
+ld h,0
+add hl,de	;and finally d
+ex de,hl
+
+push de		;save the date
+
+;ok then, let's make the time.
+;on exit, de needs to be like this:
+;
+;bit fedcba9876543210
+;    hhhhhmmmmmmsssss	(h=0..23, m=0..59, s=?)
+;
+;I haven't figured out how the seconds are stored - probably
+;seconds/2 since there's only 5 bits, but the seconds don't really
+;matter so I just ignore that for now (XXX).
+;
+;that makes it h*2048+m*32, built up in de again.
+
+;hour
+ld a,(ix+3)
+call convbcd
+and 31
+rlca
+rlca
+rlca
+ld e,0
+ld d,a		;put h*2048 in place
+
+;minute
+ld a,(ix+4)
+call convbcd
+and 63
+ld l,a
+ld h,0
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+add hl,hl	;*32
+add hl,de	;and m*32
+ex de,hl
+
+;XXX seconds ignored
+
+pop hl		;restore date saved earlier
+
+;all done then, date is in hl, time in de.
+ret
+
+
+notime:
+ld hl,0
+ld de,0
+ret
+
+
+;convert a byte in BCD to an integer
+;entry:	a=BCD
+;exit:	a=byte, f/b corrupt
+;this is hardly optimal :-)
+convbcd:
+push af
+rrca
+rrca
+rrca
+rrca
+and 15
+;want a*10
+rlca	;*2
+ld b,a	;save a*2
+rlca	;*4
+rlca	;*8
+add a,b	;*10
+ld b,a
+pop af
+and 15
+add a,b
+ret
+
+
+
+;now the stuff based on bits from ls.z
+
+;show files on ZCN drive (current drive/user only).
+;you MUST make sure scanmemdirs is called after this, as alldir
+;is blasted by this routine.
+dozcndir:
+call scanzcn
+ld a,(numfiles)
+and a
+jr nz,dzd1
+
+;no files found
+call ilprint
+defb 'No files',0
+jr dzdfin
+
+dzd1:
+call sortlist
+xor a
+ld (sizebytes),a
+call displist
+ld a,10
+call putchar
+ld a,1
+ld (sizebytes),a
+
+dzdfin:
+;show K free on drive.
+ld de,080h
+ld c,bsetdma
+call bdos
+ld c,bretdsk
+call bdos
+ld e,a
+ld c,46		;get free disk space
+call bdos
+ld hl,(080h)
+ld bc,7
+add hl,bc	;make sure division rounds up
+;div by 8
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+call k_print
+call ilprint
+defb ' free on drive',10,0
+ret
+
+
+;read in list of files in current drive/user on ZCN drive
+scanzcn:
+ld hl,alldir
+ld (dirptr),hl
+xor a
+ld (numfiles),a
+
+ld de,080h
+ld c,bsetdma
+call bdos
+
+ld de,allfcb
+call bsfirst
+
+idirlp:
+inc a
+ret z		;all done
+
+;skip if we already have max number of files we can cope with
+ld de,(dirptr)
+ld hl,alldirend
+and a
+sbc hl,de
+jr z,szskip
+
+;add filename, from fcb created at DMA, to list
+ld hl,080h
+ld de,(dirptr)
+call fcb2array
+
+;get file size in K
+ld de,080h	;use fcb created by bsfirst/next
+ld c,bfsize	;get file size
+call bdos
+ld hl,(080h+33)
+ld bc,7
+add hl,bc	;make sure division rounds up
+;div by 8
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ld ix,(dirptr)
+ex de,hl
+ld (ix+14),e
+ld (ix+15),d
+
+;move dirptr on to next entry
+ld hl,(dirptr)
+ld de,16
+add hl,de
+ld (dirptr),hl
+ld (dirend),hl	;in case there's no more after this one
+
+ld hl,numfiles
+inc (hl)
+
+szskip:
+;look for more
+call bsnext
+jr idirlp
+
+
+;display files in list.
+;we know there was at least one file found.
+displist:
+;work out stuff for vertical sorted display
+;if there are N files, there are L=(N+(idnum)-1)/(idnum) lines of
+; output. We have to display horizontally, so the list ptr
+; must start at filelist and skip over L entries each time before
+; display. For the next line, we start at the entry after the one
+; at filelist, and do the same, etc.
+;ok, first get number of lines.
+ld a,(numfiles)		;no. of files
+ld l,a
+ld h,0
+ld a,(idnum)
+dec a
+ld e,a
+ld d,0
+add hl,de		;hl=N+(idnum)-1
+inc e
+call divide		;hl=(N+(idnum)-1)/(idnum)
+ld a,l
+ld (numlines),a
+
+;now we want that in terms of bytes to add to the list ptr,
+; so multiply by 16.
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+ld (diradd),hl
+
+;get max. horiz width in columns (used to tell when to cr/lf)
+ld a,(numfiles)
+ld l,a
+ld h,0
+ld a,(numlines)
+dec a
+ld e,a
+ld d,0
+add hl,de
+inc e
+call divide
+ld a,l
+ld (hrizcols),a
+
+
+;now init stuff
+xor a
+ld (idhcount),a
+inc a
+ld (idfirst),a
+ld hl,alldir
+ld (dirptr),hl
+ld a,(numlines)
+ld (lineslft),a
+
+idirlp2:
+ld a,(idhcount)
+and a
+jr nz,idir1a
+ld a,(idfirst)
+and a
+jr nz,idir1b
+ld a,10
+call putchar
+jr idir1b
+idir1a:
+call ilprint
+defb '  ',0
+idir1b:
+xor a
+ld (idfirst),a
+
+;print the filename
+ld hl,(dirptr)
+push hl
+call strprint
+pop de
+and a
+sbc hl,de		;so hl=len of filename
+;want to print 13-hl spaces
+ld a,13
+sub l
+ld b,a
+spclp:
+ld a,32
+call putchar
+djnz spclp
+
+;now show file size in K
+ld hl,(dirptr)
+ld de,14
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+call showflsz
+
+ld hl,hrizcols
+ld a,(idhcount)
+inc a
+cp (hl)
+jr nz,idir3
+;end of line
+xor a
+idir3:
+ld (idhcount),a
+
+;advance list ptr etc.
+ld hl,(dirptr)
+ld de,(diradd)
+add hl,de
+ld (dirptr),hl
+ld de,(dirend)
+and a
+sbc hl,de
+jr c,idirlp2	;if not past end, do more
+
+;see if there's another horiz line to go
+ld a,(lineslft)
+dec a
+ld (lineslft),a
+ret z		;nope, all done
+
+;there is, so re-init (dirptr) appropriately,
+; i.e. (dirptr)=filelist+((numlines)-(lineslft))*16
+ld a,(numlines)
+ld hl,lineslft
+sub (hl)
+ld hl,0
+ld d,h
+ld e,a
+ld b,16
+idirlp3:
+add hl,de
+djnz idirlp3
+ld de,alldir
+add hl,de
+ld (dirptr),hl
+xor a
+ld (idhcount),a		;make sure horiz. pos count is set to 0
+jp idirlp2
+
+
+;copy FCB-style filename to array, removing spaces and any trailing
+;dot, and making asciiz.
+;entry: hl=fcb addr, de=addr of entry in array
+;af/bc/de/hl corrupt
+fcb2array:
+inc hl
+ld b,8
+call cpylcase
+ld a,'.'
+ld (de),a
+inc de
+ld b,3
+call cpylcase
+ex de,hl
+ld (hl),0
+dec hl
+ld a,(hl)
+cp '.'
+ret nz
+ld (hl),0
+ret
+
+
+;for b bytes at hl, copy to de smashing case to all-lower and
+; removing spaces.
+;NB: hl can equal de if needed.
+;exit:	hl points to first bute past end of source,
+;	de points to first byte past end of copy.
+;af/b corrupt, c preserved
+cpylcase:
+ld a,(hl)
+call tolower
+cp 32
+jr z,pfn3
+ld (de),a
+inc de
+pfn3:
+inc hl
+djnz cpylcase
+ret
+
+
+;search first
+bsfirst:
+ld c,17
+jp bdos
+
+;search next
+bsnext:
+ld c,18
+jp bdos
+
+
+;returns carry set if uppercase alpha char. in a
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+tolower:
+call isupper
+ret nc
+xor 020h
+ret
+
+
+;show file size in K.
+;hl=file size. It's in K if (sizebytes) is zero, otherwise it's in bytes.
+showflsz:
+ld a,(sizebytes)
+and a
+call nz,bytes2k
+;hl=size of file in K
+
+;FALLS THROUGH
+
+;this effectively does printf("%3dk",hl).
+;af/bc/de/hl corrupt
+k_print:
+ex de,hl
+ld a,e
+cp 100
+call c,printspc
+cp 10
+call c,printspc
+call dispdec
+ld a,'k'
+call putchar
+ret
+
+
+printspc:
+push af
+ld a,32
+call putchar
+pop af
+ret
+
+
+;convert byte count in hl to K, rounding up.
+;bc corrupt, af/de preserved
+bytes2k:
+ld bc,1023
+add hl,bc	;make sure division rounds up
+;div hl by 1024 (easier to divide h by 4)
+ld a,h
+rra
+rra
+and 03fh
+ld h,0
+ld l,a
+ret
+
+
+
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+push ix
+ld ix,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+add ix,ix
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+sbc hl,de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+;this is like OR IX,1 - there is a *really* hairy way to do this which
+;goes like push ix/dec sp/pop af/or 1/push af/inc sp/pop ix, but it's
+;4 clock cycles slower. Pity. :-)
+
+push ix
+pop hl
+ld a,1
+or l
+ld l,a
+push hl
+pop ix
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+push ix
+pop hl
+pop ix
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp: defb '00000$'	;16 zeroes and '$'
+
+;display number in de in decimal
+;exit: af/bc/de/hl corrupt
+dispdec:
+ld b,10
+ld hl,numtmp+5
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ld c,bdprint
+jp bdos
+
+
+
+;sort the list of files (exchange sort)
+tmpc:	defw 0
+sortlist:
+ld hl,alldir
+ld (dirptr),hl
+
+sortlp:
+ld hl,(dirptr)
+ld (tmpc),hl
+ex de,hl
+
+sortlp2:
+ld hl,(tmpc)
+call nodecmp
+jr nc,sort1
+ld (tmpc),de
+
+sort1:
+;move de to next node.
+ld hl,16
+add hl,de
+
+;see if we're at end of list yet.
+push hl
+ld de,(dirend)
+and a
+sbc hl,de
+pop de
+jr nz,sortlp2
+
+;ok, (tmpc) is the node to swap. won't matter if it's the same one.
+ld hl,(tmpc)
+ld de,(dirptr)
+call nodeswap
+
+;next node.
+ld hl,(dirptr)
+ld de,16
+add hl,de
+ld (dirptr),hl
+
+ld de,(dirend)
+and a
+sbc hl,de
+jr nz,sortlp
+
+;done.
+ret
+
+
+;compare two nodes in list
+;de=(addr of) 1st node, hl=2nd node
+;returns carry set if node at de < node at hl, else carry false
+;a corrupt
+nodecmp:
+push hl
+push de
+push bc
+
+ld b,12		;compare 12 bytes to check filenames
+nslp:
+ld a,(de)
+call tolower
+ld c,a
+ld a,(hl)
+call tolower
+cp c
+ccf		;compensate for comparison being wrong way around
+jr nz,ncmpdone
+inc hl
+inc de
+djnz nslp
+
+and a	;completely equal, so not less than.
+
+ncmpdone:
+;restore regs
+pop bc
+pop de
+pop hl
+ret
+
+
+;swap nodes in hl and de
+;flags corrupt, other preserved
+nodeswap:
+push hl
+push de
+push bc
+
+push de
+push hl
+push de
+ld de,swapbuf
+ld bc,16
+ldir
+pop hl
+pop de
+ld bc,16
+ldir
+ld hl,swapbuf
+pop de
+ld bc,16
+ldir
+
+pop bc
+pop de
+pop hl
+ret
+
+
+
+;finally, here's the code for the front-end.
+main:
+call scanmemdirs	;make sure in-mem alldir array is up to date.
+call getchoice		;get choice and act on it - ret nc if quit
+jr c,main
+ret
+
+
+getchoice:
+call attron
+
+call ilprint
+defb ' [R]OM files, [Z]CN files, [G]et (ROM->ZCN), [P]ut (ZCN->ROM), [Q]uit ',0
+
+call attroff
+
+getkey:
+ld e,0ffh
+ld c,6
+call bdos
+and a
+jr z,getkey
+
+call tolower
+cp 'r'
+jr z,menu_romdir
+cp 'z'
+jr z,menu_zcndir
+cp 'g'
+jp z,menu_getf
+cp 'p'
+jp z,menu_putf
+cp 'q'
+jr nz,getkey
+
+;cr/lf
+ld a,10
+call putchar
+and a		;quit, so ret nc
+ret
+
+
+;these turn bold on/off if running on console
+
+attron:
+ld a,(serial)
+and a
+ret nz
+ld a,25
+jp putchar
+
+attroff:
+ld a,(serial)
+and a
+ret nz
+ld a,24
+jp putchar
+
+
+menu_romdir:
+ld a,10
+call putchar
+call showmemdirs
+scf
+ret
+
+
+menu_zcndir:
+ld a,10
+call putchar
+call dozcndir
+scf
+ret
+
+
+menu_getf:
+call ilprint
+defb 10,'Get which ROM file? ',0
+call inputline
+ccf
+ret c
+ld hl,inputbuf+2
+call getfile
+jr c,getputfin
+
+call ilprint
+defb 'Error writing ZCN file! (ROM file not found, or ZCN disk full)',10,0
+scf		;it failed, but we're not quitting :-)
+ret
+
+getputfin:
+call ilprint
+defb 'File copied OK.',10,0
+scf
+ret
+
+
+menu_putf:
+call ilprint
+defb 10,'Put which ZCN file? ',0
+call inputline
+ccf
+ret c
+ld hl,inputbuf+2
+xor a			;XXX - poss want to be able to specify file type
+call putfile
+jr c,getputfin
+
+call ilprint
+defb 'Error writing file! (ZCN file not found, or not enough low memory)',10,0
+scf		;failed, but not quitting
+ret
+
+
+
+
+
+;get line of asciiz input at inputbuf+2.
+;returns c if some input, nc if zero-len.
+inputline:
+;get input
+ld hl,inputbuf
+ld (hl),120
+ex de,hl
+ld c,10
+call bdos
+
+;make asciiz
+ld hl,inputbuf+1
+ld a,(hl)
+ld e,a
+ld d,0
+inc hl
+add hl,de
+ld (hl),0
+
+;cr/lf
+ld a,10
+call putchar
+
+;abort if zero length
+ld a,(inputbuf+2)
+and a
+ret z		;and nc
+
+scf
+ret
+
+
+;from zcnlib:
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+call putchar
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)
+
+
+;finally, a check for code length (see maxcode)
+;this'll only give a syntax error, but it's better than nothing.
+if $>=maxcode
+CODE TOO BIG
+endif

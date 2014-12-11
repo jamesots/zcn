@@ -1,0 +1,243 @@
+;ZCN v1.3 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2001 Russell Marks. See `zcn.txt' for license details.
+
+;main header
+
+if IS_NC200
+org 0b900h		;low byte should always be zero
+else
+org 0ba00h		;ditto
+endif
+;NB: things may get hairy if it's dropped below b600h.
+;NB2: `bbcbas' requires that it doesn't drop below b900h.
+
+zcnver	equ 0103h	;as returned by zfversion
+			;(must be in "zcnver\tequ 0x0yh" format for
+			;asmver.z to be generated correctly!)
+
+;internal stack used by bdos functions grows down from `intstack';
+; there's room for 95 entries.
+;(the word at eabeh is reserved for use by `format', so it grows down
+; from there rather than eac0h.)
+intstack equ 0eabeh
+
+
+;this must be the first item of code or data.
+start:
+defw 0,0,0
+
+;start+6: bdos entry point
+bdos:
+jp bdoshndl
+
+;start+9: address to load at (used by boot.z)
+defw start
+
+;start+11: length of entire system code to be loaded (by boot.z)
+defw zcn_eof-start
+
+;start+13:
+;copies of the last bytes sent to ports 10h/11h
+;(memory-bank switching ports)
+;these are rarely used, but should be kept up to date if anything
+;changes, so the NMI (poweroff) routine stores correct values
+;for powerup.
+;the values for ports 12h/13h are always 42h/43h (because ZCN occupies
+;the latter and a little of the former), so these aren't recorded.
+;(well, ok, on the '200 it's sometimes 42h/44h, but we know that. :-))
+;NB: these must remain here, as with the NC200's relocated screen,
+;more things will need to mess around with paging.
+bank0: defb 040h
+bank1: defb 041h
+
+;we now need to use an extra 256-15=241 bytes to reach the next
+;256-byte page, which we need to do for the bios jump table.
+;as such, lots of vars are put here which would normally go in
+;other source files.
+
+;start+15:
+;this word records (as a convenience to those of the hackish
+;persuasion :-)) how many free bytes are left before the org has to be
+;moved down. A little deft use of memdump will display this, of course.
+defw 0e600h-zcn_eof
+
+;start+17:
+;(formerly in keyread.z - 80 bytes)
+keytbl:
+;must be here (or hereabouts) so we can use e.g. `inc l' rather than `inc hl'
+;when pointing to the table.
+;in order from (port no.) b0 to b9, and from bit 7 to bit 0
+;alphabetic chars. are lowercase until proved guilty
+
+if IS_NC200
+
+;the '200 keymap differs somewhat from the '100...
+defb knone,knone,knone,13,	kleft,'4',krshift,klshift
+defb '9',knone,knone,knone,	32,27,kctrl,kfunc
+defb knone,'6',knone,'5',	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z','7','8'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','/','#',		kright,krdel,kdown,knone
+defb 'k','m','u',kmenu,		kup,'\','=',knone
+defb ',','j','i',39,		'[',']','-',knone
+defb '.','o','l',59,		'p',kldel,'0',knone
+
+else
+
+;the good old NC100 layout :-)
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z',knone,'4'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','/','#',		kright,krdel,kdown,'6'
+defb 'k','m','u',kmenu,		kup,'\','7','='
+defb ',','j','i',39,		'[',']','-','8'
+defb '.','o','l',59,		'p',kldel,'9','0'
+
+endif
+
+;start+97:
+;(formerly in inthndl.z - 64 bytes)
+;32-entry stack (growing down from 'ihstack') for use by interrupt
+;routine.
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+ihstack:
+
+;start+161:
+;(formerly in misc.z - 6 bytes)
+numtmp: defb '00000$'
+
+;start+167:
+;(formerly in keyread.z - 10 bytes)
+;used to read in port data, which we want to do as quickly as possible
+;to clear the IRQ
+;must be here (or hereabouts) so we can use e.g. `inc l' rather than `inc hl'
+;when pointing to the table.
+kportin:
+defb 0,0,0,0,0, 0,0,0,0,0
+
+;start+177:
+;(formerly in ccp.z - 36+33=69 bytes)
+;fcb used to load SUB files.
+subfcb:	defw 0,0,0,0,0,0,0,0
+	defw 0,0,0,0,0,0,0,0
+	defb 0,0,0,0
+
+;fcb used to load COM files.
+comfcb:	defw 0,0,0,0,0,0,0,0
+	defw 0,0,0,0,0,0,0,0
+	defb 0
+
+;start+246:
+;(4 bytes)
+;bbc basic depends on these, don't move them!
+defw kbasget
+defw kbaschk
+
+;start+250: init everything and jump to ccp
+jp bootsys
+
+;start+253:
+;(formerly in ccp.z - 1 byte)
+insub:	  defb 0	;equals 1 if running a .sub file
+
+;start+254:
+;(formerly in term.z - 2 bytes)
+;these MUST stay here, as this location is advertised in zcn.txt
+;must be in this order
+xloc:		defb 0
+yloc:		defb 0
+
+
+;start+256:
+;bios function jumptable
+;put here because some programs rely on it being on a 256-byte
+;boundary (e.g. wanderer), and this is the only convenient place
+;to do that.
+biosjump:
+jp start+250		;0 cold boot (only from copy in memory, though)
+warmboot:
+jp wboot		;1 warm boot
+jp bicnstat		;2 console status
+jp biconin		;3 console input
+jp biconout		;4 console output, c=char
+jp bilstout		;5 print char in c
+jp biauxout		;6 aux out
+jp biauxin		;7 aux in
+;*** none of the following implemented yet ***
+jp bihome		;8 home disk head
+jp biseldsk		;9 select disk in c (0=A:), ret hl=dph for disk
+jp bisettrk		;10 set track to bc (0-65535)
+jp bisetsec		;11 set sector to bc (1-26)
+jp bisetdma		;12 set dma address
+jp biread		;13 read sector, ret a=0 if ok, else a=1
+jp biwrite		;14 write sector, ret same
+jp bilistst		;15 list status, ret a=0 if busy, a=255 if ok
+jp bisectrn		;16 sectran - for zcn, ret de=bc
+
+
+;start+256+51
+;table of addresses for start of each char. line
+;this is here to guarantee that it isn't split across a 256-byte page
+;(so I can do 'add a,l, ld l,a' rather than 'add hl,a', so to speak)
+if IS_NC200=0
+yaddrtbl:
+endif
+defw 0f080h,0f200h,0f380h,0f500h,0f680h
+defw 0f800h,0f980h,0fb00h,0fc80h,0fe00h
+
+;start+256+71
+;we want to put a RET at start+256+90 to keep Mallard Basic happy,
+;so we have to use up another 90-71=19 bytes.
+
+;this routine takes 12 bytes
+;console output, saves regs
+putchar:
+push af
+push bc
+push de
+push hl
+call tputchar
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+;start+256+83
+;formerly in serial.z, 4 bytes
+sbstart: defw 0		;points to 1st char in buffer
+sbend:   defw 0		;points to char *after* last char in buffer
+
+;start+256+87
+;formerly in keyread.z, 3 bytes
+krheld: defw 0		;how long the key has been held, in 1/100ths
+krsubh: defb 0		;subrepeat timer used by repper
+
+;start+256+90
+;just a nop (ok, a ret :-)) to keep Mallard Basic from crashing.
+;I presume this is some CP/M 3 BIOS routine, but it works fine
+; without it.
+ret
+
+
+;the NC200 needs a larger (21-line) addr lookup table. We can
+;still be sure it fits on a single 256-byte page here.
+if IS_NC200
+yaddrtbl:
+defw 06000h,06180h,06300h,06480h,06600h,06780h,06900h,06a80h
+defw 06c00h,06d80h,06f00h,07080h,07200h,07380h,07500h,07680h
+defw 07800h,07980h,07b00h,07c80h,07e00h
+endif
+
+
+;these `equ's need to go at the start:
+pendsdmp equ pendmpop+1	;screen dump pending if non-zero
+capsctrl equ capsctrlop+1	;caps lock acts like ctrl if non-zero
+fontdata equ fontop+1	;address of font to use for text
+
+;(that's all for now :-))

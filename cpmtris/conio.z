@@ -1,0 +1,65 @@
+;conio - console I/O routines
+;mostly just repackaged BDOS stuff
+
+;for cpm zmac:
+;ZZglobal putchar
+;ZZglobal putbyte
+;ZZglobal getchar
+;ZZglobal getch
+;ZZglobal kbhit
+
+
+;putchar - put char in a
+;puts CR before any LF output
+;f corrupt, others preserved
+putchar:
+cp 10
+jr nz,putbyte
+ld a,13
+call putbyte
+ld a,10
+;FALLS THROUGH
+
+;putbyte - put char in a without translation
+;preserves all regs
+putbyte:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;getchar - get char into a (without echo)
+;preserves all but f
+getch:		;same
+getchar:
+push bc
+push de
+push hl
+getchlp:
+call kbhit
+jr nc,getchlp
+ld e,0ffh
+ld c,6
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+
+;kbhit - like the common DOS C function
+;returns c if key pressed, nc if not
+kbhit:
+ld c,11
+call 5
+rra
+ret

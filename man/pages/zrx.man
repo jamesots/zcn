@@ -1,0 +1,22 @@
+NAME
+	zrx - XMODEM receive a file when serial console is being used
+
+SYNOPSIS
+	zrx filename
+
+DESCRIPTION
+	XMODEM receive a file from the serial port. Normally you'd use
+	QTERM or a similar program for such a task, but there is one
+	situation in which most of these programs don't work properly;
+	when console I/O is redirected to the serial port. In this
+	situation, you can instead use zrx, as it does no console I/O
+	at all.
+
+BUGS
+	There is no analogous `zsx' to send a file.
+
+	The XMODEM implementation is somewhat naive, and only supports
+	the old `checksum' method.
+
+SEE ALSO
+	qterm

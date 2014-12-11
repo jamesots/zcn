@@ -1,0 +1,749 @@
+;graph2 - more complicated (and/or larger) graphics routines.
+;requires graph, maths and sqrt
+;mainly separate as these require maths and sqrt which makes things a
+;bit more bloat-prone.
+
+
+
+;for cpm zmac:
+;ZZglobal circle  ;draw circle - centre (de,c), radius b, nukes af/bc/de/hl
+;ZZglobal fcircle ;filled circle - as above
+;ZZglobal ftri    ;filled triangle: (de,c), (hl,b), (ix,a) [nukes all+iy]
+
+;uses these:
+;ZZglobal intdpix
+;ZZglobal intsqrt
+;ZZglobal multiply
+;ZZglobal divide
+;ZZglobal vline
+
+
+;draw a circle at (de,c) radius b
+;entry: (de,c)=centre of circle, b=radius in pixels
+;exit:	af/bc/de/hl corrupt
+circx: defw 0
+circy: defb 0		;ix+0
+circr: defb 0		;ix+1
+circrsq: defw 0
+circle:
+push ix
+ld ix,circy
+
+ld (circx),de
+ld (ix),c	;circy
+ld (ix+1),b	;circr
+
+;uses the square root method.
+;loop from y-r to y+r
+
+;need to work out r*r (b*b)
+push bc
+ld h,0
+ld l,b
+ld d,h
+ld e,l
+call multiply
+ld (circrsq),hl
+pop bc
+
+ld a,c
+sub b
+ld l,a		;l=ypos-r (l is y loop var)
+add a,b
+add a,b
+inc a
+ld h,a		;stops when l=h (h=ypos+r+1)
+
+circlpy:
+push hl
+;do a=l-(circy)
+ld a,l
+sub (ix)
+jp p,circ1
+;if -ve, make +ve
+neg
+circ1:
+;work out a*a
+ld h,0
+ld l,a
+ld d,h
+ld e,l
+call multiply
+;now do rsq-a*a
+ex de,hl
+ld hl,(circrsq)
+and a
+sbc hl,de
+;and sqrt(rsq-a*a)
+call intsqrt
+ld ix,circy	;quicker than doing push/pop around 'intsqrt'
+ex de,hl
+pop hl
+push hl
+
+;plot (xpos-de,l) and (xpos+de,l)
+ld c,l
+push bc
+ld hl,(circx)
+and a
+sbc hl,de
+push de
+ex de,hl
+call intdpix
+
+pop de
+pop bc
+ld hl,(circx)
+add hl,de
+ex de,hl
+call intdpix
+
+pop hl
+inc l
+ld a,l
+cp h
+jr nz,circlpy
+
+pop ix
+ret
+
+
+
+;draw filled circle at (de,c) radius b
+;af/bc/de/hl corrupt
+fcircle:
+push ix
+ld ix,circy
+
+ld (circx),de
+ld (ix),c	;circy
+ld (ix+1),b	;circr
+
+;uses the square root method.
+;loop from y-r to y+r
+
+;need to work out r*r (b*b)
+push bc
+ld h,0
+ld l,b
+ld d,h
+ld e,l
+call multiply
+ld (circrsq),hl
+pop bc
+
+ld a,c
+sub b
+ld l,a		;l=ypos-r (l is y loop var)
+add a,b
+add a,b
+inc a
+ld h,a		;stops when l=h (h=ypos+r+1)
+
+fcirclpy:
+push hl
+;do a=l-(circy)
+ld a,l
+sub (ix)
+jp p,fcirc1
+;if -ve, make +ve
+neg
+fcirc1:
+;work out a*a
+ld h,0
+ld l,a
+ld d,h
+ld e,l
+call multiply
+;now do rsq-a*a
+ex de,hl
+ld hl,(circrsq)
+and a
+sbc hl,de
+;and sqrt(rsq-a*a)
+call intsqrt
+ld ix,circy	;quicker than doing push/pop around 'intsqrt'
+ex de,hl
+pop hl
+push hl
+
+;plot de*2+1 pixels from (xpos-de,l) rightwards
+ld c,l
+ld hl,(circx)
+and a
+sbc hl,de
+ex de,hl
+add hl,hl
+inc hl
+ld b,l		;pixel count
+fcirclpx:
+push bc
+push de
+call intdpix
+pop de
+pop bc
+inc de
+djnz fcirclpx
+
+pop hl
+inc l
+ld a,l
+cp h
+jr nz,fcirclpy
+
+pop ix
+ret
+
+
+;internal use only
+;does hl=abs(hl)
+;af corrupt
+intabshl:
+bit 7,h
+ret z
+;undo 2's cpl
+dec hl
+ld a,h
+cpl
+ld h,a
+ld a,l
+cpl
+ld l,a
+ret
+
+
+;internal use only
+;negate hl (2's cpl)
+;af corrupt
+intneghl:
+ld a,h
+cpl
+ld h,a
+ld a,l
+cpl
+ld l,a
+inc hl
+ret
+
+
+;ftri - filled triangle drawing routine.
+;the triangle is only an approximation and gets inaccurate when large
+;(the inaccuracy isn't major - about 1 pixel out per 480 pixels across -
+; but it can look funny because of the way the triangle is drawn)
+;can sometimes 'miss' (overdraw) a pixel line when using pxor as the
+; pixel draw routine and one of the triangle's edges is vertical.
+;based on a Basic original by Graham Richards
+;entry: co-ords in (de,c), (hl,b), (ix,a)
+;exit:	nothing
+;af/bc/de/hl/ix/iy corrupt. they don't come much nastier than this ;-)
+ftrifx1: defw 0
+ftrifx2: defw 0
+ftrifx3: defw 0
+ftrify1: defb 0		;must stay contiguous and this order
+ftrify2: defb 0
+ftrify3: defb 0
+
+;BTW, the odd-looking labels are like that because this was originally
+; called 'ftrifle' (tri. fill, geddit?). I relented 'cos it wasn't
+; funny. :-)
+
+
+ftri:
+;this makes sure the args are sent in x1<=x2<=x3 order.
+ld iy,ftrify1-1		;we use this to access the 'y' ones directly.
+ld (ftrifx1),de
+ld (ftrifx2),hl
+ld (ftrifx3),ix
+ld (iy+3),a		;y3, nice and mnemonic, see :-)
+ld (iy+1),c
+ld (iy+2),b
+
+;we first find out the result of x1<x2, x1<x3, and x2<x3,
+; save the carry from each of these (with carry true=less than)
+; with rla, then use 'cp' to see which order the co-ords need to
+; be sent in.
+;i.e. it's deep magic, and you're not expected to understand it. :-)
+
+xor a
+;first compare x1 and x2
+ld hl,(ftrifx1)
+ld de,(ftrifx2)
+push de
+push hl
+and a
+sbc hl,de
+rla
+
+;now x1 and x3
+pop hl		;x1
+push ix
+pop de		;x3
+and a
+sbc hl,de
+rla
+
+;finally, x2 and x3
+pop hl		;x2
+;de is still x3
+and a
+sbc hl,de
+rla
+
+;keep a copy of a in e, as we'll be and'ing like crazy soon
+ld e,a
+
+;now do all the checks. this looks completely insane, but it works.
+;here's a copy of the original basic so you can see more clearly (!)
+; what I'm doing:
+;if x2%<=x1% and x1%<=x3% then call tri(x2%,y2%,x1%,y1%,x3%,y3%,r,g,b)
+;if x3%<=x1% and x1%<=x2% then call tri(x3%,y3%,x1%,y1%,x2%,y2%,r,g,b)
+;if x1%<=x3% and x3%<=x2% then call tri(x1%,y1%,x3%,y3%,x2%,y2%,r,g,b)
+;if x2%<=x3% and x3%<=x1% then call tri(x2%,y2%,x3%,y3%,x1%,y1%,r,g,b)
+;if x1%<=x2% and x2%<=x3% then call tri(x1%,y1%,x2%,y2%,x3%,y3%,r,g,b)
+;if x3%<=x2% and x2%<=x1% then call tri(x3%,y3%,x2%,y2%,x1%,y1%,r,g,b)
+
+;x1>=x2, x1< x3, ......, a=01?b - and 6, cp 2
+;x1< x2, x1>=x3, ......, a=10?b - and 6, cp 4
+;a is still e
+and 6
+cp 2
+jr z,ftrif1
+cp 4
+jr z,ftrif2
+
+;......, x1< x3, x2>=x3, a=?10b - and 3, cp 2
+;......, x1>=x3, x2< x3, a=?01b - and 3, cp 1
+ld a,e
+and 3
+cp 2
+jr z,ftrif3
+cp 1
+jr z,ftrif4
+
+;x1< x2, ......, x2< x3, a=1?1b - and 5, cp 5
+;x1>=x2, ......, x2>=x3, a=0?0b - and 5, cp 0
+ld a,e
+and 5
+cp 5
+jr z,ftrif5
+cp 0
+jr z,ftrif6
+
+;eek! can't happen
+;just give up
+ret
+
+;for these bits, bear in mind:
+; original (x1,y1) is in (ftrifx1),c
+; original (x2,y2) is in (ftrifx2),b
+; original (x3,y3) is in ix,(ftrify3)
+;and:
+; output (x1,y1) goes in de,c
+; output (x2,y2) goes in hl,b
+; output (x3,y3) goes in ix,a
+
+ftrif1:
+;order is 2/1/3
+ld de,(ftrifx2)
+ld hl,(ftrifx1)
+ld ix,(ftrifx3)
+ld c,(iy+2)
+ld b,(iy+1)
+ld a,(iy+3)
+jp intftri
+
+ftrif2:
+;order is 3/1/2
+ld de,(ftrifx3)
+ld hl,(ftrifx1)
+ld ix,(ftrifx2)
+ld c,(iy+3)
+ld b,(iy+1)
+ld a,(iy+2)
+jr intftri
+
+ftrif3:
+;order is 1/3/2
+ld de,(ftrifx1)
+ld hl,(ftrifx3)
+ld ix,(ftrifx2)
+ld c,(iy+1)
+ld b,(iy+3)
+ld a,(iy+2)
+jr intftri
+
+ftrif4:
+;order is 2/3/1
+ld de,(ftrifx2)
+ld hl,(ftrifx3)
+ld ix,(ftrifx1)
+ld c,(iy+2)
+ld b,(iy+3)
+ld a,(iy+1)
+jr intftri
+
+ftrif5:
+;order is 1/2/3
+ld de,(ftrifx1)
+ld hl,(ftrifx2)
+ld ix,(ftrifx3)
+ld c,(iy+1)
+ld b,(iy+2)
+ld a,(iy+3)
+jr intftri
+
+ftrif6:
+;order is 3/2/1
+ld de,(ftrifx3)
+ld hl,(ftrifx2)
+ld ix,(ftrifx1)
+ld c,(iy+3)
+ld b,(iy+2)
+ld a,(iy+1)
+jr intftri
+
+
+
+
+;internal use only - don't use this, use ftri above
+;filled triangle routine
+;see notes under ftri
+;entry: triangle co-ords in (de,c), (hl,b), (ix,a)
+; must be called with de<=hl<=ix
+ftrix1: defw 0
+ftriy1: defb 0
+ftrix2: defw 0
+ftriy2: defb 0
+ftrix3: defw 0
+ftriy3: defb 0
+ftrihalt: defw 0	;x pos to stop at
+ftritx: defw 0		;x pos to start from
+ftrity1: defw 0		;fixed-point shifted 8 bits,
+ftrity2: defw 0		; so they're 16-bit rather than 8
+ftridy1: defw 0		;same here,
+ftridy2: defw 0		; and here
+ftrixdif: defw 0
+
+intftri:
+;args must be in de<=hl<=ix (x1<=x2<=x3) order.
+ld (ftrix1),de
+ld (ftrix2),hl
+ld (ftrix3),ix
+ld (ftriy3),a
+ld a,b
+ld (ftriy2),a
+ld a,c
+ld (ftriy1),a
+
+;halt=x2
+;hl is still (ftrix2)
+ld (ftrihalt),hl
+
+;tx=x1
+;de is still (ftrix1)
+ld (ftritx),de
+
+;ty1=ty2=y1
+;c is still (ftriy1)
+ld h,c
+ld l,0
+ld (ftrity1),hl
+ld (ftrity2),hl
+
+;ditch=0
+;we hold the 'ditch' flag in b
+ld b,0
+
+;xdif=abs(x2-x1)
+ld hl,(ftrix2)
+ld de,(ftrix1)
+and a
+sbc hl,de
+call intabshl
+ld (ftrixdif),hl
+
+;if xdif=0...
+;hl is still xdif
+ld a,h
+or l
+jr nz,ftria2
+
+;draw vline from (x2,y2) to (x2,y1)
+ld de,(ftrix2)
+ld a,(ftriy2)
+ld c,a
+ld a,(ftriy1)
+ld b,a
+call vline
+
+ld b,1		;set 'ditch' flag
+jr ftria3
+
+ftria2:
+;setup y1 to y2 line drawing stuff
+;doing this Bresenham's way would be gratuitously non-trivial,
+;so we use a fixed-point gradient; top 8 bits the int part,
+;lower 8 bits the frac part.
+
+;dy1=(y2-y1)/xdif
+ld a,(ftriy1)
+ld c,a
+ld a,(ftriy2)
+sub c
+ld h,a
+ld l,0			;...which makes it fixed-point.
+;have to do the divide with +ve numbers, so save bit 7 of h and abs hl
+bit 7,h
+push af
+call intabshl
+ld de,(ftrixdif)	;(we know this is non-zero and +ve now)
+push bc			;save b
+call divide
+pop bc
+pop af
+call nz,intneghl	;if it was -ve, 2's cpl it now
+ld (ftridy1),hl
+
+
+ftria3:
+;xdif=abs(x3-x1)
+ld hl,(ftrix3)
+ld de,(ftrix1)
+and a
+sbc hl,de
+call intabshl
+ld (ftrixdif),hl
+
+;if xdif=0...
+;hl is still xdif
+ld a,h
+or l
+jr nz,ftria4
+
+;draw vline from (x3,y3) to (x3,y1)
+ld de,(ftrix3)
+ld a,(ftriy3)
+ld c,a
+ld a,(ftriy1)
+ld b,a
+call vline
+ld b,1		;set 'ditch' flag
+jr ftria5
+
+ftria4:
+;setup fixed-point dy2
+;dy2=(y3-y1)/xdif
+ld a,(ftriy1)
+ld c,a
+ld a,(ftriy3)
+sub c
+ld h,a
+ld l,0			;...which makes it fixed-point.
+;have to do the divide with +ve numbers, so save bit 7 of h and abs hl
+bit 7,h
+push af
+call intabshl
+ld de,(ftrixdif)	;(we know this is non-zero and +ve now)
+push bc			;save b
+call divide
+pop bc
+pop af
+call nz,intneghl	;if it was -ve, 2's cpl it now
+ld (ftridy2),hl
+
+
+ftria5:
+;if 'ditch' flag is set, it's already been drawn, so skip this.
+ld a,b
+and a
+jr nz,ftript2
+
+;start at tx
+ld de,(ftritx)
+dec de
+ftrialp:
+inc de
+
+;draw vline
+ld a,(ftrity1+1)	;int part only
+ld c,a
+ld a,(ftrity2+1)
+ld b,a
+push de
+call vline
+pop de
+
+;ty1+=dy1
+ld hl,(ftrity1)
+ld bc,(ftridy1)
+add hl,bc
+ld (ftrity1),hl
+
+;ty2+=dy2
+ld hl,(ftrity2)
+ld bc,(ftridy2)
+add hl,bc
+ld (ftrity2),hl
+
+;loop until de=halt
+ld hl,(ftrihalt)
+and a
+sbc hl,de
+jr nz,ftrialp
+
+
+ftript2:
+;halt=x2
+ld hl,(ftrix2)
+ld (ftrihalt),hl
+
+;tx=x3
+ld hl,(ftrix3)
+ld (ftritx),hl
+
+;ty1=ty2=y3
+ld a,(ftriy3)
+ld h,a
+ld l,0
+ld (ftrity1),hl
+ld (ftrity2),hl
+
+;ditch=0
+;we hold the 'ditch' flag in b
+ld b,0
+
+;xdif=abs(x2-x3)
+ld hl,(ftrix2)
+ld de,(ftrix3)
+and a
+sbc hl,de
+call intabshl
+ld (ftrixdif),hl
+
+;if xdif=0...
+;hl is still xdif
+ld a,h
+or l
+jr nz,ftrib2
+
+;draw vline from (x2,y2) to (x2,y3)
+ld de,(ftrix2)
+ld a,(ftriy2)
+ld c,a
+ld a,(ftriy3)
+ld b,a
+call vline
+
+ld b,1		;set 'ditch' flag
+jr ftrib3
+
+ftrib2:
+;setup y1 to y2 line drawing stuff
+;dy1=(y2-y3)/xdif
+ld a,(ftriy3)
+ld c,a
+ld a,(ftriy2)
+sub c
+ld h,a
+ld l,0			;...which makes it fixed-point.
+;have to do the divide with +ve numbers, so save bit 7 of h and abs hl
+bit 7,h
+push af
+call intabshl
+ld de,(ftrixdif)	;(we know this is non-zero and +ve now)
+push bc			;save b
+call divide
+pop bc
+pop af
+call nz,intneghl	;if it was -ve, 2's cpl it now
+ld (ftridy1),hl
+
+
+ftrib3:
+;xdif=abs(x1-x3)
+ld hl,(ftrix1)
+ld de,(ftrix3)
+and a
+sbc hl,de
+call intabshl
+ld (ftrixdif),hl
+
+;if xdif=0...
+;hl is still xdif
+ld a,h
+or l
+jr nz,ftrib4
+
+;draw vline from (x1,y1) to (x1,y3)
+ld de,(ftrix1)
+ld a,(ftriy1)
+ld c,a
+ld a,(ftriy3)
+ld b,a
+call vline
+ld b,1		;set 'ditch' flag
+jr ftrib5
+
+ftrib4:
+;setup fixed-point dy2
+;dy2=(y1-y3)/xdif
+ld a,(ftriy3)
+ld c,a
+ld a,(ftriy1)
+sub c
+ld h,a
+ld l,0			;...which makes it fixed-point.
+;have to do the divide with +ve numbers, so save bit 7 of h and abs hl
+bit 7,h
+push af
+call intabshl
+ld de,(ftrixdif)	;(we know this is non-zero and +ve now)
+push bc			;save b
+call divide
+pop bc
+pop af
+call nz,intneghl	;if it was -ve, 2's cpl it now
+ld (ftridy2),hl
+
+
+ftrib5:
+;if 'ditch' flag is set, it's already been drawn, so skip this.
+ld a,b
+and a
+jr nz,ftridone
+
+;start at tx
+ld de,(ftritx)
+ftriblp:
+;draw vline
+ld a,(ftrity1+1)	;int part only
+ld c,a
+ld a,(ftrity2+1)
+ld b,a
+push de
+call vline
+pop de
+
+;ty1+=dy1
+ld hl,(ftrity1)
+ld bc,(ftridy1)
+add hl,bc
+ld (ftrity1),hl
+
+;ty2+=dy2
+ld hl,(ftrity2)
+ld bc,(ftridy2)
+add hl,bc
+ld (ftrity2),hl
+
+dec de
+
+;loop until de=halt
+ld hl,(ftrihalt)
+and a
+sbc hl,de
+jr nz,ftriblp
+
+
+ftridone:
+ret

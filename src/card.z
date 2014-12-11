@@ -1,0 +1,328 @@
+;ZCN v1.3 - a CP/M clone for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2001 Russell Marks. See `zcn.txt' for license details.
+
+;low level card read/write and general handling routines
+
+;constants
+
+;zcn1 format boot block offsets
+cf1jump1	equ 0
+cf1jump2	equ 1
+cf1magic	equ 2
+cf1size		equ 6
+cf1sysb		equ 8
+cf1dirb		equ 9
+cf1junk		equ 10
+cf1zero		equ 64
+cf1boot		equ 128
+cf1fnx		equ 512
+
+
+;swap mem. card page in
+;a=mem. page e.g. 080h
+;af (only) corrupt
+cardin:
+di
+push af
+ld a,(bank1)
+ld (savbop+1),a
+pop af
+;the 'ld' then 'out' must be in this order to work if
+;an NMI (poweroff) happens between the instructions.
+cardend:
+ld (bank1),a
+out (011h),a
+ei
+ret
+
+
+;swap card out
+;no args
+;af (only) corrupt
+cardout:
+di
+savbop: ld a,0	;modified above
+jr cardend
+
+
+;entry - a=16k-block number (0-15), b=drive num 0=A:, 1=B:, 2=C:, 3=D:
+;exit - a=mem. page like 080h, b corrupt
+cnvblkno:
+;even in case of disaster, make damn sure it doesn't go off the
+;logical drive
+and 15
+;add 16*drive num.
+rlc b
+rlc b
+rlc b
+rlc b
+add a,b
+;now make sure it stays in PCMCIA ram area whatever
+and 63
+or 080h
+ret
+
+
+;low-level read 128-bytes routine
+;a=16k-block number (0-15)
+;b=drive (0=A:)
+;hl=byte offset in 16k-block (0-16383)
+;de=dest. address
+;af/bc/de/hl and cardbuf blasted
+cread128:
+call cardbit
+push de
+ld de,cardbuf
+ld bc,128
+ldir
+pop de
+call cardout
+ld a,d
+cp 0e9h		;see if it's cardbuf
+ret z		;skip copy if so
+ld hl,cardbuf
+ld c,128	;b still zero from ldir
+ldir
+ret
+
+
+;low-level read one byte routine
+;ONLY USE THIS IF YOU REALLY HAVE TO because it's a nasty way to read data.
+;a=16k-block number (0-15)
+;b=drive (0=A:)
+;hl=byte offset in 16k-block (0-16383)
+;flags/bc/de/hl blasted
+;exit: a=byte read
+creadone:
+call cardbit
+ld b,(hl)
+call cardout
+ld a,b
+ret
+
+
+;similar but writes, on entry c=value to write to (hl).
+cwrtone:
+push bc
+call cardbit
+pop bc
+ld (hl),c
+jr cardout
+
+
+;common to cread128/creadone/cwrtone
+cardbit:
+call cnvblkno
+call cardin
+set 6,h
+ret
+
+
+;low-level write 128-bytes routine
+;a=16k-block number (0-15)
+;b=drive (0=A:)
+;hl=byte offset in 16k-block (0-16383)
+;de=address of 128-byte record to write
+;af/bc/de/hl and cardbuf blasted
+cwrite128:
+call cnvblkno
+push hl
+ex de,hl
+ld de,cardbuf
+ld bc,128
+ldir
+call cardin
+pop de
+ld hl,cardbuf
+set 6,d
+ld c,128	;b still zero from ldir
+ldir
+jr cardout
+
+
+;returns num. dir blocks on given drive in c.
+;entry: b=drive (0=A:, 1=B: etc)
+;assumes ZCN1 format
+;blasts af/b/de/hl
+;leaves cardbuf intact
+dirblks:
+xor a
+ld hl,cf1dirb
+call creadone
+ld c,a
+ret
+
+
+;returns num. system blocks on current card in a.
+;entry: b=drive (0=A:, 1=B: etc)
+;assumes ZCN1 format
+;blasts af/b/de/hl
+;leaves cardbuf intact
+sysblks:
+xor a
+ld hl,cf1sysb
+jr creadone
+
+
+;tests if card present in slot
+;returns carry set if there is, carry false otherwise
+;blasts a
+iscard:
+in a,(0a0h)
+;bit 7 is 0 if there is, else 1, so...
+rla
+ccf
+ret
+
+
+;tests a drive has a ZCN1 boot block
+;also tests important fields are sane
+;blasts cardbuf
+;entry: d=drive num. in range 0-3
+;exit:  carry set if ZCN1, false if not.
+iszcn1:
+ld b,d
+xor a
+ld hl,0
+ld de,cardbuf
+call cread128
+ld hl,(cardbuf+cf1magic)
+ld de,0435ah	;'ZC'
+and a
+sbc hl,de
+jr nz,isz1
+ld hl,(cardbuf+cf1magic+2)
+ld de,0314eh	;'N1'
+and a
+sbc hl,de
+jr nz,isz1
+
+;check that there's no more than 15 system blocks
+ld a,(cardbuf+cf1sysb)
+cp 16
+jr nc,isz1
+
+;check no more than 4 dir. blocks
+ld a,(cardbuf+cf1dirb)
+cp 5
+jr nc,isz1
+;check more than zero dir. blocks
+and a
+jr z,isz1
+
+;that should be enough - q.c. passed now, I think. :-)
+scf
+ret
+
+isz1:
+and a	;error
+ret
+
+
+;reads a 128-byte chunk from a cpm block
+;(doesn't read a whole block, just 128 bytes in it.)
+;b=block num.
+;c=rcd num. in blk (in range 0-7)
+;d=drive (0=A:, 1=B: etc)
+;hl=address to read 128 bytes to
+;exit: a=0 if ok, or 255 if no card.
+;DOES NOT REPORT ERROR IF BLOCK IS PAST END OF CARD! (so be careful)
+readblkrcd:
+call blkrcdbit
+ret nc
+call cread128
+xor a
+ret
+
+
+;common to routines above/below
+blkrcdbit:
+push de
+push hl
+call genblkrcd
+pop de
+pop bc
+ret
+
+
+;writes a 128-byte chunk into a cpm block
+;(doesn't write a whole block, just 128 bytes in it.)
+;b=block num.
+;c=rcd num. in blk (in range 0-7)
+;d=drive (0=A:, 1=B: etc)
+;hl=address to write 128 bytes from
+;exit: a=0 if ok, or 255 if no card.
+;DOES NOT REPORT ERROR IF BLOCK IS PAST END OF CARD! (so be careful)
+writeblkrcd:
+call blkrcdbit
+ret nc
+call cwrite128
+xor a
+ret
+
+
+;generate a and hl which cread128 or cwrite128 will want from
+;args which readblk and writeblk get.
+;b=block num. c=subblock rcd, d=drive num base val 0
+;carry false and a=255 if no card, carry true if ok
+genblkrcd:
+push bc
+push de
+call iscard
+pop de
+pop bc
+ld a,255
+ret nc		;ret if no card
+
+;must convert:
+;b=block num.
+;c=rcd num. in blk (in range 0-7)
+;...to...
+;a=16k-block number (0-63)
+;hl=byte offset in 16k-block (0-16383)
+
+push bc
+ld b,d
+call sysblks
+pop bc
+ld h,0
+ld l,b
+;add one to allow for the boot block
+inc hl
+;skip any system blocks
+ld e,a
+ld d,0
+add hl,de
+
+;now multiply abs. block num. by 8 to give blocks offset on card in
+;records.
+add hl,hl
+add hl,hl
+add hl,hl	;*8 - for 1K blocks
+
+;so now hl=block offset in records.
+;add rcd. num
+ld b,0
+add hl,bc
+;and now hl is the record-to-be-read's offset in records.
+
+;to get the 16k-block number on the card, we use
+;bits 7 to 14 (inclusive) of hl.
+and a
+rl l
+rl h
+ld a,h	;this is the 16k-block number
+
+;and l is now 2x the num. of 128-byte rcds offset into the 16k
+;page that we want.
+;since we want to go from 2x to 128x, double up 6 times.
+ld h,0
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+
+scf	;carry true
+ret

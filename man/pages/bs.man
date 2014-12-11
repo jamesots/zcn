@@ -1,0 +1,50 @@
+NAME
+	bs - battleships game
+
+SYNOPSIS
+	bs [ -b | -s ] [ -c ]
+
+DESCRIPTION
+	This program allows you to play the familiar Battleships game
+	against the computer on a 10x10 board. The interface is visual
+	and largely self-explanatory; you place your ships and pick
+	your shots by moving the cursor around the `sea' with the
+	rogue/hack motion keys hjklyubn. (hjkl do left/down/up/right,
+	the others are diagonals.)
+
+	Note that when selecting a ship to place, you must type the
+	capital letter (these are, after all, capital ships). During
+	ship placement, the `r' command may be used to ignore the
+	current position and randomly place your currently selected
+	ship. The `R' command will place all remaining ships randomly.
+
+	The command-line arguments control game modes.
+
+	    -b selects a `blitz' variant
+	    -s selects a `salvo' variant
+	    -c permits ships to be placed adjacently
+
+	The `blitz' variant allows a side to shoot for as long as it
+	continues to score hits.
+
+	The `salvo' game allows a player one shot per turn for each of
+	his/her ships still afloat. This puts a premium on scoring
+	hits early and knocking out some ships and also makes much
+	harder the situation where you face a superior force with only
+	your PT-boat.
+
+	Normally, ships must be separated by at least one square of
+	open water. The -c option disables this check and allows them
+	to close-pack.
+
+	The algorithm the computer uses once it has found a ship to
+	sink is provably optimal. The dispersion criterion for the
+	random-fire algorithm may not be.
+
+AUTHORS
+	Originally written by one Bruce Holloway in 1986. Salvo mode
+	added by Chuck A. DeGaul (cbosgd!cad). Visual user interface,
+	`closepack' option, code rewrite and manual page by Eric S.
+	Raymond <esr@snark.thyrsus.com> August 1989. Keypad support
+	and ANSI/POSIX conformance, November '93. ZCN port by Russell
+	Marks.

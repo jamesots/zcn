@@ -1,0 +1,82 @@
+;tridemo
+;lots of random filled triangles, until you press a key.
+;needs graph,graph2,maths,sqrt,conio.
+
+org 0100h
+
+jr start
+
+x1: defw 0
+x2: defw 0
+x3: defw 0
+y1: defb 0
+y2: defb 0
+y3: defb 0
+
+start:
+ld hl,pfillpat
+call pixstyle
+
+call srand
+
+loop:
+ld hl,480
+call rand
+ld (x1),hl
+ld hl,480
+call rand
+ld (x2),hl
+ld hl,480
+call rand
+ld (x3),hl
+
+ld iy,y1-1
+ld hl,64
+call rand
+ld a,l
+ld (iy+1),a
+ld hl,64
+call rand
+ld a,l
+ld (iy+2),a
+ld hl,64
+call rand
+ld a,l
+ld (iy+3),a
+
+ld hl,5
+call rand
+ld a,l
+inc a
+ld hl,patwhite
+dec a
+jr z,skip1
+ld hl,patlgrey
+dec a
+jr z,skip1
+ld hl,patmgrey
+dec a
+jr z,skip1
+ld hl,patdgrey
+dec a
+jr z,skip1
+ld hl,patblack
+skip1:
+call setfill
+call showtri
+
+call kbhit
+jr nc,loop
+
+jp 0
+
+
+showtri:
+ld de,(x1)
+ld hl,(x2)
+ld ix,(x3)
+ld iy,y1-1
+ld c,(iy+1)
+ld b,(iy+2)
+ld a,(iy+3)
+jp ftri

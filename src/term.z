@@ -1,0 +1,937 @@
+;ZCN v1.2 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-1999 Russell Marks. See `zcn.txt' for license details.
+
+;terminal emulation routines
+
+;^A - clear screen, home cursor
+;^B - bold off
+;^C - cursor on
+;^D - cursor off
+;^E - bold on
+;^F - clear to end of screen
+;^G - bell
+;^H - backspace
+;^I - tab
+;^J - LF
+;^K
+;^L (reserved)
+;^M - CR
+;^N - italics ("underline") off
+;^O - italics ("underline") on
+;^P - move cursor - 10h,20h+y,20h+x
+;^Q (reserved)
+;^R - insert line
+;^S (reserved)
+;^T - delete line
+;^U - scroll up
+;^V
+;^W - scroll down
+;^X - true video
+;^Y - reverse video
+;^Z - move right
+;^[ - prefix for codes listed next
+;^\
+;^] - move up
+;^^ (1eh) - home cursor without clearing screen
+;^_ (1fh) - clear to end of line
+
+;ESC (^[) prefixed VT52-style codes are:
+;(done solely to get Mallard Basic working)
+;ESC D	backspace (i.e. move back a char)
+;ESC C  forward char
+;ESC K  clear to eol
+
+
+
+;defs for xloc/yloc moved to main.z
+
+tmpb		equ tmpbop+1
+tmpcury:	defb 0
+tgetloc:	defb 0		;bytes left in cursor move op
+twasesc:	defb 0		;=1 if last char was ESC
+tcurdraw:	defb 1		;draw/undraw cursor?
+
+charloc:	defw 0f000h	;address of char on scrn, gen'd
+				; by loc2addr
+
+if IS_NC200
+numlines	equ 21
+nc200adj	equ 08000h	;(end of) screen is 8000h lower
+else
+numlines	equ 10
+nc200adj	equ 0
+endif
+
+
+;print char. in a (or move, etc.)
+tputchar:
+push af
+call loc2addr
+if IS_NC200
+ ld a,043h
+ call cardin
+endif
+call cursor
+pop af
+call grokchar
+call loc2addr
+if IS_NC200
+ call cursor
+ jp cardout
+else
+jp cursor
+endif
+
+
+;if it gets here, it's a normal character.
+;check against 0f7h.
+normchar:
+cp 0f7h
+jr nz,drwchar
+ld a,(real66)
+
+;falls through
+
+drwchar:
+ld l,a		;a is char to draw
+ld h,0
+add hl,hl
+ld d,h
+ld e,l
+add hl,hl
+add hl,de
+;now hl=char*6
+fontop: ld de,0
+add hl,de
+
+ld de,(charloc)
+
+;so de=screen addr, hl=addr of char. in font data
+ld b,6
+ld a,(xloc)
+rra		;put xloc%2 in carry
+ld c,0f0h	;keep high nibble from font byte
+jr nc,dcloop1
+
+ld c,0fh	;keep low nibble
+
+dcloop1:
+push hl
+
+;skip all the attrib-checking if (xattrs+1) is zero.
+xattrs: ld a,0	;the '0' is current attribs
+dec a
+jp m,dcskip0
+
+;fix attributes (font is in high 4 bits)
+inc a
+ld l,(hl)
+ld h,a		;h=(attrs)
+ld a,l		;get font byte
+ld l,b		;keep copy of b
+
+;attrs are bit 0 = reverse, 1 = italic ("underline"), 2 = bold
+
+rr h		;reverse
+jr nc,dcattr1
+
+cpl
+
+dcattr1:
+rr h		;underline/italic	(italic at the moment)
+jr nc,dcattr2
+
+;b=6 at the top line, so we shift 3-6 right one, and leave 1-2 alone.
+;it sounds wrong, but should look ok (maybe).
+
+;B BLASTED HERE
+dec b
+jr z,dcattr2
+dec b
+jr z,dcattr2
+dec b
+jr z,dcattr2
+rrca
+
+dcattr2:
+rr h		;bold
+jr nc,dcattr3
+
+;B BLASTED AGAIN HERE
+ld b,a
+rrca
+or b
+
+dcattr3:
+ld b,l		;restore b
+jr dcskip1
+
+dcskip0:
+ld a,(hl)	;get font byte if no attrs
+
+dcskip1:
+;choose correct nibble from font byte and write byte
+ex de,hl
+
+and c
+ld d,a
+ld a,c
+cpl
+and (hl)
+or d
+ld (hl),a
+
+ld de,64
+add hl,de
+ex de,hl
+pop hl
+
+inc hl
+djnz dcloop1
+
+skipchar:
+ld hl,xloc
+ld a,(hl)
+inc a
+cp 120
+jr nz,dcskip3
+
+inc hl
+ld a,(hl)	;yloc
+inc a
+cp numlines
+jr nz,dcskip4
+
+call scrlup
+ld a,numlines-1
+
+dcskip4:
+ld (hl),a	;yloc
+dec hl
+xor a
+
+dcskip3:
+ld (hl),a	;xloc
+tnop:		;the ret doubles as `tnop'
+ret
+
+
+groktbl:
+defw tnop	;^@ ignore NULs
+defw iclrscrn	;^A
+defw tctrlb	;^B
+defw tctrlc	;^C
+defw tctrld	;^D
+defw tctrle	;^E
+defw clr2eos	;^F
+defw visbell	;^G
+defw tbkspc	;^H
+defw dotab	;^I
+defw tctrlj	;^J
+defw normchar	;^K
+defw tnop	;^L
+defw tctrlm	;^M
+defw tctrln	;^N
+defw tctrlo	;^O
+defw curmov	;^P set cursor movement flag
+defw tnop	;^Q (ignored)
+defw tinsline	;^R
+defw tnop	;^S (ignored)
+defw tdelline	;^T
+defw scrlup	;^U
+defw normchar	;^V
+defw scrldn	;^W
+defw tctrlx	;^X
+defw tctrly	;^Y
+defw tright	;^Z
+defw doesc	;^[
+defw normchar	;^\
+defw tup	;^]
+defw thomecur	;^^
+defw clr2eol	;^_
+
+
+grokchar:
+ld (tmpb),a
+
+ld e,a
+;reset auto-poweroff timeout
+ld hl,(pwrofftm)
+ld (potimout),hl
+;pause while both ctrl and symbol (and no other shifts) are pressed.
+tpclp:
+ei
+ld a,(kstate)
+cp 24
+jr z,tpclp
+
+;output to serial if using aux for conout:
+ld a,(conout)
+cp auxout
+jp z,bauxout2	;put char in e to serial (but check for F7h).
+cp lstout
+call z,blstout2	;similar for printer (it's a call because we
+		; output to scrn as well)
+
+ld a,(tgetloc)
+and a
+jp nz,tcurgrok
+ld a,(twasesc)
+and a
+jp nz,tescgrok
+ld a,e
+
+cp 07fh
+jr z,tbkspc
+
+cp 32
+jp nc,normchar	;normal char if >=32
+
+;dereference pointer in groktbl and jump to routine
+ld h,0
+ld l,a
+add hl,hl
+ld de,groktbl
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+push hl
+ld hl,xattrs+1	;a few routines rely on this being in hl
+ret
+
+
+tbkspc:
+ld hl,xloc
+;rest of routine is same as for `tup' - i.e. decr position
+jr tupfin
+
+;move up
+;has no effect on top line
+tup:
+ld hl,yloc
+tupfin:
+ld a,(hl)
+dec a
+cp 0ffh
+ret z
+ld (hl),a
+ret
+
+;move right
+;has no effect when in last column
+tright:
+ld hl,xloc
+ld a,(hl)
+inc a
+cp 120
+ret z
+ld (hl),a
+ret
+
+;CR
+tctrlm:
+xor a
+ld (xloc),a
+ret
+
+;LF
+tctrlj:
+ld a,(yloc)
+inc a
+cp numlines
+jr nz,tctrlj1
+call scrlup
+ld a,numlines-1
+tctrlj1:
+ld (yloc),a
+ret
+
+;^X - reverse off
+tctrlx:
+res 0,(hl)
+ret
+
+;^Y - reverse on
+tctrly:
+set 0,(hl)
+ret
+
+;^O - underline on
+tctrlo:
+set 1,(hl)
+ret
+
+;^N - underline off
+tctrln:
+res 1,(hl)
+ret
+
+;^E - bold on
+tctrle:
+set 2,(hl)
+ret
+
+;^B - bold off
+tctrlb:
+res 2,(hl)
+ret
+
+;^^ - home cursor
+thomecur:
+ld hl,0
+ld (xloc),hl
+ret
+
+;^C - cursor on
+tctrlc:
+ld a,1
+tctrlc2:
+ld (tcurdraw),a
+ret
+
+;^D - cursor off
+tctrld:
+xor a
+jr tctrlc2
+
+
+doesc:
+ld a,1
+ld (twasesc),a
+ret
+
+
+tescgrok:
+tmpbop: ld a,0		;modified
+
+;any number of CRs received straight after Esc are ignored.
+;(this is to allow skipping of ccp's CR/LF by doing Esc before exiting)
+cp 13
+ret z
+ld hl,twasesc
+ld (hl),0
+;LF is ignored like CR, but it terminates the escape sequence.
+cp numlines
+ret z
+cp 'D'
+jp z,tbkspc
+cp 'C'
+jr nz,teg1
+
+ld hl,xloc
+ld a,(hl)
+cp 119
+ret z
+inc (hl)
+ret
+
+teg1:
+cp 'K'
+jp z,clr2eol
+
+;otherwise ignore it
+ret
+
+
+curmov:
+ld a,2	;2 chars left to get (for x,y pos)
+ld (tgetloc),a
+ret
+
+tcurgrok:
+ld hl,tgetloc
+dec (hl)
+jr z,cmhang2
+
+ld a,(tmpb)
+ld (tmpcury),a
+ret
+
+cmhang2:
+ld a,(tmpb)
+sub 32
+jr nc,cmh2a
+;it was less than 32 - assume the top bit was lost
+add a,32
+or 080h
+sub 32
+cmh2a:
+cp 120
+jr c,cmh3
+ld a,119
+cmh3:
+ld (xloc),a
+ld a,(tmpcury)
+sub 32
+;if they're still using an 'F'-based y pos, compensate for it
+;(isn't backward-compatibility fun? :-))
+cp 'F'-32
+jr c,cmh3a
+sub 'F'-32
+cmh3a:
+cp numlines
+jr c,cmh4
+ld a,numlines-1
+cmh4:
+ld (yloc),a
+ret
+
+;clrscrn is `public', so be careful on '200...
+clrscrn:
+if IS_NC200
+ld a,043h
+call cardin
+call iclrscrn
+jp cardout
+endif
+
+iclrscrn:
+push bc
+push de
+push hl
+if IS_NC200
+ld hl,06000h
+ld de,06001h
+ld bc,8187
+else
+ld hl,0f000h
+ld de,0f001h
+ld bc,4091
+endif
+ld (hl),l
+call fakeldir
+xor a
+ld (xloc),a
+ld (yloc),a
+ld (tgetloc),a
+ld (twasesc),a
+;this is also jumped to by other things below that (used to) end
+;'pop hl/pop de/pop bc/ret', so don't change it!
+pophldebcret:
+pop hl
+pop de
+pop bc
+ret
+
+scrlup:
+push bc
+push de
+push hl
+ld c,0
+
+if IS_NC200
+
+ld hl,06180h
+ld de,06000h
+;do 20*180h=1e00h worth
+ld a,01eh
+scrluplp:
+ld b,1
+ldir
+dec a
+jp nz,scrluplp
+
+else
+
+ld hl,0f200h
+ld de,0f080h
+;do 9*180h=0d80h worth
+ld a,0dh
+scrluplp:
+ld b,1
+ldir
+dec a
+jp nz,scrluplp
+ld c,080h
+ldir
+
+;the above replaced this:
+;ld bc,0d80h
+;call fakeldir
+endif
+
+ld hl,0fe00h-nc200adj
+scrlend:
+ld d,h
+ld e,l
+inc de
+ld bc,017fh
+ld (hl),0
+ldir
+jr pophldebcret
+
+
+scrldn:
+push bc
+push de
+push hl
+
+if IS_NC200
+ld hl,07dffh
+ld de,07f7fh
+ld bc,01e00h
+call fakelddr
+ld hl,06000h
+
+else
+
+ld hl,0fdffh
+ld de,0ff7fh
+ld bc,0d80h
+call fakelddr
+ld hl,0f080h
+endif
+
+jr scrlend
+
+
+curseit:
+push af
+call loc2addr
+if IS_NC200
+ ld a,043h
+ call cardin
+endif
+call cursor
+if IS_NC200
+ call cardout
+endif
+pop af
+ret
+
+
+loc2addr:
+ld de,(xloc)	;e=xloc, d=yloc
+ld a,d
+rlca
+ld hl,yaddrtbl
+add a,l	;this is valid - table is not split over a 256-byte boundary
+ld l,a
+ld a,(hl)
+inc l
+ld h,(hl)
+ld l,a
+
+ld d,0
+;e is still xloc, now div by 2
+;(carry flag was reset by that 'inc l')
+rr e
+add hl,de
+
+ld (charloc),hl
+ret
+
+
+cursor:
+ld a,(tcurdraw)
+and a
+ret z
+
+ld b,6
+ld e,64		;d is still 0
+
+ld hl,(charloc)
+
+ld a,(xloc)
+rra
+ld c,0fh
+jr c,ciloop1	;if 1, do the right-hand-side (low nibble) of the byte
+
+;otherwise, do high nibble
+ld c,0f0h
+
+ciloop1:
+ld a,(hl)
+xor c
+ld (hl),a
+add hl,de
+djnz ciloop1
+ret
+
+
+visbell:
+;if (realbeep), skip to next routine
+ld a,(realbeep)
+and a
+jr nz,realbell
+
+ld b,2
+
+vbxtlp:
+push bc
+if IS_NC200
+ ld hl,06000h
+ ld bc,8188
+else
+ld hl,0f000h
+ld bc,4092
+endif
+
+vbloop:
+ld a,(hl)
+cpl
+ld (hl),a
+inc hl
+dec bc
+ld a,b
+or c
+jp nz,vbloop
+
+pop bc
+djnz vbxtlp
+ret
+
+
+;weird little phasing beep
+;at least it's quite quiet
+realbell:
+ld hl,40
+ld e,20
+
+beeploop:
+ld a,l
+out (050h),a
+ld a,h
+out (051h),a
+ld a,e
+out (052h),a
+xor a
+out (053h),a
+
+call fakehalt
+
+inc hl
+inc hl
+dec e
+jr nz,beeploop
+
+;turn off sound
+ld a,080h
+out (051h),a
+out (053h),a
+ret
+
+
+dotab:
+ld a,(xloc)
+and 7
+ld b,a
+ld a,8
+sub b
+ld b,a
+
+dtabloop:
+push bc
+call skipchar
+pop bc
+djnz dtabloop
+ret
+
+
+;entry: a=yloc, base val 0
+;exit:  hl=addr of first byte on line
+;
+;XXX ummm, WTF does this exist? can't I just use yaddrtbl?
+;
+yloc2pos:
+;want (yloc)*64*6=(yloc)*256+(yloc)*128
+ld h,a
+ld l,0
+and a
+rr h
+rr l
+;hl=(yloc)*128
+ld d,a
+ld e,0
+;de=(yloc)*256
+add hl,de
+if IS_NC200
+ld de,06000h
+else
+ld de,0f080h
+endif
+add hl,de
+ret
+
+
+;delete line
+tdelline:
+;get hl=ptr to next line
+ld a,(yloc)
+cp numlines-1
+jr z,tdl1
+inc a
+call yloc2pos
+
+push hl		;move block from this value
+ex de,hl
+ld hl,0ff80h-nc200adj
+and a
+sbc hl,de
+push hl		;this many bytes
+
+ld a,(yloc)
+call yloc2pos
+ex de,hl	;de='to here'
+pop bc		;bc=num bytes
+pop hl		;hl='from here'
+
+call fakeldir
+
+tdl1:
+ld hl,0fe00h-nc200adj
+ld de,0fe01h-nc200adj
+ld bc,017fh
+ld (hl),l
+ldir
+ret
+
+
+;insert line
+tinsline:
+;get hl=ptr to next line
+ld a,(yloc)
+cp numlines-1
+jr z,til1
+inc a
+call yloc2pos
+
+ex de,hl
+ld hl,0ff80h-nc200adj
+and a
+sbc hl,de
+ld b,h
+ld c,l
+
+ld hl,0fdffh-nc200adj
+ld de,0ff7fh-nc200adj
+call fakelddr		;backwards
+
+til1:
+ld a,(yloc)
+call yloc2pos
+ld d,h
+ld e,l
+inc de
+ld bc,017fh
+ld (hl),0
+ldir
+ret
+
+
+;clear to eol
+clr2eol:
+;if odd (xloc), get rid of right-hand side of byte at cursor pos.
+ld a,(xloc)
+bit 0,a
+jr z,c2eskip1
+
+ld a,(yloc)
+call yloc2pos
+ld a,(xloc)
+and 0feh
+rrca
+ld e,a
+ld d,0
+add hl,de
+
+ld de,64
+ld b,6
+c2eloop1:
+ld a,(hl)
+and 0f0h
+ld (hl),a
+add hl,de
+djnz c2eloop1
+
+c2eskip1:
+ld a,(xloc)
+cp 119
+ret z		;if no more to do, stop now
+
+ld a,(xloc)
+push af
+inc a
+and 0feh
+ld (xloc),a
+
+;now do the rest of it more quickly
+ld a,(yloc)
+call yloc2pos
+ld a,(xloc)
+rrca
+ld e,a
+ld d,0
+add hl,de
+
+;hl=addr of byte at cursor
+
+ld a,(xloc)
+ld c,a
+ld a,120
+sub c
+rrca
+ld c,a		;c=num. bytes to clear per pixel line
+
+ld b,6
+c2eloop2:
+push hl
+push bc
+ld d,h
+ld e,l
+inc de
+ld b,0
+ld (hl),b
+dec c
+jr z,c2eskip2	;if there was only one to do, skip the ldir
+ldir
+c2eskip2:
+pop bc
+pop hl
+ld de,64
+add hl,de
+djnz c2eloop2
+
+pop af
+ld (xloc),a
+ret
+
+
+;clear all lines from current line to bottom, inclusive
+;just does clr2eol's as appropriate
+clr2eos:
+ld bc,(xloc)
+push bc
+xor a
+ld (xloc),a
+ld a,(yloc)
+c2eoslp:
+push af
+ld (yloc),a
+call clr2eol
+pop af
+inc a
+cp numlines
+jr nz,c2eoslp
+pop bc
+ld (xloc),bc
+ret
+
+
+
+;split up ldir into interruptible instructions, to avoid serial
+;interrupt latency at high speeds.
+;NB: ldir's of <256 bytes are best done with a real ldir, don't
+; call this for those.
+fakeldir:
+ldi
+jp pe,fakeldir
+ret
+
+;same for lddr
+fakelddr:
+ldd
+jp pe,fakelddr
+ret

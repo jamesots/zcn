@@ -1,0 +1,17 @@
+NAME
+	sys - make a drive bootable (install ZCN on it)
+
+SYNOPSIS
+	sys d:
+
+DESCRIPTION
+	Write ZCN system to a drive, making it bootable. (It's only
+	useful to do this for drive A:.) It non-destructively moves
+	existing drive contents up to make room if needed - if you get
+	`addblk..' messages, that's what's happening.
+
+	If you have sufficient disk space but `sys' fails, try running
+	`defrag' on the drive, then try `sys' again.
+
+SEE ALSO
+	unsys, defrag

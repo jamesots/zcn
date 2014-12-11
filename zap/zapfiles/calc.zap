@@ -1,0 +1,27 @@
+progname Calc
+progfile calc.com
+# no filetype
+bmphex 0ffffff0
+bmphex 08000150
+bmphex 095ffff8
+bmphex 0bfffff0
+bmphex 09fffff8
+bmphex 0b555570
+bmphex 0b800078
+bmphex 0b000070
+bmphex 0bfffff8
+bmphex 0bfffff0
+bmphex 0a318c78
+bmphex 0a108430
+bmphex 0ab5ad78
+bmphex 0bfffff0
+bmphex 0a318c78
+bmphex 0a108430
+bmphex 0ab5ad78
+bmphex 0bfffff0
+bmphex 0a318c78
+bmphex 0e108430
+bmphex 0ab5ad78
+bmphex 0ffffff0
+bmphex 0ffffff8
+bmphex 05555550

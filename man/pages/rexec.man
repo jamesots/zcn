@@ -1,0 +1,16 @@
+NAME
+	rexec - read a uuencoded file from the serial port
+
+SYNOPSIS
+	rexec filename
+
+DESCRIPTION
+	Rexec reads a uuencoded file from serial, and (when finished)
+	writes it to the specified file. It also leaves a copy in
+	memory at 100h, so even if no memory card is in the slot you
+	can do `rexec foo' then `!!' to run a .com file.
+
+BUGS
+	It won't work (will probably crash!) if files too big to fit
+	in memory are transferred (use `k3' to check available
+	memory).

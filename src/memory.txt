@@ -1,0 +1,36 @@
+ZCN v1.2 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+Copyright (C) 1994-1999 Russell Marks. See `zcn.txt' for license details.
+
+Allocated blocks of memory
+--------------------------
+
+This is a registration file for allocated blocks of memory. Don't
+depend on a non-relocatable (i.e. not in the source code) block of
+memory without describing it here.
+
+(This doesn't apply to using sections of the TPA from the internal
+commands in internal.z. They are effectively running as external
+commands, so that's not a problem.)
+
+[Try to keep the memory listed in order!]
+
+0000h-00ffh mostly as in CP/M (described more fully in zcn.txt)
+
+some internal commands temporarily use parts of the TPA.
+
+PCMCIA card memory is paged in at 4000h-7fffh when reading it.
+
+e600h-e700h used for IM2 jump table
+e700h       also used for jump table (while computer is on)
+e7e7h-e7e9h jump to interrupt handler (while computer is on)
+e700h-e7ffh used to store old contents of b300h-b3ffh by powrhndl.z
+e800h-e87fh 128-byte keyboard buffer
+e880h-e97fh 256-byte scratch area used by `find free block'
+             (note that this overwrites the ccp cmdline buffer!)
+e900h-e97fh 128-byte cmdline buffer used by ccp
+e980h-e9ffh 128-byte card read/write buffer (needed 'cos of paging)
+ea00h-eabfh internal stack used by bdos functions.
+eac0h-ecffh font data (`fontdata' set to ea00h, but nowt written there)
+ed00h-efffh 768-byte serial input buffer (while computer is on)
+ed00h-efffh used to store old contents of b000h-b2ffh by powrhndl.z
+f000h-ffffh used by screen

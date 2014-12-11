@@ -1,0 +1,717 @@
+;runrom - run ROM software nicely from ZCN
+
+org 0100h
+
+ld a,(066h)
+cp 0f7h
+ret nz		;needs ZCN
+
+
+;die if card isn't bootable
+di
+ld hl,066h
+ld (hl),0c9h
+
+ld a,080h
+out (011h),a
+ld a,(04000h)
+cp 18h
+ld a,041h
+out (011h),a
+
+ld (hl),0f7h
+ei
+jp z,start
+
+ld de,mnotboot
+ld c,bdprint
+jp bdos
+
+
+
+bdos		equ 5
+
+bdprint		equ 9
+bfopen		equ 15
+bfclose		equ 16
+bfdel		equ 19
+bfread		equ 20
+bfwrite		equ 21
+bfmake		equ 22
+bretdsk		equ 25
+bsetuser	equ 32
+bfsize		equ 35
+
+;zcn1 format boot block offsets (from ZCN's card.z)
+cf1jump1	equ 0
+cf1jump2	equ 1
+cf1magic	equ 2
+cf1size		equ 6
+cf1sysb		equ 8
+cf1dirb		equ 9
+cf1junk		equ 10
+cf1zero		equ 64
+cf1boot		equ 128
+cf1fnx		equ 512
+;our extras:
+;(this assumes cf1boot is 128 bytes max. (it's currently around 48),
+;and that cf1fnx is 256 bytes max. (my hack for elite assumes it's 128,
+;so this is no big deal :-))).
+cf1rrcode	equ 256		;up to 256 bytes - snapshot-making code
+cf1pairs	equ 768		;128 or 256 bytes - cardpage/addrh pairs
+
+
+snapfcb:
+defb 0,'RUNROM  RAM', 0,0,0,0
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0
+filesize:
+defb 0,0,0	;rand rec fields, needed for get size used in makefile routine
+
+
+mfailed:
+defb 'Error making snapshot file$'
+
+mro:
+defb 'Error finding snapshot (card read-only?)$'
+
+mnotboot:
+defb 'Card must be bootable$'
+
+
+;array of 64/128 cardpage/addrh pairs for data blocks in snap file
+datpairs  equ 01000h
+scrnpairs equ 0f800h	;where copy of above goes in scrn if needed
+
+srcdir	  equ 02000h	;where to load the dir blocks
+			;(low byte of addr must be zero)
+
+ndat: defb 0	;number of non-data blocks (boot+sys)
+curdrive: defb 0
+loadsnap: defb 0
+is_nc200: defb 0
+
+start:
+ld c,144
+call 5
+cpl
+ld (is_nc200),a
+
+call makefile	;make empty 64/128k file for snap (or use existing)
+call readdir	;read dir blocks
+call getblks	;find which 64/128 blocks were used for file
+
+;unplug ZCN
+di
+ld a,0c9h
+ld (066h),a
+
+call writecrd	;write stuff on memory card
+
+;remainder (load snap if needed, then start rom) runs on the screen.
+jp scrnbit
+
+
+makefile:
+ld a,1
+ld (loadsnap),a	;set if there is a pre-existing snap we should load
+
+;see if a suitably-sized snap file already exists.
+;first check for filename:
+ld de,snapfcb
+ld c,bfopen
+call bdos
+inc a
+jr z,makef2	;no file, create one instead
+
+;secondly check the size is exactly 64k (128k on NC200).
+ld de,snapfcb
+ld c,bfsize
+call bdos
+ld hl,(filesize)
+ld a,(is_nc200)
+and a
+ld de,512	;512 records for 64k
+jr z,makef1
+ld de,1024	;or 1024 for 128k
+makef1:
+and a
+sbc hl,de
+;ret if it's exactly right.
+ret z		
+;otherwise, make a new one (ZCN's bfmake will delete the existing file)
+
+makef2:
+;create a 64/128k file for the snap
+ld de,snapfcb
+ld c,bfmake
+call bdos
+inc a
+jr z,outerr
+
+;write 64k of zeroes to it
+ld hl,080h
+ld de,081h
+ld bc,07fh
+ld (hl),h
+ldir
+
+ld a,(is_nc200)
+and a
+ld bc,512	;64k
+jr z,zloop
+ld bc,1024	;128k
+zloop:
+push bc
+ld de,snapfcb
+ld c,bfwrite
+call bdos
+and a
+jr nz,outerr
+pop bc
+dec bc
+ld a,b
+or c
+jr nz,zloop
+
+xor a
+ld (loadsnap),a	;shouldn't load snap file
+ret
+
+
+
+outerr:
+;delete any partial file we may have created
+ld de,snapfcb
+ld c,bfdel
+call bdos
+
+ld de,mfailed
+ld c,bdprint
+call bdos
+jp 0
+
+
+
+
+
+
+;table used for transfers
+xfertbl:
+defb 0,0,0,0,0
+
+
+;read dir. blocks in at srcdir
+readdir:
+ld c,bretdsk
+call bdos
+ld (curdrive),a
+ld (xfertbl+2),a	;drive, 0=a:
+
+ld b,16		;2k, 16 rcds
+ld c,0
+ld hl,srcdir
+
+rdloop:
+push bc
+push hl
+
+ld a,c
+and 7
+ld (xfertbl+1),a	;rcd number
+ld a,c
+rrca
+rrca
+rrca
+and 1
+ld (xfertbl+0),a	;block number
+
+ld (xfertbl+3),hl	;transfer addr
+
+ld c,136
+ld de,xfertbl
+call bdos
+
+pop hl
+pop bc
+
+ld de,128
+add hl,de
+inc c
+djnz rdloop
+ret
+
+
+;work out which blocks are used by snap file, so we can read/write
+;it without needing ZCN.
+getblks:
+call getndat
+ld (ndat),a
+;need current user in (snapfcb), which is used for comparison
+ld e,0ffh
+ld c,bsetuser
+call bdos
+ld (snapfcb),a
+
+;zero it out, so we don't get junk in boot block on NC100 :-)
+;(need byte at offset 128 to be zero on '100 anyway, so may as well)
+ld hl,datpairs
+ld de,datpairs+1
+ld bc,256-1
+ld (hl),0
+ldir
+
+ld ix,datpairs
+ld a,0
+call gtb_part
+ld a,1
+call gtb_part
+ld a,2
+call gtb_part
+ld a,3
+call gtb_part
+
+ld a,(is_nc200)
+and a
+ret z
+ld a,4
+call gtb_part
+ld a,5
+call gtb_part
+ld a,6
+call gtb_part
+ld a,7
+call gtb_part
+ret
+
+
+;finds dir entry for part A of snap file and copies data block numbers
+;from there to ix, converting to card page/addr pairs as we go.
+;exit: ix points just past pairs written
+gtb_part:
+;first find the entry
+ld (snapfcb+12),a
+ld hl,srcdir
+
+gtbplp:
+push hl
+ld de,snapfcb
+ld bc,13	;compare user, name, and part number.
+call strncmp
+pop hl
+jr c,gtbmatch
+ld de,32
+add hl,de
+ld a,h
+cp srcdir/256+8		;8=2048/256 - assumes two dir blocks
+jr nz,gtbplp
+
+;couldn't find it!
+jr roerr
+
+gtbmatch:
+ld de,16
+add hl,de
+ld b,16
+gtbblklp:
+push bc
+push hl
+
+ld a,(ndat)
+add a,(hl)
+;a is absolute block number on drive.
+;now need to work out what this is in cardpage/addr terms.
+;well, clearly cardpage must be 0x80+(a>>4)+(curdrive<<4).
+ld b,a
+ld a,(curdrive)
+rlca
+rlca
+rlca
+rlca
+and 0f0h	;well, just in case :-)
+ld c,a
+ld a,b
+rrca
+rrca
+rrca
+rrca
+and 15
+or c
+or 080h
+ld (ix),a
+inc ix
+ld a,b
+;that leaves the bottom four bits as the addr, like so:
+; addr=0x4000+(a&15)*1024
+and 15
+ld h,a		;effectively *256
+ld l,0
+add hl,hl	;*512
+add hl,hl	;*1024
+ld de,04000h
+add hl,de
+ex de,hl
+;it's 1024-byte-aligned, so low byte is always zero, and we omit that
+ld (ix),d
+inc ix
+pop hl
+pop bc
+inc hl
+djnz gtbblklp
+ret
+
+
+roerr:
+;made file ok, but couldn't find dir entries.
+;only possible explanation is that card is read-only.
+ld de,mro
+ld c,bdprint
+call bdos
+jp 0
+
+
+
+;this from zcnlib:
+;compare bc bytes at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2, bc=num. to compare
+;exit:	c if they match, nc otherwise
+;af/bc/de/hl corrupt
+strncmp:
+ld a,(de)
+cp (hl)
+jr nz,strncmp2
+inc hl
+inc de
+dec bc
+ld a,b
+or c
+jr nz,strncmp
+;they matched ok
+scf
+ret
+
+strncmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+;ret number of non-data blocks (boot block + system blocks) in A
+getndat:
+ld a,(curdrive)
+ld (xfertbl),a	;drive, 0=a:
+ld hl,0
+ld (xfertbl+1),hl
+ld hl,080h	;where to read 128 bytes to
+ld (xfertbl+3),hl
+ld de,xfertbl
+ld c,138
+call bdos
+ld a,(080h+cf1sysb)
+inc a
+ret
+
+
+;write required stuff to card
+writecrd:
+;ZCN isn't running, so we do it by hand.
+
+;page in card
+ld a,080h
+out (011h),a
+
+;put jump in place
+ld a,0c3h
+ld (04066h),a
+ld hl,0c000h+cf1rrcode
+ld (04066h+1),hl
+
+;copy rrcode
+ld hl,rrcode
+ld de,04000h+cf1rrcode
+ld bc,rrcodeend-rrcode
+ldir
+
+;copy curpage/addr pairs
+ld hl,datpairs
+ld de,04000h+cf1pairs
+ld bc,256
+ldir
+
+;restore ram page
+ld a,041h
+out (011h),a
+ret
+
+
+;remainder of code is copied to card
+
+rrcode:
+
+;zmac insists on a hardcoded phase value, unfortunately;
+; no equ's allowed. :-/
+phase 0c100h		;c000h+cf1rrcode
+
+;this is run by function-x
+
+;here's how memory is setup now:
+;c000-ffff pcmcia page 0
+;8000-bfff ram2
+;4000-7fff ram1
+;0000-3fff pcmcia page 0 (ZCN did this - see cardboot.z)
+;first get ram back in slot 0 RIGHT NOW, as we'll be around long
+;enough for an NMI button-press to be possible:
+ld a,040h
+out (010h),a
+;we want the screen (in ram3) accessible, so we page it in at 8000h.
+ld a,043h
+out (012h),a
+
+di		;already done by ZCN, but can't hurt to be sure :-)
+xor a
+out (060h),a	;zero IRQ mask (not really needed, but might as well)
+ld hl,066h
+;save old (66h) in b, and effectively disable NMI
+ld b,(hl)
+ld (hl),0c9h
+
+;now save sp and old (66h) on screen.
+;these are the only bits apart from the memory itself that we need to
+;save, and since we don't really need the screen, this makes things
+;easier.
+ld (0b000h),sp	;screen memory will start at b000h, of course...
+ld sp,0c1feh	;have to have stack at end of cf1rrcode on card (!)
+ld a,b
+ld (0b002h),a
+
+;skip the snapshot save if both shifts are pressed
+in a,(0b0h)
+cpl
+and 3
+jr z,skipsave
+
+;ok then, now the tough bit. we need to save the entire 64/128k as a
+;perfectly normal ZCN file. this is much easier than it appears
+;because `runrom' created a 64/128k file for us to store it in,
+;and set up a list of 64/128 mempage/offset pairs indicating where
+;each block is.
+;the slot used for paging ram is 8000h;
+;the one for the memory card is 4000h (as in ZCN).
+
+ld ix,0c000h+cf1pairs
+ld a,040h
+call snappage
+ld a,041h
+call snappage
+ld a,042h
+call snappage
+ld a,043h
+call snappage
+ld a,(ix)
+and a
+jr z,skipsave
+;do the additional NC200 pages
+ld a,044h
+call snappage
+ld a,045h
+call snappage
+ld a,046h
+call snappage
+ld a,047h
+call snappage
+
+skipsave:
+;ok, snapshot is done. now fix the boot block back to normal.
+;since there's no need to wipe the bits of the boot block we used,
+;we don't; however, we *do* need to zero the bytes we changed
+;at 66h in the boot block.
+xor a
+ld (0c066h),a
+ld h,a
+ld l,a
+ld (0c067h),hl
+
+;put stuff where ZCN boot proper will expect it
+ld a,042h
+out (012h),a
+dec a
+out (011h),a
+ld a,080h
+out (010h),a
+;its first action is to fix the stack and c000h mem slot, so no need
+;to worry about fixing those.
+
+;that's it then, go for it!
+jp 066h
+
+
+snappage:
+out (012h),a
+ld hl,08000h
+ld b,16
+snaplp:
+ld a,(ix)
+out (011h),a
+inc ix
+ld a,b
+ld e,0
+ld d,(ix)
+inc ix
+ld bc,1024
+ldir
+ld b,a
+djnz snaplp
+ret
+
+
+dephase
+
+rrcodeend:
+
+
+;start running on the screen
+scrnbit:
+;will need to switch first on NC200; harmless on '100
+ld a,043h
+out (013h),a
+
+ld hl,copyfrom
+ld de,carryon
+ld bc,1024	;should just about cover it :-)
+ldir
+jp carryon
+
+copyfrom:
+phase 0f400h	;need to skip first 1k of the scren
+
+carryon:
+ld sp,0
+
+;make very sure ram's in place
+ld a,040h
+out (010h),a
+inc a
+out (011h),a
+inc a
+out (012h),a
+
+ld a,(loadsnap)
+and a
+;if we're loading a snap, things are more complicated.
+jr nz,dosnap
+
+ld a,(datpairs+128)	;this is zero if NC100
+and a
+jr z,blank1
+
+;on NC200, blank the extra 64k too.
+ld a,044h
+nc2blp:
+out (011h),a
+ld hl,04000h
+ld de,04001h
+ld bc,03fffh
+ld (hl),l
+ldir
+inc a
+cp 048h
+jr nz,nc2blp
+ld a,041h
+out (011h),a
+
+blank1:
+;zero memory (apart from screen :-)) and start the ROM
+ld hl,0
+ld de,1
+ld bc,0efffh
+ld (hl),l
+ldir
+
+;the rom wants rom paged in, curiously enough :-)
+xor a
+out (010h),a
+out (011h),a
+out (012h),a
+jp 0
+
+
+dosnap:
+;make copy of pairs table on screen
+ld hl,datpairs
+ld de,scrnpairs
+ld bc,256
+ldir
+
+;load everything except screen
+ld ix,scrnpairs
+ld a,040h
+ld b,16
+call loadpage
+ld a,041h
+ld b,16
+call loadpage
+ld a,042h
+ld b,16
+call loadpage
+ld a,043h
+ld b,13		;skip last 3k
+call loadpage
+ld ix,scrnpairs+128
+ld a,(ix)
+and a
+jr z,fixmem
+;fix irq mask setting later
+ld a,01ch
+ld (irqmaskop+1),a
+;do the additional NC200 pages
+ld a,044h
+ld b,16
+call loadpage
+ld a,045h
+ld b,16
+call loadpage
+ld a,046h
+ld b,16
+call loadpage
+ld a,047h
+ld b,16
+call loadpage
+
+fixmem:
+;fix mem slots
+ld a,041h
+out (011h),a
+inc a
+out (012h),a
+
+;ram loaded - set stuff needed, and return to rom
+ld sp,(0f000h)
+ld a,(0f002h)
+ld (066h),a
+irqmaskop: ld a,0fh	;modified on NC200
+out (060h),a
+im 1
+ei
+ret
+
+
+loadpage:
+out (012h),a
+ld de,08000h
+snaplp2:
+push bc
+ld a,(ix)
+out (011h),a
+inc ix
+ld c,0
+ld b,(ix)
+inc ix
+ld h,b
+ld l,c
+ld bc,1024
+ldir
+pop bc
+djnz snaplp2
+ret
+

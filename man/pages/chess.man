@@ -1,0 +1,24 @@
+NAME
+	chess - play chess against the computer
+
+SYNOPSIS
+	chess
+
+DESCRIPTION
+	A chess program. I doubt it'll offer much of a challenge to
+	any competent player, since even I (RJM) can sometimes beat
+	it. :-)
+
+	When the program starts, you're given the option to play at
+	level 0 or 1. Level 0 is the faster/easier of the two.
+
+	This modified version redraws the board before prompting you
+	for a move (unfortunately this means you get it even if you
+	make an invalid move etc., and the computer's move scrolls off
+	the screen soon after it makes the move), and also made it
+	take moves in lowercase, though to castle you must use `O-O'
+	(for king-side) and `O-OO' (for queen-side) and to propose a
+	draw you must use `DRAW'. To quit a game prematurely, use ^C.
+
+AUTHOR
+	Jim Mills

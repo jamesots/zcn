@@ -1,0 +1,13 @@
+NAME
+	era - erase file(s)
+
+SYNOPSIS
+	era filespec
+
+DESCRIPTION
+	Delete any files matching filespec. `era' can be invoked with
+	`rm' if you prefer.
+
+BUGS
+	Does not prompt when deleting multiple files, unlike CP/M
+	`era'.

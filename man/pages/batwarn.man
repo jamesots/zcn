@@ -1,0 +1,10 @@
+NAME
+	batwarn - disable/enable battery level warnings
+
+SYNOPSIS
+	batwarn [0|1]
+
+DESCRIPTION
+	Turn off (0) or on (1) warnings about battery levels. Useful
+	when batteries are running low but you want to carry on
+	without being moaned at about it all the time.

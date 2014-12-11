@@ -1,0 +1,11 @@
+NAME
+	poke - set a byte to a value
+
+SYNOPSIS
+	poke hex_address hex_value
+
+DESCRIPTION
+	Set the byte at the address to a given value.
+
+SEE ALSO
+	memdump

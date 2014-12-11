@@ -1,0 +1,14 @@
+NAME
+	note - type text into a file
+
+SYNOPSIS
+	note filename
+
+DESCRIPTION
+	This internal command lets you type text into a file. (Any
+	existing file will be overwritten.) You just keep typing text
+	until you're done, then type in a line consisting solely of a
+	single `.' (full stop).
+
+SEE ALSO
+	vde, type, more

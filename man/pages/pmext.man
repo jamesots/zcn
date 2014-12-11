@@ -1,0 +1,87 @@
+NAME
+	pmext - list or extract/view/run files from a .PMA or .LZH archive
+
+SYNOPSIS
+	pmext archive [[device:]filename[=new_filename][/abcilmnqw/p<n>]]
+
+DESCRIPTION
+	Pmext can list or extract/view/run files from .PMA or .LZH
+	files. (.PMA files can be created by pmarc.)
+
+OPTIONS
+	archive		name of the archive file to list or extract,
+			etc. (Can be a wildcard.) If no extension is
+			specified, `.pma' is assumed.
+
+	device:		either a drive, or a device supported by
+			pmext. The latter are:
+
+			lst:	printer (with formfeeds at /p<n> intervals)
+			pun:	on ZCN, serial port
+			con:	console - viewed with a surprisingly
+				good little file viewer if /p was set
+				with `pmset' (this is the case for
+				ZCN's preconfigured `pmext.com'), see
+				the `VIEWER KEYS' section below for more
+			exe:	if there's enough memory, decompresses
+				the .COM file and runs it (with
+				any specified command-line); the
+				default extension for files extracted
+				with `exe:' is .COM.
+
+	filename	file or wildcard to extract from archive.
+			(Unlike `pmarc', pmext allows only one
+			filename or wildcard to be specified.)
+
+	new_filename	write the extracted file with the specified
+			name.
+
+	/a		extract with attribute. No effect on ZCN.
+
+	/b		specify that a file to be added is binary
+			(this is the default; I'm not sure what use
+			`/b' is meant to be...)
+
+	/c		don't extract, just check CRC (i.e. check
+			file(s) in archive are intact).
+
+	/i		print names of files even if they don't match
+			the filespec.
+
+	/l		list matching members rather than extracting.
+			This also happens if pmext is used as simply
+			`pmext archive'.
+
+	/m		don't display memos (didn't seem to work when
+			I tried it...!)
+
+	/n		don't display the hex counter when extracting
+			files.
+
+	/p<n>		change number of lines per page (for lst:
+			output) to n, e.g. `/p66'.
+
+	/q		prompt before doing anything.
+
+	/w		overwrite existing files without prompting.
+
+EXAMPLES
+	Run pmext as plain `pmext' for some good example uses, though
+	they do seem somewhat obsessed with the archive name `save'. :-)
+
+VIEWER KEYS
+	The keys used to navigate a text file when extracting to
+	`con:' with paged output are:
+
+	Space	display next screenful.
+	B	back one screenful (can only go back a fairly short way)
+	Enter	clear screen and display next screenful.
+	X	show one line at a time.
+	A	abort displaying the file.
+	Q	quit pmext.
+
+AUTHOR
+	Yoshihiko Mino
+
+SEE ALSO
+	pmarc

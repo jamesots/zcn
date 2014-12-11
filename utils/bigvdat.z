@@ -1,0 +1,720 @@
+font1dat:
+
+;data for each char is ox oy w h dwidth, then data
+
+;` '
+defb 0,0,1,1,3
+defb 0
+
+;`!'
+defb 1,0,1,8,3
+defb 253
+
+;`"'
+defb 1,6,3,2,4
+defb 180
+
+;`#'
+defb 0,0,6,7,6
+defb 40
+defb 167
+defb 202
+defb 249
+defb 69
+defb 0
+
+;`$'
+defb 0,-1,5,9,6
+defb 35
+defb 171
+defb 71
+defb 22
+defb 174
+defb 32
+
+;`%'
+defb 0,0,8,8,9
+defb 100
+defb 148
+defb 104
+defb 8
+defb 16
+defb 22
+defb 41
+defb 38
+
+;`&'
+defb 1,0,6,8,8
+defb 33
+defb 69
+defb 24
+defb 166
+defb 105
+defb 153
+
+;`''
+defb 1,5,2,3,3
+defb 88
+
+;`('
+defb 0,-2,3,10,4
+defb 41
+defb 73
+defb 34
+defb 68
+
+;`)'
+defb 1,-2,3,10,4
+defb 137
+defb 18
+defb 74
+defb 80
+
+;`*'
+defb 0,5,3,3,4
+defb 170
+defb 128
+
+;`+'
+defb 0,1,5,5,6
+defb 33
+defb 62
+defb 66
+defb 0
+
+;`,'
+defb 0,-2,2,3,3
+defb 88
+
+;`-'
+defb 1,3,5,1,7
+defb 248
+
+;`.'
+defb 1,0,1,1,3
+defb 128
+
+;`/'
+defb 0,0,3,8,3
+defb 37
+defb 36
+defb 164
+
+;`0'
+defb 0,0,5,8,6
+defb 116
+defb 99
+defb 24
+defb 198
+defb 46
+
+;`1'
+defb 1,0,2,8,6
+defb 117
+defb 85
+
+;`2'
+defb 0,0,5,8,6
+defb 116
+defb 66
+defb 19
+defb 34
+defb 31
+
+;`3'
+defb 0,0,5,8,6
+defb 116
+defb 66
+defb 96
+defb 134
+defb 46
+
+;`4'
+defb 0,0,5,8,6
+defb 17
+defb 148
+defb 169
+defb 124
+defb 66
+
+;`5'
+defb 0,0,5,8,6
+defb 252
+defb 33
+defb 224
+defb 134
+defb 46
+
+;`6'
+defb 0,0,5,8,6
+defb 116
+defb 97
+defb 108
+defb 198
+defb 46
+
+;`7'
+defb 0,0,5,8,6
+defb 248
+defb 68
+defb 34
+defb 17
+defb 8
+
+;`8'
+defb 0,0,5,8,6
+defb 116
+defb 98
+defb 232
+defb 198
+defb 46
+
+;`9'
+defb 0,0,5,8,6
+defb 116
+defb 99
+defb 54
+defb 134
+defb 46
+
+;`:'
+defb 1,0,1,6,3
+defb 132
+
+;`;'
+defb 0,-2,2,8,3
+defb 64
+defb 22
+
+;`<'
+defb 1,1,3,5,6
+defb 42
+defb 34
+
+;`='
+defb 0,2,4,3,5
+defb 240
+defb 240
+
+;`>'
+defb 1,1,3,5,6
+defb 136
+defb 168
+
+;`?'
+defb 1,0,4,8,6
+defb 105
+defb 18
+defb 68
+defb 4
+
+;`@'
+defb 0,-2,10,10,11
+defb 31
+defb 8
+defb 36
+defb 214
+defb 73
+defb 162
+defb 105
+defb 42
+defb 74
+defb 108
+defb 64
+defb 15
+defb 128
+
+;`A'
+defb 0,0,7,8,7
+defb 16
+defb 32
+defb 161
+defb 68
+defb 79
+defb 160
+defb 193
+
+;`B'
+defb 1,0,5,8,7
+defb 244
+defb 99
+defb 232
+defb 198
+defb 62
+
+;`C'
+defb 1,0,6,8,8
+defb 122
+defb 24
+defb 32
+defb 130
+defb 8
+defb 94
+
+;`D'
+defb 1,0,6,8,8
+defb 242
+defb 40
+defb 97
+defb 134
+defb 24
+defb 188
+
+;`E'
+defb 1,0,5,8,7
+defb 252
+defb 33
+defb 248
+defb 66
+defb 31
+
+;`F'
+defb 1,0,5,8,6
+defb 252
+defb 33
+defb 232
+defb 66
+defb 16
+
+;`G'
+defb 1,0,6,8,8
+defb 122
+defb 24
+defb 32
+defb 142
+defb 24
+defb 221
+
+;`H'
+defb 1,0,6,8,8
+defb 134
+defb 24
+defb 127
+defb 134
+defb 24
+defb 97
+
+;`I'
+defb 1,0,1,8,3
+defb 255
+
+;`J'
+defb 0,0,4,8,5
+defb 17
+defb 17
+defb 17
+defb 150
+
+;`K'
+defb 1,0,5,8,7
+defb 140
+defb 169
+defb 201
+defb 74
+defb 49
+
+;`L'
+defb 1,0,4,8,6
+defb 136
+defb 136
+defb 136
+defb 143
+
+;`M'
+defb 1,0,7,8,9
+defb 131
+defb 143
+defb 29
+defb 90
+defb 178
+defb 100
+defb 201
+
+;`N'
+defb 1,0,6,8,8
+defb 199
+defb 26
+defb 105
+defb 150
+defb 88
+defb 227
+
+;`O'
+defb 1,0,6,8,8
+defb 122
+defb 24
+defb 97
+defb 134
+defb 24
+defb 94
+
+;`P'
+defb 1,0,5,8,7
+defb 244
+defb 99
+defb 232
+defb 66
+defb 16
+
+;`Q'
+defb 1,-1,7,9,8
+defb 121
+defb 10
+defb 20
+defb 40
+defb 82
+defb 163
+defb 62
+defb 2
+
+;`R'
+defb 1,0,5,8,7
+defb 244
+defb 99
+defb 232
+defb 198
+defb 49
+
+;`S'
+defb 1,0,5,8,7
+defb 116
+defb 96
+defb 224
+defb 198
+defb 46
+
+;`T'
+defb 0,0,5,8,5
+defb 249
+defb 8
+defb 66
+defb 16
+defb 132
+
+;`U'
+defb 1,0,6,8,8
+defb 134
+defb 24
+defb 97
+defb 134
+defb 24
+defb 94
+
+;`V'
+defb 0,0,7,8,7
+defb 131
+defb 5
+defb 18
+defb 36
+defb 69
+defb 10
+defb 8
+
+;`W'
+defb 0,0,9,8,9
+defb 136
+defb 196
+defb 82
+defb 73
+defb 37
+defb 81
+defb 16
+defb 136
+defb 68
+
+;`X'
+defb 1,0,5,8,7
+defb 140
+defb 84
+defb 69
+defb 42
+defb 49
+
+;`Y'
+defb 0,0,7,8,7
+defb 130
+defb 137
+defb 17
+defb 66
+defb 130
+defb 4
+defb 8
+
+;`Z'
+defb 1,0,5,8,7
+defb 248
+defb 68
+defb 66
+defb 34
+defb 31
+
+;`['
+defb 1,-2,2,10,3
+defb 234
+defb 170
+defb 176
+
+;`\'
+defb 0,0,3,8,3
+defb 145
+defb 36
+defb 137
+
+;`]'
+defb 0,-2,2,10,3
+defb 213
+defb 85
+defb 112
+
+;`^'
+defb 0,3,5,5,6
+defb 33
+defb 20
+defb 168
+defb 128
+
+;`_'
+defb 0,-2,6,1,6
+defb 252
+
+;``'
+defb 0,5,2,3,3
+defb 104
+
+;`a'
+defb 0,0,5,6,5
+defb 224
+defb 157
+defb 41
+defb 52
+
+;`b'
+defb 0,0,5,8,6
+defb 132
+defb 45
+defb 152
+defb 199
+defb 54
+
+;`c'
+defb 0,0,4,6,5
+defb 105
+defb 136
+defb 150
+
+;`d'
+defb 0,0,5,8,6
+defb 8
+defb 91
+defb 56
+defb 198
+defb 109
+
+;`e'
+defb 0,0,4,6,5
+defb 105
+defb 248
+defb 150
+
+;`f'
+defb 0,0,4,8,4
+defb 52
+defb 228
+defb 68
+defb 68
+
+;`g'
+defb 0,-2,5,8,6
+defb 108
+defb 227
+defb 25
+defb 180
+defb 46
+
+;`h'
+defb 0,0,5,8,6
+defb 132
+defb 45
+defb 152
+defb 198
+defb 49
+
+;`i'
+defb 0,0,1,8,2
+defb 191
+
+;`j'
+defb 0,-1,1,9,2
+defb 191
+defb 128
+
+;`k'
+defb 0,0,4,8,5
+defb 136
+defb 154
+defb 202
+defb 153
+
+;`l'
+defb 0,0,1,8,2
+defb 255
+
+;`m'
+defb 0,0,7,6,8
+defb 237
+defb 38
+defb 76
+defb 153
+defb 50
+defb 64
+
+;`n'
+defb 0,0,5,6,6
+defb 182
+defb 99
+defb 24
+defb 196
+
+;`o'
+defb 0,0,5,6,6
+defb 116
+defb 99
+defb 24
+defb 184
+
+;`p'
+defb 0,-2,5,8,6
+defb 182
+defb 99
+defb 28
+defb 218
+defb 16
+
+;`q'
+defb 0,-2,5,8,6
+defb 108
+defb 227
+defb 25
+defb 180
+defb 33
+
+;`r'
+defb 0,0,3,6,4
+defb 186
+defb 73
+defb 0
+
+;`s'
+defb 0,0,4,6,5
+defb 105
+defb 97
+defb 150
+
+;`t'
+defb 0,0,3,8,4
+defb 75
+defb 164
+defb 147
+
+;`u'
+defb 0,0,4,6,5
+defb 153
+defb 153
+defb 151
+
+;`v'
+defb 0,0,5,6,6
+defb 140
+defb 84
+defb 162
+defb 16
+
+;`w'
+defb 0,0,7,6,8
+defb 147
+defb 37
+defb 82
+defb 162
+defb 133
+defb 0
+
+;`x'
+defb 0,0,5,6,6
+defb 138
+defb 136
+defb 168
+defb 196
+
+;`y'
+defb 0,-2,4,8,5
+defb 153
+defb 170
+defb 100
+defb 72
+
+;`z'
+defb 0,0,4,6,5
+defb 241
+defb 36
+defb 143
+
+;`{'
+defb 0,-2,3,10,3
+defb 41
+defb 40
+defb 146
+defb 68
+
+;`|'
+defb 1,-2,1,10,3
+defb 255
+defb 192
+
+;`}'
+defb 0,-2,3,10,3
+defb 137
+defb 34
+defb 146
+defb 80
+
+;`~'
+defb 0,3,6,2,7
+defb 102
+defb 96
+
+
+
+font1tbl:
+defw font1dat+0,font1dat+6,font1dat+12,font1dat+18
+defw font1dat+29,font1dat+40,font1dat+53,font1dat+64
+defw font1dat+70,font1dat+79,font1dat+88,font1dat+95
+defw font1dat+104,font1dat+110,font1dat+116,font1dat+122
+defw font1dat+130,font1dat+140,font1dat+147,font1dat+157
+defw font1dat+167,font1dat+177,font1dat+187,font1dat+197
+defw font1dat+207,font1dat+217,font1dat+227,font1dat+233
+defw font1dat+240,font1dat+247,font1dat+254,font1dat+261
+defw font1dat+270,font1dat+288,font1dat+300,font1dat+310
+defw font1dat+321,font1dat+332,font1dat+342,font1dat+352
+defw font1dat+363,font1dat+374,font1dat+380,font1dat+389
+defw font1dat+399,font1dat+408,font1dat+420,font1dat+431
+defw font1dat+442,font1dat+452,font1dat+465,font1dat+475
+defw font1dat+485,font1dat+495,font1dat+506,font1dat+518
+defw font1dat+532,font1dat+542,font1dat+554,font1dat+564
+defw font1dat+572,font1dat+580,font1dat+588,font1dat+597
+defw font1dat+603,font1dat+609,font1dat+618,font1dat+628
+defw font1dat+636,font1dat+646,font1dat+654,font1dat+663
+defw font1dat+673,font1dat+683,font1dat+689,font1dat+696
+defw font1dat+705,font1dat+711,font1dat+722,font1dat+731
+defw font1dat+740,font1dat+750,font1dat+760,font1dat+768
+defw font1dat+776,font1dat+784,font1dat+792,font1dat+801
+defw font1dat+812,font1dat+821,font1dat+830,font1dat+838
+defw font1dat+847,font1dat+854,font1dat+863
+
+;main table with addrs etc.
+font1addr:
+defw font1dat,font1tbl
+defb 3	;yofs
+defb 13	;fh
+defb -2	;oy
+
+

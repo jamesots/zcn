@@ -1,0 +1,399 @@
+;zrx - a simple xmodem receive program
+;usage: zrx filename
+
+;does no output during transmission - designed for use from
+; a serial console, which qterm isn't suitable for.
+
+;a minimal implementation derived from getsnapx via zfst
+
+org 0100h
+
+
+jp start
+
+;addr of 131-byte packet receive buffer
+blockbuf equ 0e00h
+
+;addr of 8k receive buffer
+bigbuf	equ 01000h
+
+;config
+max_retry equ 10
+
+msg_soh equ 1
+msg_nak equ 015h
+msg_ack equ 6
+msg_eot equ 4
+msg_can equ 018h
+
+retries: defb 0
+seqnum: defb 1
+oldsp: defw 0
+
+pktnum: defw 0
+pkterr: defw 0
+fileopen: defb 0
+
+
+fclose:
+ld a,(fileopen)
+and a
+ret z
+
+;close the file
+ld de,05ch
+ld c,16
+call 5
+ret
+
+
+;error exit
+stop:
+call fclose
+
+;delete (partial) file
+ld de,05ch
+ld c,19
+call 5
+
+ld sp,(oldsp)
+and a		;clear c flag
+ret
+
+
+start:
+ld a,(05dh)
+cp 32
+ret z		;abort if no filename
+
+xmdmget:
+ld (oldsp),sp
+
+ld a,1
+ld (seqnum),a
+ld hl,1
+ld (pktnum),hl
+dec l
+ld (pkterr),hl
+xor a
+ld (retries),a
+ld (fileopen),a
+
+;create the file
+ld de,05ch
+ld c,22
+call 5
+
+;XXX if failed should give an error here and can-can the transfer
+
+ld a,1
+ld (fileopen),a
+
+;empty serial input buffer
+emptylp:
+call recv
+jr c,emptylp
+
+ld de,bigbuf
+push de
+
+xrlp0:
+ld a,msg_nak
+call putbyte
+
+ld b,250
+xrlp1:
+halt
+halt
+push bc
+call recv	;watch out - this screws the registers
+pop bc
+jr c,xrready
+djnz xrlp1
+jr xrlp0
+
+xrready:
+pop de
+ld c,a
+
+xrloop:
+ld a,(retries)
+cp max_retry
+jr nz,xr1
+
+ld a,msg_can
+call putbyte
+jp stop
+
+xr1:
+ld a,c
+cp msg_soh
+jr nz,xr2
+
+xr1a:
+;read the block
+call blockrd
+jp xrnext
+
+xr2:
+cp msg_eot	;no more to receive
+jr nz,xr3
+
+;ack the eot
+ld a,msg_ack
+call putbyte
+
+call writebuf	;write anything left in the buffer
+call fclose	;close file
+
+scf		;carry set - i.e. it worked
+ret		;success!
+
+xr3:
+cp msg_can	;cancel
+jp z,stop	;stop xfer now
+
+;for all others, something messed up.
+;just get another byte.
+
+xrnext:
+call getbyte
+ld c,a
+jp xrloop
+
+
+blockrd:
+xor a
+ld (retries),a
+
+;read the block
+ld b,131
+ld hl,blockbuf
+push hl
+blkloop:
+call getbyte
+ld (hl),a
+inc hl
+djnz blkloop
+
+;check sequence is correct
+;this is a bit hairy
+pop hl	;= blockbuf
+ld b,(hl)
+ld a,(seqnum)
+cp b
+jr z,blkrpt
+
+;  i=(seq_num-1) mod 256
+;  if(block[0]!=i)
+dec a
+cp b
+jr z,blk2
+
+;    if(block[1]!=(255-seq_num))
+inc hl
+ld b,(hl)
+ld a,(seqnum)
+ld c,a
+ld a,255
+sub c
+cp b
+jr z,blk2
+
+;      i=255-i;
+ld a,(seqnum)
+dec a
+ld c,a
+ld a,255
+sub c
+;      if(block[1]==i)
+;(b is still block[1])
+cp b
+jr z,blk1
+;        send NAK
+;        retries++
+;        ret
+ld a,msg_nak
+call putbyte
+ld hl,retries
+inc (hl)
+ret
+
+blk1:
+;      send CANCEL
+;      stop
+ld a,msg_can
+call putbyte
+jp stop
+
+blk2:
+;  retries++
+;  ret
+ld hl,(retries)
+inc (hl)
+ret
+
+blkrpt:
+;if(block[1]!=(255-seq_num))
+ld hl,blockbuf+1
+ld a,(seqnum)
+ld c,a
+ld a,255
+sub c
+ld c,a
+ld a,(hl)
+cp c
+jr z,blk3
+
+;  send NAK
+;  retries++
+;  ret
+ld a,msg_nak
+call putbyte
+ld hl,retries
+inc (hl)
+ret
+
+blk3:
+;calc checksum (mod 256) like this:
+;	xsum = 0;
+;	for (i = 0, p = &block[2]; i < 128; i++) xsum += (*p++ & 0xff);
+;	xsum &= 0xff;
+;(in other words, it's literally just a checksum mod 256 of the data)
+;hl currently = blockbuf+1
+ld b,128
+xor a
+blklp2:
+inc hl
+add a,(hl)
+djnz blklp2
+
+;if(block[130]!=xsum)
+inc hl
+cp (hl)
+jr z,blk4
+
+;  send NAK
+;  retries++
+;  ret
+ld a,msg_nak
+call putbyte
+ld hl,retries
+inc (hl)
+ret
+
+blk4:
+;put the 128 bytes of data wherever
+ld hl,blockbuf+2
+ld bc,128
+ldir
+
+;retries=0
+xor a
+ld (retries),a
+;seq_num++ (mod 256)
+ld hl,seqnum
+inc (hl)
+
+ld hl,(pktnum)
+inc hl
+ld (pktnum),hl
+
+ld a,(seqnum)
+;8192/128=64, so every 64 packets we need to write out the buffer.
+;this happens when the next seqnum to be read is 1/65/129/193.
+and 63
+dec a
+call z,writebuf		;write buffer and reset de
+;send ACK
+ld a,msg_ack
+call putbyte
+ret
+
+
+;exit: a=byte read
+;XXX should auto-interrupt after 10 sec or whatever
+;very XXX! it needs to stop by sending CAN and waiting for CAN back, or
+;whatever...
+getbyte:
+push hl
+push de
+push bc
+ld c,3
+call 5
+pop bc
+pop de
+pop hl
+ret
+
+
+;entry: a=byte to put
+putbyte:
+push hl
+push de
+push bc
+ld e,a
+ld c,4
+call 5
+pop bc
+pop de
+pop hl
+ret
+
+
+
+;write buffer and update de (if needed)
+;entry:	de=byte after last byte used in buffer
+;exit:	de=next byte to use in buffer
+;af/bc/hl corrupt
+writebuf:
+ld h,d
+ld l,e
+ld bc,bigbuf
+and a
+sbc hl,bc
+ret z		;don't bother if the buffer's empty
+
+;otherwise there *is* something to write, and it's hl bytes long.
+;it'll be a multiple of 128, of course.
+rl l
+rl h
+ld b,h
+ld hl,bigbuf
+writelp:
+push bc
+push hl
+
+;set dma
+ex de,hl
+ld c,26
+call 5
+
+;write record
+ld de,05ch
+ld c,21
+call 5
+
+;XXX want some error checking here
+
+pop hl
+ld de,128
+add hl,de
+pop bc
+djnz writelp
+
+ld de,bigbuf	;reset next-free-byte pointer
+ret
+
+
+recv:
+;if serial char waiting, get into a, else nc
+ld c,7
+call 5
+rra
+ret nc
+;get the char
+ld c,3
+call 5
+scf
+ret

@@ -1,0 +1,1878 @@
+;zcnpaint
+;zcnpaint.z - main program
+;XXX patsel (selects a pattern) barely started
+
+org 0100h
+
+jp start
+
+;config
+;unused for now, but will be for patches if anything should be
+;configurable in future. Really, I'd like to keep any config stuff
+;in some rc file if possible. But... just in case... :-)
+
+defb 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0
+
+defb 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0
+
+;end of config
+
+
+oldmx: defw 0
+oldmy: defw 0
+mx: defw 0
+my: defw 0
+prevbut: defb 0
+
+
+;mouse event context - clicking, dragging etc.
+
+md_none		equ 0	;nothing
+md_start	equ 1	;started clicking/dragging (button down)
+md_drag		equ 2	;button down, dragging or 'unclicked' yet
+md_end		equ 3	;ended clicking/dragging (button up)
+
+
+mode: defb md_none
+modeox: defw 0		;the (x,y) pos where click/drag started
+modeoy: defw 0
+
+
+;routine to call for icon mode
+chkimode:
+;ignore if dragging iconpan
+ld a,(ipdrag)
+and a
+ret nz
+
+;ignore if was changing icon mode
+ld a,(wasmode)
+and a
+ret nz
+
+defb 0c3h	;i.e. jp (iconmode)
+iconmode: defw 0
+oldimode: defw 0
+
+wasmode: defb 0
+
+
+scrn		equ 0f000h	;the physical screen
+undoscrn	equ 07000h	;the copy restored if you use 'undo'
+
+bdos		equ 5
+
+
+;messages
+mneedzcn:	defb 'Sorry - zcnpaint requires ZCN.$'
+
+
+
+;entry: de=ascii$ string to print
+bdprint:
+ld c,9
+jp bdos
+
+
+
+
+;---------------------------------------------------
+; main routine
+
+start:
+call init
+
+call mainloop
+
+;now exit without any checks for unsaved files etc.
+bombout:
+call uninit
+
+;all done, warm boot
+jp 0
+
+
+
+;start up mouse, image, etc.
+init:
+;must be ZCN
+ld a,(066h)
+cp 0f7h
+ld de,mneedzcn
+jp nz,bdprint
+
+;XXX want to give error here if on serial console
+
+;stop them running it again with '!!'; it isn't re-entrant
+ld a,0c9h
+ld (0100h),a
+
+;turn off cursor
+ld a,4
+call putchar
+
+;clear screen
+call clrscrn
+call saveundo
+
+;use black as fill
+ld hl,patblack
+call setfill
+
+;draw icon panel
+ld a,1
+ld (showicons),a
+call ipdraw
+
+ld hl,idotline
+ld (iconmode),hl
+
+;init mouse
+call minit
+call mouseon
+call mstat
+ld (oldmx),de
+ld (oldmy),bc
+xor a
+ld (prevbut),a
+
+ld a,md_none
+ld (mode),a
+ret
+
+
+;uninit mouse, screen, yadayadayada
+uninit:
+;uninit mouse
+call mouseoff
+call ipundraw
+call muninit
+
+;clear screen and home cursor
+ld a,1
+call putchar
+ret
+
+
+;update our notion of mousiness
+chkmouse:
+ld hl,(mx)
+ld (oldmx),hl
+ld hl,(my)
+ld (oldmy),hl
+ld a,(mbut)
+ld (prevbut),a
+call mevents
+call mstat
+ld (mx),de
+ld (my),bc
+;we just use (mbut) for buttons
+ret
+
+
+
+
+;*** main loop ***
+mainloop:
+call chkmouse		;read mouse
+call but2event		;work out if we've clicked, are dragging, etc.
+
+xor a
+ld (wasmode),a
+
+call chkipmv		;do iconpan funcs (drag, select)
+
+;see if we clicked on an icon, and call relevant routine if so
+;it returns if 'exit' was clicked and quit was confirmed
+call chkicons
+
+;do any appropriate checks for the current icon mode (did we click on
+;the image, etc., and draw a pixel or whatever if so)
+;only runs if not (ipdrag) and not (wasmode)
+call chkimode
+
+;check kybd and call any relevant routine if one pressed.
+;it returns if Esc was pressed and quit was confirmed
+call chkkeys
+jp mainloop
+
+
+chkkeys:
+call kbhit
+ret nc
+
+call getch
+
+;Esc
+cp 27
+jp z,bombout
+
+;Menu is backquote
+cp '`'
+jp z,keyhide
+
+
+ret
+
+
+;turn prev/present button state into mouse event or 'mode'
+;XXX only does left button; is this enough?
+but2event:
+ld b,0
+ld a,(prevbut)
+rra
+rra
+rl b
+ld a,(mbut)
+rra
+rra
+rl b
+ld a,b
+
+;assume md_none
+ld b,md_none
+
+;if a=00b, nothing, but it means we're not dragging iconpan, so...
+cp 0
+jr nz,b2e0
+
+;definitely can't be dragging iconpan
+push af
+ld a,0
+ld (ipdrag),a
+pop af
+
+b2e0:
+;if a=01b, click/drag started.
+cp 1
+jr nz,b2e1
+
+ld b,md_start	;start of click/drag
+
+;init ox/oy
+ld hl,(mx)
+ld (modeox),hl
+ld hl,(my)
+ld (modeoy),hl
+
+b2e1:
+;if a=10b, click/drag stopped.
+cp 2
+jr nz,b2e2
+
+ld b,md_end
+
+b2e2:
+;if a=11b, click/drag in progress.
+cp 3
+jr nz,b2e3
+
+ld b,md_drag
+
+b2e3:
+
+ld a,b
+ld (mode),a
+ret
+
+
+;see if they are dragging the iconpan and move it if so.
+chkipmv:
+;can't apply if it's not being shown
+ld a,(showicons)
+and a
+ret z
+
+;if just started dragging, see if (ox,oy) is in range
+; (ipx,ipy)-(ipx+47,ipx+7).
+
+ld a,(mode)
+cp md_start
+jr nz,chkipmv2	;not just started, but might be dragging
+
+;check range
+;left side
+ld hl,(modeox)
+ld de,(iconpanx)
+and a
+sbc hl,de
+ret c
+
+;right side
+;de is still (iconpanx)
+ld hl,48
+add hl,de
+ex de,hl
+ld hl,(modeox)
+and a
+sbc hl,de
+ret nc
+
+;top side
+ld a,(iconpany)
+ld b,a
+ld a,(modeoy)
+cp b
+ret c
+
+;bottom side
+;b is still (iconpany)
+ld a,8
+add a,b
+ld b,a
+ld a,(modeoy)
+cp b
+ret nc
+
+;FINALLY! it *is* there. so now set stuff up.
+ld a,1
+ld (ipdrag),a
+
+;original offset of mouse from iconpan origin, so that the drag looks
+; like it's really dragging it.
+ld hl,(modeox)
+ld de,(iconpanx)
+and a
+sbc hl,de
+ld (ipxofs),hl
+
+ld a,(modeoy)
+ld bc,(iconpany)
+sub c
+ld (ipyofs),a
+ret
+
+
+;2nd bit, when we're dragging it.
+chkipmv2:
+;if not dragging, quit now.
+ld a,(mode)
+cp md_drag
+ret nz
+
+;must have been dragging iconpan, too...
+ld a,(ipdrag)
+and a
+ret z
+
+;undraw it
+call mouseoff
+call ipundraw
+
+;ok, move it to (mx,my)-(ipxofs,ipyofs).
+ld hl,(mx)
+ld de,(ipxofs)
+and a
+sbc hl,de
+ld (iconpanx),hl
+
+ld a,(my)
+ld bc,(ipyofs)
+sub c
+ld (iconpany),a
+
+;now, that's ok as far as it goes, but we want to keep it entirely
+;onscreen. to that end, check for edges.
+ld hl,(iconpanx)
+ld de,481-ipxsiz
+and a
+push hl
+sbc hl,de
+pop hl
+jr c,cim21
+bit 7,h
+jr nz,cim21a
+ld hl,481-ipxsiz
+jr cim21
+cim21a:
+ld hl,0
+cim21:
+;rip off the low 3 bits to byte-align it
+ld a,l
+and 0f8h
+ld l,a
+ld (iconpanx),hl
+
+ld a,(iconpany)
+ld c,65-ipysiz
+cp c
+jr c,cim22
+bit 7,a
+jr nz,cim22a
+ld a,65-ipysiz
+jr cim22
+cim22a:
+xor a
+cim22:
+ld (iconpany),a
+
+;now draw it
+call ipdraw
+call mouseon
+
+;praise be
+ret
+
+
+
+chkicons:
+;see if we just ended a click and (ox,oy) was on an icon.
+
+;can't apply if it's not being shown
+ld a,(showicons)
+and a
+ret z
+
+;for now, anything other than md_none counts.
+ld a,(mode)
+cp md_none
+ret z
+
+;check the range, then.
+
+;left side
+ld hl,(modeox)
+ld de,(iconpanx)
+and a
+sbc hl,de
+ret c
+
+;right side
+;de is still (iconpanx)
+ld hl,48
+add hl,de
+ex de,hl
+ld hl,(modeox)
+and a
+sbc hl,de
+ret nc
+
+;top side - ipy+8, 'cos the title bar doesn't have any icons.
+ld a,(iconpany)
+ld b,8
+add a,b
+ld b,a
+ld a,(modeoy)
+cp b
+ret c
+
+;bottom side - ipy+40
+;b is still (iconpany)+8
+ld a,32
+add a,b
+ld b,a
+ld a,(modeoy)
+cp b
+ret nc
+
+;right, stop the drawing routines from using this click/drag...
+ld a,1
+ld (wasmode),a
+
+;...but to actually *do* anything, must be end of click
+ld a,(mode)
+cp md_end
+ret nz
+
+;ok, we clicked on an icon.
+;now need to get row*6+col, mult by 2 and use this as offset from
+; icontbl.
+ld hl,(iconmode)
+ld (oldimode),hl
+
+ld hl,(modeox)
+ld de,(iconpanx)
+and a
+sbc hl,de
+ld a,l
+rra
+rra
+rra
+and 7
+ld c,a
+
+ld a,(iconpany)
+add a,8
+ld b,a
+ld a,(modeoy)
+sub b
+rrca
+rrca
+rrca
+and 7
+
+;now *6
+ld h,0
+ld l,a
+add hl,hl	;*2
+ld d,h
+ld e,l
+add hl,hl	;*4
+add hl,de	;*6
+ld b,0
+;c is still col
+add hl,bc
+
+add hl,hl	;*2
+
+ld de,icontbl
+add hl,de
+
+;now hl points to address in icontbl of routine for this icon.
+;we don't run it now, but save it so we can call it for all the
+;time we're in this mode.
+ld e,(hl)
+inc hl
+ld d,(hl)
+ld (iconmode),de
+
+;init end-of-line used by multiline to 'none', just in case
+ld hl,0ffffh
+ld (imlmx),hl
+ld (imlmy),hl
+
+;now want to save undo info, for everything except undo and hide.
+;check for those.
+ld hl,iundo
+and a
+sbc hl,de
+ret z
+ld hl,ihide
+and a
+sbc hl,de
+ret z
+
+;if not one of those two, save undo info
+call mouseoff
+call ipundraw
+call saveundo
+call ipdraw
+call mouseon
+ret
+
+
+;table
+icontbl:
+defw idotline
+defw ifreeline
+defw ieraser
+defw ifloodfill
+defw inewfile
+defw inewfile
+
+defw idragline
+defw imultiline
+defw iundo
+defw ihide
+defw iloadfile
+defw iloadfile
+
+defw irect
+defw ifillrect
+defw iwindow
+defw itext
+defw isavefile
+defw isavefile
+
+defw icirc
+defw ifillcirc
+defw ipickpat
+defw ibrushsiz
+defw iexit
+defw iexit
+
+
+;ret c if left button is pressed, else nc
+chkbutdn:
+ld a,(mbut)
+rra
+rra
+ret
+
+
+idotline:
+call chkbutdn
+ret nc
+
+;ok, button pressed.
+
+ld hl,pfillpat
+call pixstyle
+
+call mouseoff
+call ipundraw
+ld de,(mx)
+ld bc,(my)
+call pfillpat
+call ipdraw
+call mouseon
+ret
+
+
+ifreeline:
+call chkbutdn
+ret nc
+
+ld hl,pfillpat
+call pixstyle
+
+call mouseoff
+call ipundraw
+ld de,(mx)
+ld bc,(my)
+ld hl,(oldmx)
+ld a,(oldmy)
+ld b,a
+call drawline
+call ipdraw
+call mouseon
+ret
+
+
+;previous x/y pos for idragline
+idlpx: defw 0
+idlpy: defw 0
+
+idragline:
+;on start of click, draw xor'd line (well, pixel)
+ld a,(mode)
+cp md_start
+jr nz,idl2
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;draw it as line, as that's what'll happen next time
+ld de,(mx)
+ld hl,(mx)
+ld a,(my)
+ld c,a
+ld b,a
+call drawline
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+ret
+
+idl2:
+;in mid-drag, undraw old line and redraw
+ld a,(mode)
+cp md_drag
+jr nz,idl3
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call drawline
+
+;draw new
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call drawline
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+ret
+
+idl3:
+;at end of drag, undraw xor'd line and draw real line
+ld a,(mode)
+cp md_end
+ret nz
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call drawline
+
+;use normal
+ld hl,pfillpat
+call pixstyle
+
+;draw the final line
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call drawline
+
+call ipdraw
+call mouseon
+ret
+
+
+;end of last line, used by imultiline
+;top bit of x is 1 if undefined, in which case first click defines it
+imlmx: defw 0
+imlmy: defw 0
+
+imultiline:
+;if click, set eol pos or draw line (and also set eol pos)
+;otherwise ret, as nothing else bothers us
+ld a,(mode)
+cp md_start
+ret nz
+
+;use normal
+ld hl,pfillpat
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;if top bit of (imlmx) is 1, there's no old eol pos defined, so
+;*don't* draw line, just set this as the eol.
+ld hl,(imlmx)
+bit 7,h
+jr nz,iml2
+
+;draw line from eol to (mx,my)
+ld de,(imlmx)
+ld bc,(imlmy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call drawline
+
+iml3:
+call ipdraw
+call mouseon
+
+;set eol pos to current
+ld hl,(mx)
+ld (imlmx),hl
+ld hl,(my)
+ld (imlmy),hl
+ret
+
+iml2:
+;no prev eol, but draw a pixel here for reference.
+ld de,(mx)
+ld bc,(my)
+call pfillpat
+jr iml3		;now go back, to set eol
+
+
+;based on idragline
+irect:
+;on start of click, draw xor'd one
+ld a,(mode)
+cp md_start
+jr nz,irect2
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+ld de,(mx)
+ld hl,(mx)
+ld a,(my)
+ld c,a
+ld b,a
+call rect
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+ret
+
+irect2:
+;in mid-drag, undraw old line and redraw
+ld a,(mode)
+cp md_drag
+jr nz,irect3
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call rect
+
+;draw new
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call rect
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+ret
+
+irect3:
+;at end of drag, undraw xor'd line and draw real
+ld a,(mode)
+cp md_end
+ret nz
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call rect
+
+;use normal
+ld hl,pfillpat
+call pixstyle
+
+;draw the final rect
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call rect
+
+call ipdraw
+call mouseon
+ret
+
+
+
+;based on idragline
+ifillrect:
+;on start of click, draw xor'd one
+ld a,(mode)
+cp md_start
+jr nz,ifrect2
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+ld de,(mx)
+ld hl,(mx)
+ld a,(my)
+ld c,a
+ld b,a
+call rect
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+ret
+
+ifrect2:
+;in mid-drag, undraw old line and redraw
+ld a,(mode)
+cp md_drag
+jr nz,ifrect3
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call rect
+
+;draw new
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call rect
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+ret
+
+ifrect3:
+;at end of drag, undraw xor'd line and draw real
+ld a,(mode)
+cp md_end
+ret nz
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call rect
+
+;use normal
+ld hl,pfillpat
+call pixstyle
+
+;draw the final rect, and fill it this time
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call frect
+
+call ipdraw
+call mouseon
+ret
+
+
+maxrad: defw 32
+
+;based on idragline
+icirc:
+;on start of click, draw xor'd one
+ld a,(mode)
+cp md_start
+jr nz,icirc2
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+ld de,(mx)
+ld hl,(mx)
+ld a,(my)
+ld c,a
+ld b,a
+call docirc
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+
+;have max 32 whatever
+;I had some complicated code here to calc. the closest screen boundary
+;and use that to find the largest circle permissable (i.e. the largest
+;that would fit on screen), but this,.in practice, is just as good.
+ld de,32
+ld (maxrad),de
+ret
+
+icirc2:
+;in mid-drag, undraw old and redraw
+ld a,(mode)
+cp md_drag
+jr nz,icirc3
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call docirc
+
+;draw new
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call docirc
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+ret
+
+icirc3:
+;at end of drag, undraw xor'd line and draw real
+ld a,(mode)
+cp md_end
+ret nz
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call docirc
+
+;use normal
+ld hl,pfillpat
+call pixstyle
+
+;draw the final one
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call docirc
+
+call ipdraw
+call mouseon
+ret
+
+
+;based on icirc
+ifillcirc:
+;on start of click, draw xor'd one
+ld a,(mode)
+cp md_start
+jr nz,ifcirc2
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+ld de,(mx)
+ld hl,(mx)
+ld a,(my)
+ld c,a
+ld b,a
+call docirc
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+
+;have max 32 whatever
+ld de,32
+ld (maxrad),de
+ret
+
+ifcirc2:
+;in mid-drag, undraw old and redraw
+ld a,(mode)
+cp md_drag
+jr nz,ifcirc3
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call docirc
+
+;draw new
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call docirc
+
+call ipdraw
+call mouseon
+
+;save 'old' position
+ld hl,(mx)
+ld (idlpx),hl
+ld hl,(my)
+ld (idlpy),hl
+ret
+
+ifcirc3:
+;at end of drag, undraw xor'd line and draw real
+ld a,(mode)
+cp md_end
+ret nz
+
+;set xor
+ld hl,pxor
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+;undraw old
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(idlpx)
+ld a,(idlpy)
+ld b,a
+call docirc
+
+;use normal
+ld hl,pfillpat
+call pixstyle
+
+;draw the final one
+ld de,(modeox)
+ld bc,(modeoy)
+ld hl,(mx)
+ld a,(my)
+ld b,a
+call dofcirc
+
+call ipdraw
+call mouseon
+ret
+
+
+;this translates 'drawline' style args [(de,c), (hl,b)] to (de,c) with
+;radius b, and calls circle.
+docirc:
+push de
+push bc
+
+;one simple way of doing it (as used by Artist 2 on the speccy) is to
+;just use the difference in x positions.
+
+and a
+sbc hl,de
+call z,docircfix
+jr nc,docirc1
+
+;hl<de, so undo and do it the other way around.
+add hl,de
+ex de,hl
+and a
+sbc hl,de
+
+docirc1:
+ex de,hl
+
+;so now de is radius desired. do maximum of (maxrad), though...
+ld hl,(maxrad)
+and a
+sbc hl,de
+
+;if hl<de, use (maxrad) instead of de.
+jr nc,docirc2
+
+ld de,(maxrad)
+
+docirc2:
+pop bc
+ld b,e
+pop de
+call circle
+ret
+
+
+docircfix:
+set 0,l		;this increases the zero radius in hl to one.
+ret
+
+
+;as docirc but calls fcircle
+dofcirc:
+push de
+push bc
+
+;one simple way of doing it (as used by Artist 2 on the speccy) is to
+;just use the difference in x positions.
+
+and a
+sbc hl,de
+call z,docircfix
+jr nc,dofcirc1
+
+;hl<de, so undo and do it the other way around.
+add hl,de
+ex de,hl
+and a
+sbc hl,de
+
+dofcirc1:
+ex de,hl
+
+;so now de is radius desired. do maximum of (maxrad), though...
+ld hl,(maxrad)
+and a
+sbc hl,de
+
+;if hl<de, use (maxrad) instead of de.
+jr nc,dofcirc2
+
+ld de,(maxrad)
+
+dofcirc2:
+pop bc
+ld b,e
+pop de
+call fcircle
+ret
+
+
+ieraser:
+call chkbutdn
+ret nc
+
+;do 3x3 white pixels centred at (mx,my).
+;calling frect is easiest.
+
+ld hl,preset
+call pixstyle
+
+call mouseoff
+call ipundraw
+
+ld de,(mx)
+ld hl,(mx)
+ld bc,(my)
+ld b,c
+;only do top/left edges if x/y pos is non-zero
+ld a,d
+or e
+jr z,ierase1
+dec de
+ierase1:
+xor a
+and c
+jr z,ierase2
+dec c
+ierase2:
+inc hl
+inc b
+call frect
+
+call ipdraw
+call mouseon
+ret
+
+
+ifloodfill:
+;do it on the start of the click - ignore anything else
+ld a,(mode)
+cp md_start
+ret nz
+
+call mouseoff
+call ipundraw
+ld de,(mx)
+ld bc,(my)
+call flood
+call ipdraw
+call mouseon
+ret
+
+
+iundo:
+;want old mode again after
+ld hl,(oldimode)
+ld (iconmode),hl
+
+;put it back
+call mouseoff
+call ipundraw
+call rstrundo
+call ipdraw
+call mouseon
+ret
+
+
+ihide:
+;want old mode again after
+ld hl,(oldimode)
+ld (iconmode),hl
+
+keyhide:		;using 'Menu' calls this instead
+call mouseoff
+call ipundraw
+
+ld a,(showicons)
+xor 1
+ld (showicons),a
+
+call ipdraw
+call mouseon
+ret
+
+
+
+iwindow:
+itext:
+ibrushsiz:
+ret
+
+
+inewfile:
+;want old mode again after
+ld hl,(oldimode)
+ld (iconmode),hl
+
+;XXX want a 'really clear?' prompt here
+
+call mouseoff
+call ipundraw
+call clrscrn
+call ipdraw
+call mouseon
+ret
+
+
+;the load/save prompt bit is:
+; 16 long plus 2 either side and 1 top/bottom, i.e. 20x4, starting
+; here:
+ldsvpx	equ 50
+ldsvpy	equ 3
+
+mldpr: defb 'Load which file?$'
+msvpr: defb 'Save as?$'
+mldsvbuf: defb 16,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0
+filehndl: defw 0
+
+
+;XXX doesn't give any error messages
+iloadfile:
+;want old mode again after
+ld hl,(oldimode)
+ld (iconmode),hl
+
+ld hl,mldpr
+call ifilepr
+
+;try to open it
+ld hl,mldsvbuf+2
+call fopenrb
+jr nc,iloaddun		;couldn't open
+
+ld (filehndl),hl
+ld de,scrn
+ld bc,4096
+call fread
+
+ld hl,(filehndl)
+call fclose
+
+iloaddun:
+call saveundo
+call ipdraw
+call mouseon
+ret
+
+
+;XXX doesn't give any error messages
+isavefile:
+;want old mode again after
+ld hl,(oldimode)
+ld (iconmode),hl
+
+ld hl,msvpr
+call ifilepr
+
+;try to create it
+ld hl,mldsvbuf+2
+call fopenwb
+jr nc,isavedun		;couldn't create
+
+ld (filehndl),hl
+ld de,scrn
+ld bc,4096
+call fwrite
+
+ld hl,(filehndl)
+call fclose
+
+isavedun:
+call saveundo
+call ipdraw
+call mouseon
+ret
+
+
+ifprtmp: defw 0
+
+;read filename with prompt at hl
+;af/bc/de/hl corrupt
+;must call ipdraw then mouseon after saving/loading etc.
+ifilepr:
+ld (ifprtmp),hl
+
+;already saved undo info, so we can draw and restore it later; we
+;load/save to/from the undo buffer too.
+
+;save pixel draw routine too
+ld hl,(intdpix+1)
+push hl
+
+;need to ditch mouse as that won't get updated here
+call mouseoff
+
+;draw the prompt box
+
+ld hl,preset
+call pixstyle
+
+ld de,ldsvpx*4
+ld c,ldsvpy*6+2
+ld hl,ldsvpx*4+79
+ld b,ldsvpy*6+23+2
+push bc
+push de
+push hl
+call frect
+ld hl,pset
+call pixstyle
+pop hl
+pop de
+pop bc
+call rect
+
+ld a,16
+call putchar
+ld a,32+ldsvpy+1
+call putchar
+ld a,32+ldsvpx+2
+call putchar
+
+ld de,(ifprtmp)
+call bdprint
+
+;position for the buffered input
+ld a,16
+call putchar
+ld a,32+ldsvpy+2
+call putchar
+ld a,32+ldsvpx+2
+call putchar
+
+;turn cursor on
+ld a,3
+call putchar
+
+;do it
+ld de,mldsvbuf
+ld c,10
+call bdos
+
+;turn cursor off again
+ld a,4
+call putchar
+
+;restore pixstyle
+pop hl
+ld (intdpix+1),hl
+
+;and screen
+call rstrundo
+
+;filename is (mldsvbuf+1) chars long at mldsvbuf+2
+;make it asciiz
+ld a,(mldsvbuf+1)
+ld h,0
+ld l,a
+ld de,mldsvbuf+2
+add hl,de
+ld (hl),0
+ret
+
+
+iexit:
+;want old mode again after (for if we don't quit)
+ld hl,(oldimode)
+ld (iconmode),hl
+
+;XXX want the usual 'really quit?' prompt here, or pref. in some other
+;routine callable from the bit where Esc exits too.
+
+jp bombout
+
+
+;save current screen to undo buffer
+;iconpan/mouse should be undrawn first, of course
+saveundo:
+ld hl,scrn
+ld de,undoscrn
+ld bc,4096
+ldir
+ret
+
+
+;restore from undo buffer to current screen
+;iconpan/mouse should be undrawn first, of course
+rstrundo:
+ld hl,undoscrn
+ld de,scrn
+ld bc,4096
+ldir
+ret
+
+
+
+;now, stuff for the pattern selector
+
+;select a pattern
+;calls graph's setfill to set pattern if it's changed.
+ipickpat:
+;want old mode again after
+ld hl,(oldimode)
+ld (iconmode),hl
+
+;undraw mouse/icons
+call mouseoff
+call ipundraw
+call saveundo
+
+call clrscrn
+
+call psdraw
+
+call mouseon
+
+ipplp:
+call chkmouse		;read mouse
+call but2event		;work out if we've clicked, are dragging, etc.
+
+;wait for end of button click
+ld a,(mode)
+cp md_end
+jr nz,ipplp
+
+call mouseoff
+
+;now work out where we clicked.
+;if on a pattern, choose it, otherwise do nothing.
+call chkpat
+
+;redraw mouse/icons
+call rstrundo
+call ipdraw
+call mouseon
+ret
+
+
+;draw eth pattern in place
+;af/bc/de/hl/ix corrupt
+cat8x8:
+ld a,e
+ld h,0
+ld l,e
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+ld de,fillpats
+add hl,de
+;so now hl=pattern bitmap and a=pattern num.
+;get x/y pos from a
+push hl
+ld h,0
+ld l,a
+ld de,20
+call divide
+ld a,l
+rlca
+inc a		;*2+1
+rlca
+rlca
+rlca		;then *8
+ld l,a
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+add hl,hl	;*32
+add hl,hl	;*64
+
+ex de,hl
+add hl,hl	;double de
+ex de,hl
+inc de
+add hl,de
+ld de,0f000h
+add hl,de
+pop ix
+
+;now hl=addr on screen, ix=pattern bitmap
+push hl
+
+ld de,64
+ld b,8
+cat8lp:
+ld a,(ix)
+ld (hl),a
+add hl,de
+inc ix
+djnz cat8lp
+
+;now do frame
+pop hl
+ld de,64*8
+scf
+sbc hl,de
+push hl
+ld ix,frame7
+ld e,0
+call draw8x8addr
+pop hl
+
+inc hl
+push hl
+ld ix,frame8
+ld e,0
+call draw8x8addr
+pop hl
+
+inc hl
+push hl
+ld ix,frame9
+ld e,0
+call draw8x8addr
+pop hl
+
+ld de,64*8-2
+add hl,de
+push hl
+ld ix,frame4
+ld e,0
+call draw8x8addr
+pop hl
+
+inc hl
+inc hl
+push hl
+ld ix,frame6
+ld e,0
+call draw8x8addr
+pop hl
+
+ld de,64*8-2
+add hl,de
+push hl
+ld ix,frame1
+ld e,0
+call draw8x8addr
+pop hl
+
+inc hl
+push hl
+ld ix,frame2
+ld e,0
+call draw8x8addr
+pop hl
+
+inc hl
+ld ix,frame3
+ld e,0
+call draw8x8addr
+ret
+
+
+
+;draw the 20x3 grid of 8x8 patterns
+psdraw:
+ld e,0
+ld c,3
+psyloop:
+ld b,20
+psxloop:
+push bc
+push de
+
+call cat8x8
+
+pop de
+pop bc
+inc e
+djnz psxloop
+
+dec c
+jr nz,psyloop
+ret
+
+
+;see if clicked on pattern and change pattern if so.
+chkpat:
+ld hl,(modeox)
+;divide by 8
+and a
+rr h
+rr l
+and a
+rr h
+rr l
+and a
+rr h
+rr l
+;must be odd x pos
+ld a,l
+and 1
+ret z
+
+;and odd y pos
+ld a,(modeoy)
+rra
+rra
+rra
+and 1
+ret z
+
+;work out x and y pos from onscrn x/y
+;hl is still modeox/8
+and a
+rr h
+rr l
+;if >=20, not one after all
+ld de,20
+and a
+sbc hl,de
+ret nc
+
+add hl,de
+
+;same for y
+ld a,(modeoy)
+rra
+rra
+rra
+and 7
+rra
+cp 3
+ret nc
+
+;so now hl/a are x/y of pattern in grid.
+push hl
+;mult a by 20 and add hl
+ld h,0
+ld l,a
+ld de,20
+call multiply
+pop de
+add hl,de
+
+;so hl is pattern number.
+;get pattern addr and use that as current pattern.
+add hl,hl
+add hl,hl
+add hl,hl
+ld de,fillpats
+add hl,de
+call setfill
+ret

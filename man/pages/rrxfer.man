@@ -1,0 +1,71 @@
+NAME
+	rrxfer - copy files to/from the ROM software via `runrom.ram'
+
+SYNOPSIS
+	rrxfer
+
+DESCRIPTION
+	`rrxfer' lets you copy files to/from a `runrom.ram' snapshot
+	file, and thus to effectively copy files to/from your ROM
+	software setup. You must start rrxfer on the drive/user which
+	contains your `runrom.ram' file, as created by `runrom'.
+
+	(If you haven't already read the `runrom' man page, you should
+	probably do that first, before reading the rest of this.)
+
+KEYS
+	At the main menu, several options are available:
+
+	r	list the ROM files (i.e. the files in the snapshot).
+		Files in both the ROM's `upper' and `lower' memory
+		areas are listed.
+
+	z	list the ZCN files (i.e. the files in the current
+		drive/user). There's no way to transfer files to/from
+		a different drive or user area than the one the
+		snapshot is in. (You could get around this by copying
+		files or using `umv' before/after running rrxfer, as
+		appropriate.)
+
+	g	get a file - to copy a ROM file to ZCN. Note that any
+		existing ZCN file with the same name will be
+		overwritten. The filename you type must exactly match
+		the ROM file's name - case is significant in ROM
+		filenames. The copy made is automatically given a
+		reasonable ZCN name; non-printable ASCII chars,
+		spaces, colons, asterisks and question marks are all
+		converted to underscores. If you choose `g' then
+		change your mind, just type in an empty filename (that
+		is, just press enter) to abort.
+
+	p	put a file - to copy a ZCN file to the ROM's file
+		area. Note that any existing ROM file with the same
+		name will be overwritten. The copy is always written
+		in lower memory. And again, you can enter an empty
+		filename to abort. The copy made is given a ROM
+		filename which matches how you typed the ZCN file's
+		name, which means you have a degree of control over
+		the ROM file's name.
+
+		If the NC100's real-time clock has been set (either
+		via the ROM or with ZCN's `timeset'), the file is
+		written with the current time/date. If the clock isn't
+		set, however, they're written with a `zero' time/date.
+		The ROM interprets this as midnight on "90-00-00" [sic].
+
+	q	quit rrxfer. This may take a little while if you wrote
+		any files to the lower memory (i.e. used `put'), as
+		the lower memory part of the snapshot has to be
+		rewritten.
+
+FILES
+	runrom.ram - the snapshot file used.
+
+BUGS
+	While the ROM software stores file sizes exactly, ZCN (being
+	CP/M-like) only stores them to the nearest 128-byte record.
+	This can cause some minor problems (usually the odd few extra
+	characters after a transfer in the ZCN -> ROM direction).
+
+SEE ALSO
+	runrom, timeset

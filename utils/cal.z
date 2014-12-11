@@ -1,0 +1,1373 @@
+;cal - Z80 CP/M port of public domain `calend' C program by Martin Minow.
+;	(from comp.sources.unix volume 3)
+;
+;this is a generic CP/M-on-a-Z80 port, with support for reading the
+;current month/year from ZCN to use as defaults (which can of course
+;be overridden).
+
+;NB: think twice before changing this, as it *just* fits in 2k at the
+;moment, and I don't want it bigger than that if possible.
+
+;cal is reentrant, so I don't do the usual thing of putting a ret at
+;100h. It's a small-ish program though, and I think most people
+;wouldn't bother with that anyway, so I don't bother documenting the
+;fact `officially' in case I ever need to change things. :-)
+
+
+org 0100h
+
+jr start
+
+
+userfcb2 equ 06ch
+
+bfclose		equ 16
+bfdel		equ 19
+bfwrite		equ 21
+bfmake		equ 22
+bfsetdma	equ 26
+
+weekday: defb ' S  M Tu  W Th  F  S',0
+
+monthname:
+defb 0,0,0,0	;no month zero
+defb 'Jan',0
+defb 'Feb',0
+defb 'Mar',0
+defb 'Apr',0
+defb 'May',0
+defb 'Jun',0
+defb 'Jul',0
+defb 'Aug',0
+defb 'Sep',0
+defb 'Oct',0
+defb 'Nov',0
+defb 'Dec',0
+
+opt_h: defb '-h',0
+opt_o: defb '-o',0
+
+firstnumarg: defb 0	;argv num. to look for year (or month) in
+tofile: defb 0		;non-zero if writing output to file
+
+month: defb 0		;month - as specified, or zero for current
+year: defw 0		;year - as specified, or zero for current
+wasyear: defb 0		;non-zero if year was specified
+wasmonth: defb 0	;non-zero if month was specified
+
+
+start:
+call makeargv
+
+xor a
+ld (month),a
+ld (tofile),a
+ld (wasyear),a
+ld (wasmonth),a
+inc a
+ld (firstnumarg),a
+ld hl,0
+ld (year),hl
+
+call getrtcdate
+
+
+ld a,(argc)
+cp 2
+jp c,argsdone
+
+;argc>=2, must have at least one arg, then.
+;check for `-h'
+ld a,1
+call getargv
+push hl
+ld de,opt_h
+call strcmp
+pop hl
+jp c,usage
+ld de,opt_o
+call strcmp
+jr nc,chkyearmon
+
+ld a,3
+ld (firstnumarg),a
+ld (tofile),a
+
+;we know filename is arg2, which must be FCB at 6Ch, so just check it's
+;there.
+ld a,(userfcb2+1)
+cp 32
+jr nz,chkyearmon
+
+call ilprint
+defb 'cal: "-o" opt needs output filename as arg',0
+ret
+
+chkyearmon:
+;now check for any year/month specified.
+;argc has to be greater than (firstnumarg).
+ld a,(firstnumarg)
+ld b,a
+ld a,(argc)
+scf		;make nc >, not >=
+sbc a,b
+jr c,argsdone
+
+ld a,(firstnumarg)
+call getargv
+call atoi
+;have to check for non-zero, other sanity tests not needed here
+ld a,h
+or l
+jp z,usage
+
+;if less than 13, it's a month, else a year
+push hl
+ld de,13
+and a
+sbc hl,de
+pop hl
+call c,hl2month
+call nc,hl2year
+
+;for any further arg, argc has to be greater than (firstnumarg)+1.
+ld a,(firstnumarg)
+ld b,a
+inc b
+ld a,(argc)
+scf		;make nc >, not >=
+sbc a,b
+jr c,argsdone
+
+ld a,(firstnumarg)
+inc a
+call getargv
+call atoi
+;again, check for non-zero
+ld a,h
+or l
+jp z,usage
+
+;if previous one was a month, this is a year, and vice versa
+ld a,(wasyear)
+and a
+call nz,hl2month
+call z,hl2year
+
+
+argsdone:
+;finished parsing args.
+
+ld ix,filedat		;set `file pointer' for in-memory output buffer.
+
+;if year is still zero, we don't have enough info to do it.
+ld hl,(year)
+ld a,h
+or l
+jp z,usage
+
+;finally, we're ok. if year was explicitly specified, and month
+;*wasn't*, then do a full year. For all other cases, do a single month
+;(with a month either side).
+
+ld a,(wasyear)
+and a
+jr z,notfull
+ld a,(wasmonth)
+and a
+jr nz,notfull
+
+ld hl,(year)
+call doyear
+jr endcode
+
+notfull:
+ld hl,(year)
+ld a,(month)
+call do3months
+
+endcode:
+;so now output is at filedat.
+;write file, or output to console.
+
+ld a,(tofile)
+and a
+jr nz,writefile
+
+;ok, output to console.
+push ix
+pop hl
+dec hl		;lose the final CR/LF...
+dec hl		;...as CP/M will output one itself
+ld (hl),'$'
+ld de,filedat
+ld c,9
+jp 5		;ret via that
+
+writefile:
+;write the data to a file.
+
+;make sure we have ^Z's to end of record (nicer that way :-))
+ld b,128
+wflp1:
+push bc
+ld a,26
+call outchar
+pop bc
+djnz wflp1
+
+;for non-ZCN systems, make sure we delete any existing file first.
+;(doesn't hurt on ZCN, so we do it in all cases)
+ld de,userfcb2
+ld c,bfdel
+call 5
+;now make the file
+ld de,userfcb2
+ld c,bfmake
+call 5
+inc a
+jr nz,madeok
+call ilprint
+defb 'cal: error creating output file',0
+ret
+
+madeok:
+ld hl,filedat
+wrtloop:
+push hl
+ex de,hl
+ld c,bfsetdma
+call 5
+ld de,userfcb2
+ld c,bfwrite
+call 5
+pop hl
+and a
+jr z,wroteok
+call ilprint
+defb 'cal: error writing file - disk full?',0
+ret
+
+wroteok:
+;if wasn't a ^Z in that 128 bytes, loop for some more.
+ld bc,128
+ld a,26
+cpir
+jr nz,wrtloop
+
+;close it
+ld de,userfcb2
+ld c,bfclose
+call 5
+
+ret
+
+
+hl2month:
+ld a,1
+ld (wasmonth),a
+ld a,l
+ld (month),a
+ret
+
+hl2year:
+ld a,1
+ld (wasyear),a
+ld (year),hl
+ret
+
+
+usage:
+call ilprint
+defb 'usage: cal [-o out_file] [-h] [month] [year]',13,10
+defb 'NB: year must be in full, e.g. 1990.',0
+ret
+
+
+timebuf1 equ 01000h
+timebuf2 equ timebuf1+6
+
+;get date
+getrtcdate:
+;can do this on ZCN only
+ld a,(066h)
+cp 0f7h
+ret nz
+
+ld c,085h
+ld de,timebuf1
+push de
+call 5
+ld c,085h
+ld de,timebuf2
+push de
+call 5
+
+;now, if t1<t2 then use t2 rather than t1
+pop hl		;timebuf2
+pop de		;timebuf1
+ld b,6
+tchklp:
+ld a,(de)
+cp (hl)
+jr c,uset2
+inc de
+inc hl
+djnz tchklp
+
+ld hl,timebuf1	;t1 is ok
+jr tchkdone
+
+uset2:
+ld hl,timebuf2	;must use t2 instead
+
+tchkdone:
+ld a,(hl)
+and a
+;if it's zero, the year is 1990, so time isn't set.
+ret z
+
+;ok, add 1990 to get year.
+call hlbcd2dec		;get bcd at hl to dec in A
+ld e,a
+ld d,0
+push hl
+ld hl,1990
+add hl,de
+ld (year),hl
+pop hl
+inc hl
+call hlbcd2dec
+ld (month),a
+ret
+
+
+;destructively convert BCD at hl to decimal in A.
+hlbcd2dec:
+xor a
+rld		;get high four bits to low four of A
+rlca	;*2
+ld b,a
+rlca	;*4
+rlca	;*8
+add a,b	;*10
+ld b,a
+xor a
+rld		;get low four bits
+add a,b
+ret
+
+
+; * Print the calendar for an entire year.
+;entry:	hl=year
+dy_year: defw 0
+doyear:
+ld (dy_year),hl
+
+;check year, must be 1..9999
+ld a,h
+or l
+jp z,badyear	;see do3months for this
+push hl
+ld de,10000
+and a
+sbc hl,de
+pop hl
+jp nc,badyear
+
+ld a,31
+call outspaces
+ld hl,(dy_year)
+push hl
+call out4num
+ld a,10
+call outchar
+ld a,10
+call outchar
+
+pop hl
+ld (do3m_lastyear),hl
+ld (do3m_thisyear),hl
+ld (do3m_nextyear),hl
+
+ld c,1
+ld b,4		;do 3 months 4 times to do all 12
+doyearlp:
+push bc
+ld a,c
+ld (do3m_lastmon),a
+inc a
+ld (do3m_thismon),a
+inc a
+ld (do3m_nextmon),a
+
+;month header line
+ld a,9
+call outspaces
+ld a,(do3m_lastmon)
+rlca	;*2
+rlca	;*4
+ld e,a
+ld d,0
+ld hl,monthname
+add hl,de
+push hl
+call outstr
+
+ld a,20
+call outspaces
+pop hl
+ld de,4
+add hl,de
+push hl
+call outstr
+
+ld a,20
+call outspaces
+pop hl
+ld de,4
+add hl,de
+call outstr
+ld a,10
+call outchar
+
+call do3m_guts	;use guts of do3months routine to print the months
+
+pop bc
+inc c
+inc c
+inc c
+djnz doyearlp
+
+ld a,10
+call outchar
+ret
+
+
+;* Do last month, this month, and next month.  The parameters
+;* are guaranteed accurate. (and year will not be less than 2 nor
+;* greater than 9998).
+;
+;entry:	hl=year, a=month.
+do3m_lastyear:	defw 0
+do3m_lastmon:	defb 0
+do3m_thisyear:	defw 0
+do3m_thismon:	defb 0
+do3m_nextyear:	defw 0
+do3m_nextmon:	defb 0
+
+do3months:
+ld (do3m_thisyear),hl
+ld (do3m_thismon),a
+
+;check for valid month/year; bomb out with error if bad vals given.
+and a
+jr nz,do3mchk1
+do3mbadm:
+call ilprint
+defb 'cal: bad month number, must be 1..12',0
+rst 0
+
+do3mchk1:
+cp 13
+jr nc,do3mbadm	;quit if month>=13
+
+;now check year, must be 1..9999
+ld a,h
+or l
+jr nz,do3mchk2
+badyear:	;doyear uses this too
+call ilprint
+defb 'cal: bad year number, must be 1..9999',0
+rst 0
+
+do3mchk2:
+push hl
+ld de,10000
+and a
+sbc hl,de
+pop hl
+jr nc,badyear
+
+
+;get month/year for last/next month
+
+ld a,(do3m_thismon)
+ld hl,(do3m_thisyear)
+push af
+push hl
+
+dec a
+jr nz,do3m1
+
+dec hl
+ld a,12
+
+do3m1:
+ld (do3m_lastmon),a
+ld (do3m_lastyear),hl
+
+pop hl
+pop af
+
+inc a
+cp 13
+jr nz,do3m2
+
+inc hl
+ld a,1 
+
+do3m2:
+ld (do3m_nextmon),a
+ld (do3m_nextyear),hl
+
+;output the header line with "Oct 1998" and the like
+ld a,6
+call outspaces
+
+;--- last month ---
+ld a,(do3m_lastmon)
+call outmonthname
+ld a,32
+call outchar
+ld hl,(do3m_lastyear)
+call out4num	;output 4-digit number with leading spaces as needed
+ld a,15
+call outspaces
+
+;--- this month ---
+ld a,(do3m_thismon)
+call outmonthname
+ld a,32
+call outchar
+ld hl,(do3m_thisyear)
+call out4num
+ld a,15
+call outspaces
+
+;--- next month ---
+ld a,(do3m_nextmon)
+call outmonthname
+ld a,32
+call outchar
+ld hl,(do3m_nextyear)
+call out4num
+
+ld a,10
+call outchar
+
+do3m_guts:	;guts of routine - called from doyear
+
+;now the line with weekday header bits
+ld hl,weekday
+push hl
+call outstr
+ld a,3
+call outspaces
+pop hl
+push hl
+call outstr
+ld a,3
+call outspaces
+pop hl
+call outstr
+
+ld a,10
+call outchar
+
+
+;now finally we do the interesting bit. :-)
+call monthclr
+
+ld hl,(do3m_lastyear)
+ld a,(do3m_lastmon)
+ld c,0
+call calendar
+ld hl,(do3m_thisyear)
+ld a,(do3m_thismon)
+ld c,1
+call calendar
+ld hl,(do3m_nextyear)
+ld a,(do3m_nextmon)
+ld c,2
+call calendar
+
+call output_monthbuf	;output lines built-up by that
+
+ret
+
+
+outmonthname:
+rlca	;*2
+rlca	;*4
+ld e,a
+ld d,0
+ld hl,monthname
+add hl,de
+jp outstr	;ret via that
+
+
+
+
+output_monthbuf:
+ld hl,monthbuf
+ld b,6
+ocbuflp:
+push bc
+push hl
+
+;go through string, with last required char (non-space) pointed to by de.
+push hl
+ld d,h
+ld e,l
+dec de
+ocbuflp2:
+ld a,(hl)
+and a
+jr z,ocskip
+inc hl
+cp 32
+jr z,ocbuflp2
+ld d,h
+ld e,l
+dec de
+jr ocbuflp2
+
+ocskip:
+;put NUL after last char needed.
+inc de
+xor a
+ld (de),a
+
+pop hl		;addr of start of string
+call outstr
+
+ld a,10
+call outchar
+
+pop hl
+pop bc
+ld de,80
+add hl,de
+djnz ocbuflp
+ret
+
+
+outchar:
+cp 10
+jr nz,litoutchar
+ld a,13
+call litoutchar
+ld a,10
+litoutchar:
+ld (ix),a
+inc ix
+ret
+
+
+;output asciiz string at hl.
+outstr:
+ld a,(hl)
+and a
+ret z
+push hl
+call outchar
+pop hl
+inc hl
+jr outstr
+
+
+;output A spaces.
+outspaces:
+ld b,a
+outspclp:
+push bc
+ld a,32
+call outchar
+pop bc
+djnz outspclp
+ret
+
+
+defb 0				;an overrun char for o4numtmp, just in case
+o4numtmp: defb '0000',0
+
+;output 4-digit year number in hl, padded on left with spaces if needed.
+;(really a hacked copy of dispdec from zcnlib :-))
+out4num:
+ex de,hl
+ld hl,02020h	;spaces
+ld (o4numtmp),hl
+ld (o4numtmp+2),hl
+
+ld hl,o4numtmp+4
+
+o4dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld de,10
+call divide
+
+ld a,e
+add a,48
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,o4dispnlp
+
+ld hl,o4numtmp
+jr outstr	;ret via that
+
+
+monthclr:
+;clear out monthbuf.
+ld hl,monthbuf
+ld c,6
+mclrlp:
+ld b,79
+mclrlp2:
+ld (hl),32
+inc hl
+djnz mclrlp2
+ld (hl),0
+inc hl
+dec c
+jr nz,mclrlp
+ret
+
+
+
+
+; * Actually build the calendar for this month.
+;
+;entry: hl=year, a=month, c=index (which of the three months to do, 0=left)
+cal_index: defb 0
+defb 0			;needed so we can write it as bc
+
+calendar:
+ld (cal_index),bc
+
+;year/month only needed as args for setmonth
+call setmonth
+
+;	for (week = 0; week < WEEKS_PER_MONTH; week++) {
+
+ld e,0
+ld d,6	;WEEKS_PER_MONTH (max weeks per month)
+weekylp:
+push de
+
+;	    for (wday = 0; wday < DAYS_PER_WEEK; wday++) {
+ld c,0
+ld b,7
+weekxlp:
+pop de
+push de		;get e=week, as it's needed below
+push bc
+
+;		tp = &layout[index][week][wday][0];
+
+;i.e. get pointer to output char. array.
+;y pos is still in e,
+;x pos is 23*index+3*c,
+;monthbuf lines are max. 79 chars plus NUL, 
+;so ptr is monthbuf+80*e+23*index+3*c.
+
+push bc		;save c for later
+ld d,0
+ld hl,80
+call multiply	;80*e
+push hl
+ld hl,(cal_index)
+ld h,0
+ld de,23
+call multiply	;23*index
+pop de
+add hl,de	;80*e+23*index
+pop bc
+ld b,0
+add hl,bc
+add hl,bc
+add hl,bc
+ld de,monthbuf
+add hl,de	;monthbuf+80*e+23*index+3*c
+
+;		today = getdate(week, wday);
+;put week and wday back into e and c respectively
+pop bc
+pop de
+push de
+push bc
+push hl		;save pointer
+ld h,0
+ld l,e
+ld a,c
+call getdate
+pop hl
+
+;if zero, skip it
+and a
+jr z,calskip
+
+;otherwise, `print' 2-digit day number at pos, with leading space if
+;needed.
+push hl		;save pointer
+ld h,0
+ld l,a
+ld de,10
+call divide
+ld d,l		;left digit now in d, right one in e
+ld hl,03030h	;make both ascii chars
+add hl,de
+ex de,hl
+pop hl
+;make left one space if zero
+ld a,d
+cp '0'
+jr nz,calskip2
+ld d,32
+calskip2:
+ld (hl),d
+inc hl
+ld (hl),e
+
+;end of wday loop
+calskip:
+pop bc
+inc c
+djnz weekxlp
+
+;end of week loop
+pop de
+inc e
+dec d
+jr nz,weekylp
+
+ret
+
+
+
+; * This structure is used to pass data between setmonth() and getdate().
+;(all are words even if only bytes needed, to keep things simple)
+
+info_feb:		defw 0 ;/* Days in February for this month	*/
+info_sept:		defw 0 ;/* Days in September for this month	*/
+info_days_in_month:	defw 0 ;/* Number of days in this month	*/
+info_dow_first:		defw 0 ;/* Day of week of the 1st day in month	*/
+
+day_month:	;days in month
+defb 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+
+
+
+; * Setup the parameters needed to compute this month
+; * (stored in the info structure).
+;
+;entry: hl=year, a=month
+sm_year:	defw 0
+sm_mon:		defb 0
+
+setmonth:
+ld (sm_year),hl
+ld (sm_mon),a
+
+call jan1
+ld (info_dow_first),a	;/* Day of January 1st for now	*/
+ld a,29
+ld (info_feb),a		;/* Assume leap year		*/
+ld a,30
+ld (info_sept),a	;/* Assume normal year		*/
+
+; * Determine whether it's an ordinary year, a leap year
+; * or the magical calendar switch year of 1752.
+
+;	switch ((Jan1(year + 1) + 7 - info.dow_first) % 7) {
+ld hl,(sm_year)
+inc hl
+call jan1
+add a,7
+ld de,(info_dow_first)
+sub e
+ld h,0
+ld l,a
+ld de,7
+call divide
+ld a,e
+
+;	case 1:				/* Not a leap year		*/
+;	    info.feb = 28;
+cp 1
+jr nz,smskip1
+
+ld a,28
+ld (info_feb),a
+jr smendsw
+
+;	case 2:				/* Ordinary leap year		*/
+;	    break;
+smskip1:
+cp 2
+jr z,smendsw
+
+;	default:			/* The magical moment arrives	*/
+;	    info.sept = 19;		/* 19 days hath September	*/
+;	    break;
+
+ld a,19
+ld (info_sept),a
+
+;	}
+smendsw:
+
+;	info.days_in_month =
+;	      (month == 2) ? info.feb
+;	    : (month == 9) ? info.sept
+;	    : day_month[month];
+
+;assume day_month[month], then fix if needed.
+ld a,(sm_mon)
+ld e,a
+ld d,0
+ld hl,day_month
+add hl,de
+ld c,(hl)
+
+ld a,(sm_mon)
+cp 2
+jr nz,smskip2
+ld bc,(info_feb)
+smskip2:
+cp 9
+jr nz,smskip3
+ld bc,(info_sept)
+smskip3:
+ld a,c
+ld (info_days_in_month),a
+
+;	for (i = 1; i < month; i++) {
+;	    switch (i) {		/* Special months?		*/
+;	    case 2:			/* February			*/
+;		info.dow_first += info.feb;
+;		break;
+;
+;	    case 9:
+;		info.dow_first += info.sept;
+;		break;
+;
+;	    default:
+;		info.dow_first += day_month[i];
+;		break;
+;	    }
+;	}
+
+;c=i (b real loop var though), hl=info_dow_first
+ld hl,(info_dow_first)
+ld c,1
+ld a,(sm_mon)
+ld b,a
+dec b
+jr z,smskiploop
+smloop:
+ld a,c
+cp 2
+jr nz,smlp1
+ld de,(info_feb)
+add hl,de
+jr smlpend
+
+smlp1:
+cp 9
+jr nz,smlp2
+ld de,(info_sept)
+add hl,de
+jr smlpend
+
+smlp2:
+push hl
+ld e,c
+ld d,0
+ld hl,day_month
+add hl,de
+ld e,(hl)
+;d still zero
+pop hl
+add hl,de
+
+smlpend:
+inc c
+djnz smloop
+
+;	info.dow_first %= 7;		/* Now it's Sunday to Saturday	*/
+
+smskiploop:
+ld de,7
+call divide
+ld (info_dow_first),de
+ret
+
+
+
+;getdate
+;entry:	hl=week, a=wday
+;exit:	a=day in month
+gd_today: defb 0
+getdate:
+;	 * Get a first guess at today's date and make sure it's in range.
+;	today = (week * 7) + wday - info.dow_first + 1;
+push af
+ld de,7
+call multiply
+pop af
+ld e,a
+ld d,0
+add hl,de
+ld de,(info_dow_first)
+and a
+sbc hl,de
+inc hl
+ld a,l
+ld (gd_today),a
+
+;	if (today <= 0 || today > info.days_in_month)
+;	    return (0);
+and a
+ret z
+ld de,(info_days_in_month)
+scf		;turns nc into >, not >=
+sbc a,e
+ld a,0
+ret nc
+
+;	else if (info.days_in_month == 19 && today >= 3) /* The magical month?
+;	    return (today + 11);	/* If so, some dates changed	*/
+
+ld a,(info_days_in_month)
+cp 19
+jr nz,gdskip
+ld a,(gd_today)
+cp 3
+jr c,gdskip
+
+add a,11
+ret
+
+;	else				/* Otherwise,			*/
+;	    return (today);		/* Return the date		*/
+gdskip:
+ld a,(gd_today)
+ret
+
+
+
+; * Return day of the week for Jan 1 of the specified year.
+;
+;entry: hl=year
+;exit:	a=day of week, f/bc/de/hl corrupt
+j1_day: defw 0
+j1_year: defw 0
+
+jan1:
+ld (j1_year),hl
+
+;	day = year + 4 + ((year + 3) / 4);	/* Julian Calendar	*/
+push hl
+inc hl
+inc hl
+inc hl
+ld de,4
+call divide
+pop de
+add hl,de
+ld de,4
+add hl,de
+ld (j1_day),hl
+
+;	if (year > 1800) {			/* If it's recent, do	*/
+;	    day -= ((year - 1701) / 100);	/* Clavian correction	*/
+;	    day += ((year - 1601) / 400);	/* Gregorian correction	*/
+;	}
+
+ld hl,(j1_year)
+push hl
+ld de,1801
+and a
+sbc hl,de
+pop hl
+jr c,j1skip	;skip if year<=1800
+
+ld hl,(j1_year)
+ld de,1701
+and a
+sbc hl,de
+ld de,100
+call divide
+ex de,hl
+ld hl,(j1_day)
+and a
+sbc hl,de	;first correction
+push hl
+
+ld hl,(j1_year)
+ld de,1601
+and a
+sbc hl,de
+ld de,400
+call divide
+pop de
+add hl,de	;second correction
+ld (j1_day),hl
+
+j1skip:
+;	if (year > 1752)			/* Adjust for Gregorian	*/
+;	    day += 3;				/* calendar		*/
+
+ld hl,(j1_year)
+ld de,1753
+and a
+sbc hl,de
+ld hl,(j1_day)
+jr c,j1skip2	;skip if year<=1752
+
+inc hl
+inc hl
+inc hl
+
+j1skip2:
+;	return (day % 7);
+
+;hl is day
+ld de,7
+call divide
+ld a,e
+ret
+
+
+
+;--- the rest are from zcnlib ---
+
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/bc/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)
+
+
+;strcpy(hl,de)
+;entry:	hl=dest, de=src
+;exit:	hl and de both point to the NUL in each copy
+;af corrupt
+strcpy:
+ld a,(de)
+ld (hl),a
+and a
+ret z
+inc hl
+inc de
+jr strcpy
+
+
+;compare strings at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2
+;exit:	c if they match, nc otherwise
+;af/de/hl corrupt
+strcmp:
+ld a,(de)
+cp (hl)
+jr nz,strcmp2
+and a
+jr z,strcmp1
+inc hl
+inc de
+jr strcmp
+
+strcmp1:
+;they matched ok
+scf
+ret
+
+strcmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+tolower:
+call isupper
+ret nc
+xor 020h
+ret
+
+
+;convert number as ASCII at hl to number.
+;the ASCII number should be terminated by a non-digit.
+;entry: hl=address of first digit of ASCII number
+;exit:  hl=number
+atoi:
+ld de,0		;total of number so far.
+atoilp:
+ld a,(hl)
+sub 48
+jr c,atoidone	;if not digit, end
+cp 10
+jr nc,atoidone	;if not digit, end
+;otherwise, multiply our running total by base and add this.
+push hl
+push bc
+push af
+ld hl,10
+call multiply
+pop af
+ld e,a
+ld d,0
+add hl,de
+ex de,hl
+pop bc
+pop hl
+inc hl
+jr atoilp
+
+atoidone:
+;got number in de - put it in hl.
+ex de,hl
+ret
+
+
+;maths routines
+;these are 'quick' multiply and divide routines;
+;the divide also returns the remainder.
+
+;this does z=x*y
+;entry: hl=x, de=y
+;exit:  hl=z
+;af/bc/de corrupt
+multiply:
+ld b,h
+ld c,l
+ld hl,0
+ld a,16
+mulp:
+and a
+rr d
+rr e
+jr nc,musp
+add hl,bc
+musp:
+and a
+rl c
+rl b
+dec a
+jr nz,mulp
+ret
+
+
+;divide
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+;I've switched to a non-undocumented-opcode-using version, so
+; programs using it work under the Linux 'cpm' emulator. It's probably
+; about the same speed, anyway. And this version doesn't need ix,
+; which is handy.
+dividey: defw 0
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+ld (dividey),de
+
+ld de,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+and a
+rl e
+rl d
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+push de
+ld de,(dividey)
+sbc hl,de
+pop de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+ld a,1
+or e
+ld e,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+;exit: hl=result, de=remainder
+ret

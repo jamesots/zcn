@@ -1,0 +1,13 @@
+NAME
+	bdosdbug - disable/enable BDOS call monitoring
+
+SYNOPSIS
+	bdosdbug [0|1]
+
+DESCRIPTION
+	Turn off (0) or on (1) printing of BDOS function calls being
+	made (the contents of C are printed in square brackets in hex
+	when a call is made). Only likely to be useful to programmers.
+
+BUGS
+	Functions 2 and 46 aren't reported.

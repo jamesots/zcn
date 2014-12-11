@@ -1,0 +1,12 @@
+;must be last thing
+
+;array of files, structure:
+;
+; char tagged;
+; char name[12];	/* 12, as it's asciiz */
+; /* no need for extofs, and date not supported */
+; short size;		/* in 128-byte records */
+; char pad;		/* to make it 16 bytes per struct */
+;
+; this stretches for the rest of TPA, if needed.
+files:

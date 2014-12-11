@@ -1,0 +1,20 @@
+PMARC
+
+This utility creates LZH-like archives with the extension .PMA. It compresses
+as effectively as the MSDOS utility LHA, but is not completely compatible (you
+can read the directory with LHA on an IBM-PC, but you can't extract files from
+the archive). Just type PMARC at the CP/M prompt to see a list of options.
+
+PMEXT
+
+This great program unpacks .PMA as well as .LZH archives (even compression
+method -lh5-), and it's very fast compared to other LZH unpackers for CP/M
+(like LHRD and LHX). Type PMEXT without filenames for more information.
+
+Of course, both PMARC and PMEXT will also run under MSXDOS without any
+problems, we got them via a Japanese disk-magazine for MSX.
+
+Pierre Gielen
+Nijmegen, The Netherlands
+
+

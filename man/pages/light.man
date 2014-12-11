@@ -1,0 +1,9 @@
+NAME
+	light - disable/enable backlight (NC200 only)
+
+SYNOPSIS
+	light [0|1]
+
+DESCRIPTION
+	Turn off (0) or on (1) the NC200's backlight. It's enabled by
+	default, but disabling it should prolong battery life.

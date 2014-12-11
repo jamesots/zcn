@@ -1,0 +1,16 @@
+NAME
+	time - display current time/date
+
+SYNOPSIS
+	time
+
+DESCRIPTION
+	Displays the current time and date according to the NC100's
+	real-time clock (RTC). (This can be set with `timeset'.) The
+	format used is YYYY-MM-DD HH:MM:SS.
+
+	The form YYYY-MM-DD is used for the date as a) the Y/M/D order
+	is the most logical, and b) I believe it conforms to ISO 8601.
+
+SEE ALSO
+	timeset

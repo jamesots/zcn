@@ -1,0 +1,768 @@
+;brmain - the main bigrun code, the bit which redirects nmi/bdos/bios.
+; (ints are disabled via irq mask when not in usual ZCN setup.)
+
+;memory map for bigrun bank:
+;
+;0000-f7ffh TPA
+;f800-feffh (at most) bigrun's "bdos" etc.
+;ff00-ff7fh 128-byte buffer used to hold old copy of 0080h-00ffh,
+;	     used for bdos calls referring to memory
+;ff80-ffffh buffer used to hold old copy of 3f80-3fffh, used to hold
+;	     page-changing trampoline
+
+
+org 0f800h
+
+trampoline	equ 03f80h	;but hardcoded into `phase' op later :-/
+membufsav	equ 0ff00h
+trampsav	equ 0ff80h
+
+old_cardpg1 equ 0100h
+old_cardpg2 equ 0101h
+old_comuser equ 0102h
+old_memdrive equ 0103h
+
+old_comfcb equ 06000h	;.com fcb written here by brsetup.z
+
+jp init
+
+defb 0,0,0
+
+;start+6: bdos entry point
+bdos:
+jp bdoshndl
+
+;start+9: com fcb
+comfcb: defs 33
+
+;start+42: various other bits which may as well go here rather than
+;wasting the space.
+zcnpowrhndl: defw 0
+zcnbioshndl: defw 0
+zcnbdoshndl: defw 0
+cardpg1: defb 0
+cardpg2: defb 0
+comuser: defb 0
+dmapos: defw 080h
+trmp_sp: defw 0
+
+;fcb used to delete memory-reserving on exit
+memfcb:
+defb 15,'$$BIGRUN   ',0,0,0,0
+defs 33-16
+
+;start+88:
+bfunctbl:
+defw bfopen	;15 open file
+defw bnmem	;16 close file
+defw bsfirst	;17 search for first
+defw bsnext	;18 search for next
+defw bfdel	;19 delete file
+defw bfread	;20 read sequential
+defw bfwrite	;21 write sequential
+defw bfmake	;22 make file
+defw bfrename	;23 rename file
+defw bnmem	;24 return login vector
+defw bnmem	;25 return current disk
+defw br_exit	;26 set DMA address		(can't happen)
+defw bnmem	;27 get addr (alloc)
+defw bnmem	;28 write protect disk
+defw bnmem	;29 get r/o vector
+defw bnmem	;30 set file attributes
+defw bnmem	;31 get addr (DPB)
+defw bnmem	;32 set/get user code
+defw brread	;33 read random
+defw brwrite	;34 write random
+defw bfsize	;35 compute file size
+defw bsetrand	;36 set random record
+defw bnmem	;37 reset drive (this is good enough, under ZCN)
+defw bnmem	;38 cpm3 - access drive
+defw bnmem	;39 cpm3 - free drive
+defw brwrite	;40 write random with zero fill (not done properly!)
+defw bnmem	;41
+defw bnmem	;42
+defw bnmem	;43
+defw bnmem	;44
+defw bnmem	;45
+defw bgetfree	;46 get free disk space
+
+
+;start+152: (this uses up 103 bytes)
+
+;stuff for trampoline (used to run stuff in ZCN mem config)
+;this isn't re-entrant since it doesn't need to be - when in ZCN,
+;however we got there, int/nmi/bdos/bios are handled natively.
+
+;think VERY carefully before changing this, as if the size changes,
+;will need to make sure bdos thing is still on a 256-byte boundary!
+
+tramp_start:
+
+phase 03f80h
+
+;zcncall calls it here
+
+;save (66h) in case it's not F7h
+;(ZCN will fix it when called)
+ld a,(066h)
+push af
+call patch_off
+pop af
+ld (066h),a
+
+trmpcall: call 0	;modified
+
+push af
+push hl
+call patch_on
+pop hl
+pop af
+ret
+
+
+;af/hl corrupt
+patch_on:
+di
+
+ld a,0c9h
+ld (066h),a
+
+;make sure there are no ints
+xor a
+out (060h),a
+
+cpg1op: ld a,0		;modified
+out (012h),a
+cpg2op: ld a,0		;modified
+out (013h),a
+
+;fix nmi/bios/bdos
+ld hl,powrhndl
+ld (031h),hl
+ld hl,bios
+ld (1),hl
+ld hl,bdos
+ld (6),hl
+
+patch_end:
+im 1
+
+ld a,0f7h
+ld (066h),a
+
+ei
+ret
+
+
+;af/hl corrupt
+patch_off:
+di
+
+ld a,0c9h
+ld (066h),a
+
+;re-enable usual ZCN ints
+ld a,9
+out (060h),a
+
+;restore old nmi/bdos/bios
+ld hl,(zcnpowrhndl)
+ld (031h),hl
+ld hl,(zcnbioshndl)
+ld (1),hl
+ld hl,(zcnbdoshndl)
+ld (6),hl
+
+ld a,042h
+out (012h),a
+inc a
+out (013h),a
+jr patch_end
+
+
+dephase
+tramp_end:
+
+
+;start+255:
+defb 0
+
+
+;start+256:
+;bios function jumptable
+;put here because some programs rely on it being on a 256-byte
+;boundary (e.g. wanderer), and this is the only convenient place
+;to do that.
+jp br_exit		;0 cold boot
+bios:
+jp br_exit		;1 warm boot
+call bioscall		;2 console status
+call bioscall		;3 console input
+call bioscall		;4 console output, c=char
+call bioscall		;5 print char in c
+call bioscall		;6 aux out
+call bioscall		;7 aux in
+;*** none of the following implemented ***
+jp bihome		;8 home disk head
+jp biseldsk		;9 select disk in c (0=A:), ret hl=dph for disk
+jp bisettrk		;10 set track to bc (0-65535)
+jp bisetsec		;11 set sector to bc (1-26)
+jp bisetdma		;12 set dma address
+jp biread		;13 read sector, ret a=0 if ok, else a=1
+jp biwrite		;14 write sector, ret same
+jp bilistst		;15 list status, ret a=0 if busy, a=255 if ok
+jp bisectrn		;16 sectran - for zcn, ret de=bc
+
+
+;start+256+71
+;we want to put a RET at start+256+90 to keep Mallard Basic happy,
+;(since someone could run that with this to get some more mem)
+;so we have to use up another 90-51=39 bytes.
+defs 39
+
+;start+256+90
+;just a nop (ok, a ret :-)) to keep Mallard Basic from crashing.
+;I presume this is some CP/M 3 BIOS routine, but it works fine
+; without it.
+ret
+
+
+
+init:
+;copy old_cardpg[12] to cardpg[12] so we can use them later.
+ld a,(old_cardpg1)
+ld (cardpg1),a
+ld a,(old_cardpg2)
+ld (cardpg2),a
+
+;copy old_comfcb
+ld hl,old_comfcb
+ld de,comfcb
+ld bc,33
+ldir
+
+;and memdrive
+ld a,(old_memdrive)
+inc a			;so 1=a:
+ld (memfcb),a
+
+ld sp,02000h
+
+;get original powr/bios/bdos handler addresses
+ld hl,(031h)
+ld (zcnpowrhndl),hl
+ld hl,(1)
+ld (zcnbioshndl),hl
+ld hl,(6)
+ld (zcnbdoshndl),hl
+
+;now fix nmi/bdos/bios
+;call patch_on by hand
+ld hl,tramp_start
+ld de,trampoline
+ld bc,tramp_end-tramp_start
+ldir
+call fixtrmpages
+call patch_on
+
+ld sp,0f800h
+
+call getuser
+ld (usersav),a
+ld a,(old_comuser)
+call setuser	;com file user area
+
+;all in place; now load com file! (already opened)
+call loadcom
+
+ld a,(usersav)
+call setuser	;restore orig. user
+
+;finally, start it up.
+ld sp,0f800h
+ld hl,br_exit
+push hl		;ret to there
+jp 0100h
+
+
+usersav: defb 0
+
+getuser:
+ld e,0ffh
+ld c,32		;get/set user
+call bdoshndl
+ret
+
+setuser:
+ld e,a
+ld c,32		;get/set user
+call bdoshndl
+ret
+
+
+loadcom:
+ld hl,0100h
+ld (hl),0c9h	;in case none of the .com loads for some reason
+rprdlp:
+ld (dmapos),hl
+push hl
+ld de,comfcb
+ld c,20		;bfread
+call bdoshndl
+pop hl
+ld de,128
+add hl,de
+push af
+ld de,(0006h)
+dec d
+dec d	;we provide a little more min. stack than ZCN since we use more :-)
+ld a,h
+cp d
+jr nc,retoobig
+pop af
+and a
+jr z,rprdlp
+
+ld hl,080h
+ld (dmapos),hl
+ret
+
+retoobig:
+ld a,(usersav)
+call bdoshndl
+
+ld de,mtoobig
+ld c,9
+call bdoshndl
+jp br_exit
+
+mtoobig: defb 'Command file is larger than TPA$'
+
+
+
+bioscall:
+pop hl
+dec hl
+dec hl
+dec hl
+;hl is now the address which was called.
+
+;we want to call high byte of (zcnbioshndl) with low byte of hl.
+ld a,(zcnbioshndl+1)
+ld h,a
+
+;however, we want to do it with ZCN paged in... :-)
+;so go via routine which deals with that.
+
+;falls through
+
+;calls routine at hl with ZCN paged in
+;af/hl are corrupted before call; all but f are preserved after call.
+;(that's good enough for bdos/bios, but nmi needs wrapper)
+zcncall:
+push bc
+push de
+push hl
+
+;preserve mem used for trampoline
+ld hl,trampoline
+ld de,trampsav
+ld bc,128
+ldir
+
+;tramp_end-tramp_start must be <=~112! (currently 103)
+ld hl,tramp_start
+ld de,trampoline
+ld bc,tramp_end-tramp_start
+ldir
+call fixtrmpages
+pop hl
+pop de
+pop bc
+ld (trmpcall+1),hl
+;set up stack for it
+ld (trmp_sp),sp
+ld sp,04000h		;assumes it's running at 3f80-3fffh and has room!
+call trampoline
+ld sp,(trmp_sp)
+push bc
+push de
+push hl
+
+ld hl,trampsav
+ld de,trampoline
+ld bc,128
+ldir
+
+pop hl
+pop de
+pop bc
+ret
+
+
+;none of the rest done - ignore if called
+bihome:
+biseldsk:
+bisettrk:
+bisetsec:
+bisetdma:
+biread:
+biwrite:
+bilistst:
+bisectrn:
+ret
+
+
+;now the bdos
+bdoshndl:
+;test for func 2 first, to keep that as fast as possible.
+ld hl,(zcnbdoshndl)
+ld a,c
+cp 2
+jp z,zcncall
+
+;if it's zero, jp to br_exit
+and a
+jp z,br_exit
+
+;func 9 prints a string; func 10 gets a line of input from the console.
+;these are special cases, so deal with them separately.
+cp 9
+jp z,func9
+cp 10
+jp z,func10
+
+;none of the other ones less than 15 need any special attention, so
+;here's a short-cut for those:
+cp 15
+;hl is still (zcnbdoshndl)
+jp c,zcncall
+
+;trap function 26, as we're the only ones who need know the real
+;dma buffer address.
+cp 26
+jp z,func26
+
+;die if a ZCN-specific call is made.
+cp 128
+jp nc,br_exit
+
+;just quietly ignore other funcs >46.
+cp 47
+ret nc
+
+
+;otherwise, we have a complicated mess to deal with. :-)
+;we deref a table to deal with them, like ZCN.
+
+sub 15	;we know function is >=15
+
+push de
+ld de,bfunctbl
+ld h,0
+ld l,a
+add hl,hl
+add hl,de
+ld e,(hl)
+inc hl
+ld d,(hl)
+ex de,hl
+pop de
+jp (hl)
+
+
+bnmem:
+;no memory stuff needed, just call the bdos
+ld hl,(zcnbdoshndl)
+jp zcncall
+
+
+;ret z if (user's) dma is at 80h
+;f/hl corrupt
+dmachk:
+ld hl,(dmapos)
+push de
+ld de,080h
+and a
+sbc hl,de
+pop de
+ret
+
+dma_in:
+call dmachk
+ret z
+
+push bc
+push de
+ld hl,080h
+ld de,membufsav
+ld bc,128
+ldir
+ld hl,(dmapos)
+ld de,080h
+ld bc,128
+ldir
+pop de
+pop bc
+ret
+
+dma_out:
+push hl
+call dmachk
+pop hl
+ret z
+
+push hl
+ld hl,080h
+ld de,(dmapos)
+ld bc,128
+ldir
+ld hl,membufsav
+ld de,080h
+ld bc,128
+ldir
+pop hl
+ret
+
+
+fcbsav1: defw 0
+fcbsav2: defw 0
+fcbsrc: defw 0
+
+
+;returns nc if fcb is already in zero page and fcb_out shouldn't be called.
+fcb_in:
+;don't mess with fcbs already in zero page
+ld a,d
+and a
+ret z	;and nc
+
+ld hl,(05ch)
+ld (fcbsav1),hl
+ld hl,(05ch+2)
+ld (fcbsav2),hl
+push bc
+push de
+ex de,hl
+ld (fcbsrc),hl
+ld de,03ch
+ld bc,36
+ldir
+pop de
+pop bc
+scf
+ret
+
+
+fcb_out:
+push hl
+ld hl,03ch
+ld de,(fcbsrc)
+ld bc,36
+ldir
+ld hl,(fcbsav1)
+ld (05ch),hl
+ld hl,(fcbsav2)
+ld (05ch+2),hl
+pop hl
+ret
+
+
+print_in:
+input_in:
+push bc
+push de
+ld hl,080h
+ld de,membufsav
+ld bc,128
+ldir
+pop de
+ex de,hl
+ld (fcbsrc),hl	;might as well
+pr_in2jp:
+ld de,080h
+push de
+ld bc,128
+ldir
+pop de	;change de to use the temp buf
+pop bc
+ret
+
+pr_in2:
+push bc
+jr pr_in2jp
+
+
+
+input_out:
+push hl
+ld hl,080h
+ld de,(fcbsrc)
+ld bc,128
+ldir
+ld hl,membufsav
+ld de,080h
+ld bc,128
+ldir
+pop hl
+ret
+
+print_out:
+push hl
+
+;(print_out doesn't need to copy string buffer back, of course!)
+
+ld hl,membufsav
+ld de,080h
+ld bc,128
+ldir
+pop hl
+ret
+
+
+
+;XXX these all do fcb and dma for now - crude!
+bfopen:
+bsfirst:
+bfdel:
+bfread:
+bfwrite:
+bfmake:
+bfrename:
+brread:
+brwrite:
+bfsize:
+bsetrand:
+;the ones above have fcb addr in de, so point to our temp one.
+call fcb_in
+jr c,fcbnz
+
+;mustn't do fcb_out, then.
+call dma_in
+ld hl,(zcnbdoshndl)
+call zcncall
+jp dma_out
+
+fcbnz:
+;otherwise, use copy of fcb at 3ch.
+ld de,03ch
+call dma_in
+ld hl,(zcnbdoshndl)
+call zcncall
+call dma_out
+jp fcb_out
+
+
+bsnext:
+bgetfree:
+call dma_in
+ld hl,(zcnbdoshndl)
+call zcncall
+jp dma_out
+
+
+func9:
+push de
+call print_in
+pop de
+f9lp:
+push de
+ld hl,0100h
+ld a,(hl)
+ld (hl),'$'	;in case there isn't a `$' in that 128 bytes
+push af
+ld hl,(zcnbdoshndl)
+ld de,080h
+ld c,9
+call zcncall
+pop af
+ld (0100h),a
+;see if there was a `$' in that bit
+ld hl,080h
+ld bc,128
+ld a,'$'
+cpir
+pop de
+jr z,func9done	;stop if so
+;otherwise print next 128
+ld hl,128
+add hl,de
+push hl
+call pr_in2	;this wants it in hl; copy next 128 bytes
+pop de
+jr f9lp
+
+
+func9done:
+jp print_out
+
+
+func10:
+call input_in
+ld hl,(zcnbdoshndl)
+call zcncall
+jp input_out
+
+
+func26:
+;ZCN doesn't need to know the dma address, but *we* do. :-)
+ld (dmapos),de
+ret
+
+
+
+br_exit:
+;we have to know the stack is in a safe place to call patch_off
+;(i.e. not at 4000h, which it could be now, in theory)
+;also, this makes sure the `ld hl,0:push hl' below is ok!
+ld sp,02000h
+
+;delete our memory-reserving file `$$bigrun'.
+;it's not particularly elegant freeing the memory before we've finished
+;with it, but since ZCN doesn't multi-task this is ok. :-)
+
+call getuser	;save current user
+push af
+ld a,15
+call setuser
+ld de,memfcb	;already has correct drive in fcb
+ld c,19		;delete file
+call bdoshndl
+;don't care whether it worked or not, particularly.
+pop af
+call setuser	;restore user
+
+;won't be re-entrant, of course...
+ld a,0c9h
+ld (0100h),a
+
+;call patch_off by hand, and exit.
+ld hl,tramp_start
+ld de,trampoline
+ld bc,tramp_end-tramp_start
+ldir
+ld hl,0
+push hl		;so it'll warm boot after patch_off
+jp patch_off
+
+
+
+powrhndl:
+;do nothing. it's really too complicated and risky.
+;(well, ok, the real reason is I tried and couldn't get it working :-))
+
+;lose the rst 30h's return address
+inc sp
+inc sp
+
+;this re-enables ints if needed
+retn
+
+
+;MUST be called before trampoline or patch_on are
+fixtrmpages:
+ld a,(cardpg1)
+ld (cpg1op+1),a
+ld a,(cardpg2)
+ld (cpg2op+1),a
+ret

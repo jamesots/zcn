@@ -1,0 +1,12 @@
+NAME
+	cat - display a text file without pausing
+
+SYNOPSIS
+	cat filename
+
+DESCRIPTION
+	Displays the file. You can use ^C to abort. `cat' is an
+	alternative name for `type'.
+
+SEE ALSO
+	more

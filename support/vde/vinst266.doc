@@ -1,0 +1,450 @@
+                                 VINST266.DOC
+                                 ------------
+                           [Supplement to VDE.DOC]
+
+                    Instuctions for VINSTALL 2.66 (06/88)
+                Installation Utility for Video Display Editor
+
+                               (c)1988 E. Meyer
+
+
+     As distributed, VDE is set up for a basic Generic Terminal, and VDE-M is 
+set up for an Osborne Executive.  Unless you have an Executive, you will want 
+to re-"install" VDE(M) before using it.  The "Generic" VDE installation may 
+run on many different computers, but it is very slow.
+     VDE can now be installed for ANY terminal; if improperly installed, the 
+display may be a mess, but there are no other side effects.  VDE-M requires a 
+computer with memory-mapped video; if improperly installed, it may crash.
+     Most users should be able to install VDE simply by going to the Terminal 
+Installation and choosing the <L>ist option to select from a menu of terminals 
+already built into VINSTALL.  The list is not exhaustive, but it includes most 
+basic types: for example, the "LearSiegler ADM3" data should do well enough on 
+Qume, Wyse, Freedom and many other terminals, as well as many computers, that 
+emulate an ADM3 terminal.  Check your manual to see whether your machine 
+emulates one on the menu, or comes close.  Once you have VDE basically 
+working, you may want to go through the detailed <E>dit procedure to fine tune 
+things; the better the installation, the faster and more attractive the 
+display will be.
+     NOTE: the installation of arrow keys affects VDE's command behavior.  If 
+the keys ^J,^K,^L are in use as arrow keys, as in many of the CP/M defaults, 
+they will not function as Wordstar synonyms.
+     Installing VDE for your computer should not be difficult.  If you find 
+that it was, please send me a note with the details of what was required, so 
+that future versions of VINSTALL can be improved.
+
+     Terminal installation, while necessary, is only one part of VINSTALL.  
+There are also a number of User Options affecting the operation of VDE that 
+you can select or modify to suit your taste, and a default set of Macro Keys.
+     The default printer installation is a basic Teletype (no special codes 
+enabled); VDE assumes only that the printer responds normally to Backspace (if 
+^PH is used), Linefeed, and Formfeed.  You will probably want to redo this, so 
+you will have access to your printer's special features.
+     
+
+=============================  RUNNING VINSTALL  =============================
+
+VINSTALL SYNTAX:    A>vinstall {d:}vdename{.com} {instfil}     "{}"=optional
+
+     Typically, you can use VINSTxx to modify VDExx.COM (of course, feel free 
+to rename these files more conveniently) simply by typing:
+                    A>VINSTxx VDExx
+and selecting the values you want to change.  If you have to do a manual 
+installation of VDE for your computer, you may want to create an "installation 
+file" which you can use (and give to others) to supplement the built-in 
+terminal list of VINSTALL.  This is done by specifying another filename:
+                    A>VINSTxx VDExx TERMNAME
+VINSTALL will load and use (or create) the file TERMNAME.VDE (or .VDM), and 
+update it as well as VDE.COM when you exit.  The installation file is very 
+small, containing just terminal parameters (no user options, etc).
+     It is also possible to create "key files" of VDE macro key definitions.  
+These work just the same way, except they must have a filetype of ".VDK", and 
+this must be specified on the command line, eg:
+                    A>VINSTxx VDExx MYKEYS.VDK
+     There are also "printer files" of type ".VDP", which store your printer 
+installation data, and work the same way:
+                    A>VINSTxx VDExx OKIDATA.VDP
+(No, you can't specify more than one supplemental file at once.)  The version 
+numbers of VDE(M), VINSTALL, and any ".VDx" files must "agree" or you will get 
+an error.  The match need not be exact, as there may be a new release of VDE 
+without modifying the installation areas.
+     VINSTALL's Key (".VDK") files are compatible with MSDOS versions of VDE 
+as well (except that the MSDOS version allows up to 1K for definitions).
+
+     VINSTALL is largely self-documenting, and steps you through each item 
+individually.  If this is your first time running the program, take advantage 
+of its "Help" option before you start in, for some basic instructions.  You 
+may also find a good ASCII chart helpful.  VINSTALL uses several different 
+types of data entry:
+     TEXT - Just type in the character(s).
+     LOGICAL - Yes/No.  Just type "Y" or "N".
+     DECIMAL - Enter a number from 0 to 255.
+     HEX - Enter a two-digit hex byte value 00-FF.  (Don't omit lead zeros.)
+     BYTE STRINGS - fixed length: enter the required number of hex bytes.
+                    variable: enter the (hex) count for the number of bytes, 
+              followed by the bytes themselves.  Example:  (02)1B3D.  The max- 
+              imum length is given in square brackets [#].  This format is 
+              referred to below as "(#),bytes".
+VINSTALL can't check for illegal values; be careful what you enter!
+
+     What follows is a more detailed explanation of installation items, in 
+about the same order as in the VINSTALL procedure.  Most people will be using 
+VDE; you can try to use VDE-M instead if you have memory mapped video with:  
+(1) a high bit that can be used to highlight and provide a cursor; (2) an 
+absolute address at or above 4000h.  Memory mapped video provides much faster 
+screen display if your hardware supports it.
+
+
+=============================  USER OPTIONS  =================================
+
+Create BAKup files (Y/N) - Should a backup file be made when you edit an 
+    existing file?  Choose "Y" to play safe, "N" to save disk space.
+Default file mode (W/A/N) -  Which of the three file modes "W","A","N" 
+    described in VDE.DOC do you want as the default?  (Originally "A".)
+Auto mode select filetypes  -  You can specify two filetypes (or masks, using 
+    "?" as a wildcard) to automatically set a file mode other than the 
+    default.  For example, you can declare all "ASM" files to be "N" mode, or 
+    all filetypes "?88" to be "W", by default.  If not used, fill with some 
+    illegal character like ".".
+
+Default insert on (Y/N) - Do you want the INSERT toggle to start out ON when 
+    first entering VDE?  (Originally No.)
+Default ruler on (Y/N) - Do you want the Ruler line (^OT) to start out ON when 
+    first entering VDE?  (Originally No.)
+Default HCR display on (Y/N) - Do you want Hard CR display (^OD) to start out 
+    ON when entering a Document file ("W/A" mode)?  Originally Yes.  (The 
+    default is always OFF in "N" mode.)
+Enable hyphenation (Y/N) - Do you want hyphenation (^OH) to start out ON when 
+    first entering VDE?  Originally Yes.
+
+Left and Right margin columns (1-255) - Default margin settings for "W/A" 
+    modes.  Set both to 1 to entirely disable wordwrap and reformatting.
+Scroll overlap (0-255) - This is the number of lines overlap between screens 
+    when scrolling with ^R/^C.  The smaller, the larger the scroll.  Keep this 
+    smaller than your screen size!
+
+Show system files (Y/N) - Do you want files with the SYStem attribute to show 
+    in the VDE directory display?
+Fixed drives (A-P) -  This lets you specify that up to two CP/M logical drives 
+    are nonremovable media (hard or RAM disk), so VDE won't reset them before 
+    writing to them, speeding up some systems.  Enter two drives from "A" to 
+    "P"; to leave either blank, enter "@".  (The default is "@@", or none; if 
+    you have a RAM drive C:, enter "C@".)  Caution: naming a floppy drive here 
+    can cause serious BDOS errors on CP/M 2 systems.
+Ring bell on error (Y/N) - Do you want your terminal bell to ring when a VDE 
+    error message displays?
+Enable help menus (Y/N) - Do you want to have the help menus (^J,ESC-H) avail- 
+    able?  Normally "Y".  If you change this to "N", you will have about 1K 
+    more free memory for editing.
+Alternate video in header (Y/N) - Do you want the header, messages, etc to 
+    appear in a contrasting video mode (if installed)?
+Suppress header by default (Y/N) - Do you want header display (^OQ) to start 
+    out off?  Normally "N", and the header is displayed.
+
+Clock speed in MHz (01-FF) - Set this hex value to reflect your CPU clock 
+    speed; most Z80 computers are 4.0 MHz (use 40 here).
+Horizontal scroll delay (01-FF) - This value affects the delay between 
+    scrolling the current line and the rest of the screen, when working beyond 
+    the right screen edge.  The average value is 80; adjust up or down as you 
+    like.  (VDE-M is so fast that a value of 01 is recommended.)
+
+Hard Tab display spacing  -  This determines how any actual Tabs (^I) in your 
+    text will display.  Usually 8, this can be made 2, 4, 16, or any other 
+    power of two.  Other values will produce erratic results.
+Variable tab stops -  Enter a list of up to 8 variable tab stop columns, in 
+    ascending order.  (Column 1 is the leftmost.)  Fill unused values with 
+    zero.  Originally 5,15,35,55.
+
+         You will next be asked whether you want to continue to MODIFY DEFAULT 
+CHARACTERS? (Y/N)  Ordinarily you will NOT; however, if a default assignment 
+in VDE conflicts with some special application, you can change these values.  
+Remember the new values if you do!  When entering control codes (00-1F), avoid 
+standard ASCII values ^H,^I,^J,^L,^M,^Z (ASCII 08,09,0A,0C,0D,1A).
+
+Wildcard character - Normally "_", this is the character that will be used as 
+    a wildcard in FIND strings.  Change if you wish.
+Block mark character (00-1F) - Normally ^@ (00), but if you need to imbed that 
+    code in your files for any reason you can change this.
+Print toggles (00-1F) - These are the codes that will call up the four toggles 
+    defined in your Printer installation.  Normally ^B,^D,^S,^Y, corresponding 
+    to WordStar bold, doublestrike, underline, and ribbon/italic.
+Print switches (00-1F) - These are the codes that will call up the four 
+    switches defined in your Printer installation.  Normally ^Q,^W,^E,^R.
+
+
+==========================  TERMINAL INSTALLATION  ===========================
+
+Terminal ID - Identify the terminal you are installing. (16 characters)
+Viewable screen columns (40-255) - Enter the width of your screen in columns.  
+    The normal value is 80 for a standard screen.
+Screen lines (4-255) - Enter the number of lines on your screen.  Normally 24 
+    for a standard screen.  Must be at least 4.
+
+DELete character (00-7F) - VDE always accepts DEL (7F) as a delete key. If 
+    your keyboard can't generate this you can install an alternate value here 
+    (example: 1F enables ^_ on an Osborne 1).  Also, if you prefer to have a 
+    destructive (deleting) Backspace, you can install ^H (08) here.  Otherwise 
+    you can leave this at the default value, FF for "not used".
+Arrows up, down, right, left (00-7F) - VDE always accepts Wordstar arrows 
+    ^E,^X,^D,^S, as well as ^H (backspace) and ANSI ESC sequences.  If your 
+    terminal has arrow keys that generate different values, you can install 
+    them as alternates here.  Omit high (parity) bits; VDE strips these.  Use 
+    "FF" for "not used".  The default is CP/M ^K,^J,^L, entered as 0B0A0CFF.  
+    (Don't install ^H here.)  These keys will not function as Wordstar 
+    synonyms unless you remove these assignments.
+
+Terminal init, deinit - Enter the codes you want sent to initialize your 
+    screen on entry into VDE, and to deinitialize on exit, in the form (# of 
+    bytes),bytes.  Example: ^Z is (01)1A.  Minimally, both sets of codes 
+    should clear the screen.
+
+                         INSTALLATION (Generic VDE only)
+
+Autowrap at line end (Y/N) -  Usually Yes, as most terminals wrap down to the 
+    next line when a character is printed at the right edge of the screen.  If 
+    yours discards characters instead, set this to No.
+Clear to end of line - Enter the codes to clear to the end of the line, as 
+    (#),bytes.  Example: ESC-T is (02)1B54.  If your terminal can't do this 
+    then zero it out (00).
+Alternate video on/off - Enter the codes (#),bytes to turn your favorite video 
+    attribute (eg inverse, dim) on and off.  This will be used for control 
+    codes and (optionally) the header and messages.  If your terminal has no 
+    attributes, zero these out (00).
+Use high bit for alt. video (Y/N) - If, instead, your terminal needs the high 
+    bit set on characters to put them in alternate video, zero the above 
+    strings out and say Yes here; otherwise, No.
+Console filter (7D-FF) - This is the highest ASCII code that will be sent to 
+    the screen.  Normally 7F; if your terminal can't display codes 7F or 7E 
+    (DEL and tilde), lower this to 7E or 7D.  Characters filtered out will 
+    display as a "?".
+
+Cursor positioning mode (S/R/A/N) - This tells VDE how your terminal can be 
+    made to put the cursor at any given row/column on the screen:
+              "S"tandard = leadin byte(s), row byte, column byte (default)
+              "R"eversed = leadin byte(s), column byte, row byte
+              "A"NSI std = ANSI standard sequences "ESC[rr;ccH"
+              "N"one     = no absolute cursor addressing supported
+Cursor positioning sequence - This is the actual sequence used to address the 
+    cursor.  IF YOU CHOSE "A" mode above, you can skip this entirely.  IF YOU 
+    CHOSE "S" or "R", then enter the 4-byte sequence for addressing the cursor 
+    to the top left:  two lead bytes, then two row/column offsets.  Most 
+    terminals use ESC,=,20h+row,20h+col, or 1B3D2020.  If you have only one 
+    lead byte, enter 00 for the second.  IF YOU CHOSE "N", then you must enter 
+    two 2-byte sequences instead: first one to home the cursor, then one to 
+    move it right.  If either is only one byte, enter 00 for the second.  
+    Typical values are home=1Eh, right=0Ch, which would make 1E000C00.
+Delay after cursor positioning (00-FF) - Normally 00.  Some slow terminals 
+    require a delay here to accomplish cursor movement; adjust this value 
+    upwards as necessary.
+
+Insert, Delete line - Sequences that will cause the current cursor line to be 
+    deleted, or a new line inserted there.  Most terminals can do this.  
+    Example: on an ADM3-style terminal, ESC-E or (02)1B45 inserts a line 
+    before the current one, while ESC-R or (02)1B52 deletes a line.  For a few 
+    terminals, you have to specify which line is to be inserted/deleted; in 
+    this case, enter the sequences for line 1 (the second screen line).  If 
+    your terminal can't do this at all, zero these out (00).
+Ins/del specific to line 1 - Usually No; set to Yes only if the ins/del 
+    sequences you installed above are for line 1 only, rather than general.
+
+                     INSTALLATION (Memory-mapped VDE-M only)
+
+Unused columns of RAM (0-255) - Enter the number of unused bytes in video RAM 
+    between the end of one visible line and the start of the next.  Example: 
+    many computers have 128 bytes of RAM per line, but only show 80 of them.  
+    So there would be 48 unused columns.
+Cursor on/off - Enter the codes (#),bytes to turn the regular CP/M cursor on 
+    and off, so it won't appear on the VDE screen.  If you can't do this zero 
+    them out (00), and the cursor will remain visible at the upper corner of 
+    the screen.
+
+Video RAM start (4000-FFFF) - Enter the starting address of your video memory, 
+    as four hex digits.
+Video in/out code - If your video RAM is in the ordinary bank of memory (eg, 
+    at F000), just enter "C9" here (that's a RET instruction).  Otherwise, you 
+    will need the machine-language code to switch video memory in and out.  
+    There are 16 bytes available for each routine, and you must preserve all 
+    the CPU registers (including A), and end with a RET.  You should find the 
+    assembler code to do this in your terminal manual; to convert it to hex, 
+    either look up the hex values in a Z80 reference book, or use DDT or 
+    ASM/MAC to write and assemble the code to hex form.  You may find it 
+    easier to install this code with an assembler overlay than with VINSTALL.  
+    The addresses are 0190h (VidIN) and 01A0h (VidOUT).
+       CAUTION: if switching in video RAM affects the low end of memory (0000- 
+    3FFF) in any way, you will not be able to use VDM.  There is no provision 
+    for relocating any VDM code to cope with such situations.
+
+
+===========================  PRINTER INSTALLATION  ===========================
+
+     VDE.LBR includes a sample printer driver: EPSON.VDP.  This shows you how 
+to implement the basic features (emphasized, underline, etc) on an Epson FX or 
+LQ compatible printer.  See above for how to load and use this file.
+
+Printer ID - Identify the printer you are installing.  (16 characters)
+Send LF after CR (Y/N) - Normally Yes.  But with some printers, which manufac- 
+    ture their own LF on receiving a CR, you will want No here.
+
+Page length (0-255) - Set the number of text lines to print on a page.  (Does 
+    not include the top margin or 3 extra lines for a header, if used.) 
+    Setting to 0 disables pagination entirely.
+Top margin (0-255) - Set the number of blank lines, if any, to skip at the top 
+    of each page when printing.  (Originally 0, none.)
+Left margin (0-255) - Set the number of blank columns to skip at the left of 
+    each line when printing.  (Originally 0.)
+
+Printer initialization - Enter an optional string of code (#),bytes to send to 
+    the printer before each print job, to set margins, print modes etc.
+Printer deinit - Enter another optional string (#),bytes to send to the 
+    printer after each print job, to restore printer to desired state on exit.
+Codes for toggles - Enter the actual hex codes (#),bytes to send to the 
+    printer on encountering each of the four toggle codes, first to turn a 
+    feature on, then off.  The WordStar conventions are:
+              ^B  boldface             ^S  underline
+              ^D  doublestrike         ^Y  ribbon/italic
+    but you can use these however you like.
+Codes for switches - Enter the actual hex codes (#),bytes to send to the 
+    printer on encountering each of the four switches.  These have no pre- 
+    established meaning.
+
+
+================================  MACRO KEYS  ================================
+
+     The default macro definitions are those attached to the commands ESC-0..9 
+when VDE is first entered.  By changing them you can configure VDE to suit 
+your own specialized writing requirements.  (Any Keys defined with ESC-# while 
+running VDE override the defaults.)
+         VINSTALL gives you a display much like this:
+
+      MACRO KEYS:  (01C6 bytes free)  <---- note free bytes (up to 01F4 = 500)
+      <0><>
+      <1><>                           <---- "<>" flag means empty
+      <2><>
+      <3>^[;^C                        <---- normal macro key
+      <4><>
+      <5><N>World Wide Widgets Inc.   <---- "<N>" flag means no-rpt key
+      <6><>
+      <7><Q>^QR^[B^QC^[T^[C           <---- "<Q>" flag means quiet key
+      <8><>
+      <9><>
+
+This is pretty straightforward; you just select the number of the Key you wish 
+to redefine, then type in the new definition, much as you would in VDE.  All 
+the same rules apply (but VINSTALL will accept longer keys, up to 128 bytes).  
+If the new definition is too long to fit it will be rejected.
+
+
+==========================  FURTHER USER PATCHING  ===========================
+
+     Entry to VDE is via a JP instruction at 0100h.  The current value is JP 
+0480h.  Thus, to add a user entry routine, you can instead JP to your own code 
+in the User Patch area, and finish it with JP 0480h.  Exit from VDE is via a 
+JP instruction at 0103h, normally JP 0000h.  To add a user exit routine, you 
+can instead JP to code in the Patch area, ending it with a warm boot (RST 0).
+     The address of the User Patch area will be given to you by VINSTALL.  
+This small region in VDE can be used to install any extra patch code you need. 
+(Example:  if your video in/out routines won't fit into 16 bytes, you can jump 
+to the User Patch area and put more code there.)  This is the ONLY such area 
+available, as VDE uses all available memory after its own code for editing 
+text.  Note: if you find the User Patch area too small, you can also use up to 
+32 extra bytes before it.  This is the Print Switch code area; you must then 
+avoid using the four Switch codes.
+     VINSTALL also tells you the addresses of the command tables in VDE/M.  
+You may find this useful if you need to go in and change a VDE command key 
+that conflicts with your computer's firmware.  There are four command tables: 
+basic, ESC/^K, ^O, and ^Q.  Each is a list of 3-byte entries, with a one byte 
+keycode, then a two byte address.  (Examples: you will find the ^T command in 
+the basic table; the ^OX command appears in the ^O table, as ^X.)  Find the 
+problem keycode, and use DDT or another utility to change it.  (You will also 
+see the "keycodes" 00 and 80-84h in the tables; these are used internally for 
+arrow keys and other functions.)
+
+
+=============================  RESTORE DEFAULTS  =============================
+
+     This option is provided in the event that someone has so mucked up your 
+copy of VDE that you can't sort out what's wrong.  This should return VDE to 
+nearly the state it was distributed in: all User Options restored to their 
+defaults, Terminal Installation set to Generic (or Osborne Exec), printer set 
+to a basic Teletype, no Macro Keys, no User Patch code.
+
+
+==========================  GOING BEYOND VINSTALL  ===========================
+
+     If your computer requires special additional code, and you know how to 
+use an assembler, you may want to make an overlay to add this code to VDE.  
+(You may also find this the easiest way to install other data, such as the 
+VidIN/OUT routines for the VDM Terminal Installation.)  Write the overlay 
+file, generate a HEX file with your assembler, then merge it with VDE.COM 
+using MLOAD or a similar utility.  (Be sure the code fits!)
+     Example: the following overlay adds special code for the NEC Starlet to 
+the User Patch area, where it is immediately executed when VDE is called up.  
+The Starlet has different terminal emulations and key definitions; most of 
+this code just ensures that it's in Soroc mode (which is what VINSTALL sets 
+VDE up for), and sets the cursor and DEL key definitions properly.
+     There is another problem: the VDE case toggle command (^^) has to be 
+changed, as it will conflict with one of the Soroc arrow keys.  (On some other 
+computers, you can't generate ^^ from the keyboard at all.)  Note how the 
+overlay finds the address of the main command menu (all the menu addresses are 
+stored at 010B-0112h in VDE.COM; alternatively, you can get VINSTALL to tell 
+you what they are), adds the appropriate offset (determine this yourself), and 
+then changes the command key to something else.  Note the flags "*--->" for 
+data that may change with versions of VDE.
+       ;NEC8401 Patch for VDE 2.64 (Z80 mnemonics)
+       org  0100h             ;At beginning of VDE.COM,
+              jp   entry      ; jump to User Patch area
+*--->  org  0250h             ;At User Patch area,
+       entry: ld   c,08h      ; set screen mode:
+              ld   e,81h      ;  Soroc, wrap on, fnkeys off, etc
+              rst  10h        ;   call special BIOS
+              ld   c,4Eh      ; set cursor keys:
+              ld   e,3        ;  to mapped codes
+              rst  10h        ;   call special BIOS
+              ld   c,4Dh      ; set definable key:
+              ld   de,data    ;  using data below
+              rst  10h        ;   call special BIOS
+*--->         ld   hl,(010Bh) ; get address of main command menu
+*--->         ld   de,7*3     ;  offset of ^^ (this may change)
+              add  hl,de      ;   point to offending ^^ code
+              ld   (hl),'\'   ;    change it to a backslash instead
+*--->         jp   0480h      ;Jump to VDE Start point
+       data:  db  4,7Fh,0,0   ;Data to set "DEL" key as DEL (7F)
+              end
+
+     Here's another example: the Bondwell 14 will run VDE-M, but can't turn 
+off its own cursor with an ESC sequence.  After selecting the BW14 terminal 
+installation from VINSTALL, you need to add small Z80 routines to turn off the 
+cursor on entry, and restore it on exit.
+       ;BONDWELL 14 patch for VDE-M 2.64 (Z80 mnemonics)
+       org  0100h           ;At beginning of VDE.COM,
+              jp   entry    ; (0100h) jump to entry routine in Patch area
+              jp   exit     ; (0103h) jump to exit routine in Patch area
+*--->  org  0250h           ;At User Patch area,
+       entry: ld   a,0Ah    ;entry routine to turn cursor off
+              out  10h,a
+              ld   a,20h
+              out  11h,a
+              ld   a,0Bh
+              out  10h,a
+              xor  a,a
+              out  11h,a   ;Done...
+*--->         jp   0480h   ;Jump to VDE start point
+       ;
+       exit:  ld   a,0Ah   ;exit routine to turn cursor on
+              out  10h,a
+              ld   a,40h
+              out  11h,a
+              ld   a,0Bh
+              out  10h,a
+              ld   a,8
+              out  11h,a   ;Done...
+              rst  0       ;Reboot CP/M
+              end
+
+You can also add code like this to VDE.COM using the "a" command to enter 
+assembler mnemonics in a debugging utility like DDT or (Z)SID.
+
+
+  Eric Meyer, 427 N. Washington, Bloomington IN 47401  ---  CIS [74415,1305]
+
+==============================================================================
+                       

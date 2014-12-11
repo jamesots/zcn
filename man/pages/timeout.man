@@ -1,0 +1,10 @@
+NAME
+	timeout - set time before auto-poweroff (or disable it)
+
+SYNOPSIS
+	timeout [mins]
+
+DESCRIPTION
+	Set auto-poweroff timeout to `mins' minutes, or disable
+	auto-poweroff if `mins' is zero. If `mins' is absent, gives
+	terse usage help.

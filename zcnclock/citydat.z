@@ -1,0 +1,83 @@
+;data for cities
+
+;each entry is 24 bytes, and is:
+;char name[19]		asciiz city name (centered in 18 spaces)
+;char junk		unused
+;char gmt_offset	offset from GMT in hours (signed)
+;char add_half		flag, add extra half-hour to time if non-zero
+;byte *bitmap 		where city bitmap starts (in the 512x64 citybmp)
+
+numcities equ 12
+
+citydat:
+defb '      London      ',0
+defb 0
+defb 0
+defb 0
+defw citybmp+0*8
+
+defb '      Paris       ',0
+defb 0
+defb 1
+defb 0
+defw citybmp+1*8
+
+defb '      Cairo       ',0
+defb 0
+defb 2
+defb 0
+defw citybmp+2*8
+
+defb '      Moscow      ',0
+defb 0
+defb 3
+defb 0
+defw citybmp+3*8
+
+defb '     New Delhi    ',0
+defb 0
+defb 5
+defb 1	;so 5.5 in all
+defw citybmp+4*8
+
+defb '     Hong Kong    ',0
+defb 0
+defb 8
+defb 0
+defw citybmp+5*8
+
+defb '      Tokyo       ',0
+defb 0
+defb 9
+defb 0
+defw 2048+citybmp+0*8
+
+defb '      Sydney      ',0
+defb 0
+defb 10
+defb 0
+defw 2048+citybmp+1*8
+
+defb '     Auckland     ',0
+defb 0
+defb 12
+defb 0
+defw 2048+citybmp+2*8
+
+defb '    Los Angeles   ',0
+defb 0
+defb -8
+defb 0
+defw 2048+citybmp+3*8
+
+defb '     New York     ',0
+defb 0
+defb -5
+defb 0
+defw 2048+citybmp+4*8
+
+defb '  Rio de Janeiro  ',0
+defb 0
+defb -3
+defb 0
+defw 2048+citybmp+5*8

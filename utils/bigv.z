@@ -1,0 +1,937 @@
+;bigv.z - big-font text file viewer based on man's `view.z'.
+
+org 0100h
+
+jp start
+
+
+include ../zcnlib/conio.z
+include bigvfont.z	;stuff to draw BDF fonts
+include bigvdat.z	;output from bdf2z, the actual font data
+
+
+is_nc200: defb 0
+numlines: defw 0
+curline: defw 0		;current top line of page
+oldcurline: defw 0
+lpp: defw 5		;lines per page.
+
+dmabuf   equ 01c00h	;for stdio
+lineptrs equ 02000h	;32k needed for line-pointers by view.z
+
+filefcb equ 05ch
+filefcb2 equ 06ch
+filehndl: defw 0
+
+
+
+bdprint		equ 9
+bfopen		equ 15
+bfclose		equ 16
+bfdel		equ 19
+bfread		equ 20
+bfwrite		equ 21
+bfmake		equ 22
+bretdsk		equ 25
+bsetdma		equ 26
+bsetuser	equ 32
+brread		equ 33
+brwrite		equ 34
+bfsize		equ 35
+
+
+
+start:
+ld a,(066h)
+cp 0f7h
+ret nz		;needs ZCN
+
+ld c,144
+call 5
+cpl
+ld (is_nc200),a
+and a
+jr z,start1
+ld a,10
+ld (lpp),a
+
+start1:
+ld c,132	;console in/out assignments
+call 5
+ld a,l
+and a
+jr z,start2
+
+call ilprint
+defb 'bigv: bigv can only be run on the console (try doing "|" first)',0
+rst 0
+
+start2:
+;not reentrant
+;(well - actually it probably is, but I'd rather not risk it :-))
+ld a,0c9h
+ld (0100h),a
+
+ld hl,0
+ld (curline),hl
+
+ld a,(filefcb+1)
+cp 32
+jr nz,start3
+
+usage:
+call ilprint
+defb 'usage: bigv [-<start line>] filename.txt',0
+rst 0
+
+start3:
+ld a,(filefcb2+1)
+cp 32
+jr z,start4
+
+;ok, we have two args, check first starts with `-'
+ld hl,filefcb+1
+ld a,(hl)
+cp '-'
+jr nz,usage	;if not, quit giving usage
+
+;also check line no starts with (non-zero) digit
+inc hl
+ld a,(hl)
+cp '9'+1
+jr nc,usage
+cp '1'
+jr c,usage
+
+;grab number and use as initial line; a line number which is too big
+;will get fixed by the fix_pos call in the main loop.
+call atoi
+dec hl
+ld (curline),hl
+
+;copy 2nd fcb over 1st ready to read it
+ld hl,filefcb2
+ld de,filefcb
+ld bc,33
+ldir
+
+
+start4:
+ld de,filefcb
+ld c,bfopen
+call 5
+inc a
+jr nz,start5
+
+call ilprint
+defb 'bigv: error opening file',0
+rst 0
+
+
+start5:
+call ilprint
+defb 'Counting lines, please wait... ',0
+
+call idxlines
+
+ld hl,filefcb
+ld a,0		;open as "r"
+call fopenfcb
+;XXX if nc should die, but this is fairly can't-happen-ish
+;(they could have removed the card since though, so it's worth checking!)
+ld (filehndl),hl
+
+;turn off cursor
+ld a,4
+call putchar
+
+ld hl,-1
+ld (oldcurline),hl
+
+viewlp:
+call fix_pos	;fix any invalid curline position (off the end, etc.)
+
+ld hl,(curline)
+ld de,(oldcurline)
+and a
+sbc hl,de
+call nz,disp_page
+
+ld hl,(curline)
+ld (oldcurline),hl
+
+call getch
+ld hl,viewlp
+push hl		;we ret to viewlp
+cp 'q'
+jr z,view_q
+cp 27
+jr z,view_q
+cp ' '
+jr z,view_spc
+cp 7		;^G (Del->) too; handy when holding NC in air w/both hands
+jr z,view_spc	;(yeah, I read in odd positions, enough already :-))
+cp 'b'
+jr z,view_b
+cp 127		;<-Del too; ditto
+jr z,view_b
+cp 13
+jr z,view_down
+cp 10
+jr z,view_down
+cp '<'
+jr z,view_top
+cp '>'
+jr z,view_end
+cp 'P'-040h
+jr z,view_up
+cp 'N'-040h
+jr z,view_down
+cp 'E'-040h
+jr z,view_up
+cp 'X'-040h
+jr z,view_down
+;didn't match any
+ret
+
+
+
+view_up:
+ld hl,(curline)
+dec hl
+ld (curline),hl
+ret
+
+view_down:
+ld hl,(curline)
+inc hl
+ld (curline),hl
+ret
+
+view_cr:
+ld hl,(curline)
+inc hl
+ld (curline),hl
+ret
+
+
+view_top:
+ld hl,0
+ld (curline),hl
+ret
+
+view_end:
+ld hl,(numlines)
+dec hl
+ld (curline),hl
+ret
+
+view_q:
+;cls and quit
+ld a,1
+call putchar
+rst 0
+
+
+view_spc:
+;move on a page
+ld hl,(curline)
+ld de,(lpp)
+add hl,de
+ld (curline),hl
+ret
+
+
+view_b:
+;move back a page
+ld hl,(curline)
+ld de,(lpp)
+and a
+sbc hl,de
+ld (curline),hl
+ret
+
+
+fix_pos:
+;is curline<0?
+ld hl,(curline)
+bit 7,h		;good enough
+jr z,fixp1
+
+ld hl,0
+ld (curline),hl
+ret
+
+fixp1:
+;is curline+lpp>=numlines?
+ld hl,(curline)
+ld de,(lpp)
+add hl,de
+ld de,(numlines)
+and a
+sbc hl,de
+ret c
+
+;it is. if numlines<lpp move to top, else move to numlines-lpp.
+ld hl,(numlines)
+ld de,(lpp)
+and a
+sbc hl,de
+jr nc,fixp2
+
+ld hl,0
+ld (curline),hl
+ret
+
+fixp2:
+ld hl,(numlines)
+ld de,(lpp)
+and a
+sbc hl,de
+ld (curline),hl
+ret
+
+
+;build up lineptrs array from file
+idxlines:
+;there's always one line, we start with an offset for that.
+ld iy,lineptrs
+ld (iy),0
+inc iy
+ld (iy),0
+inc iy
+ld (iy),0
+inc iy
+ld hl,1
+ld (numlines),hl
+;cde=offset in file of current record, in bytes (c is MSB)
+ld de,0
+ld c,0
+
+idxreadlp:
+exx
+ld de,filefcb
+ld c,bfread
+call 5
+exx
+and a
+jr nz,idxdone
+
+;look for LFs and ^Zs - both count as EOL, and ^Z is EOF too.
+ld hl,080h-1
+ld b,128+1
+idxlflp:
+inc hl
+dec b
+jr z,idxlfdone
+ld a,(hl)
+cp 26
+jr z,idxlfdone
+cp 10
+jr nz,idxlflp
+exx
+ld hl,(numlines)
+inc hl
+ld (numlines),hl
+ld de,32768/3
+and a
+sbc hl,de
+exx
+jr z,idxlfdone		;abort if no more room (max is ~11000 lines)
+push de
+;add offset from 080h to record offset, and incr (since the line
+;starts after the LF).
+ld a,l
+and 127
+or e
+ld e,a
+inc de
+ld a,d
+or e
+ld a,c
+jr nz,idxnoinc
+inc a
+idxnoinc:
+ld (iy),e
+inc iy
+ld (iy),d
+inc iy
+ld (iy),a
+inc iy
+pop de
+jr idxlflp
+
+idxlfdone:
+;update pos-in-file
+ld hl,128
+add hl,de
+ex de,hl
+ld a,c
+adc a,0	;add carry onto c
+ld c,a
+jr idxreadlp
+
+idxdone:
+;now add lpp extra lines with the `do blank line' offset 0xff0000,
+;to make disp_page ok for cases where numlines<lpp.
+ld hl,(numlines)
+ld d,h
+ld e,l
+add hl,hl	;*2
+add hl,de	;*3
+ld de,lineptrs
+add hl,de
+ld a,(lpp)
+ld b,a
+idxendlp:
+ld (hl),0
+inc hl
+ld (hl),0
+inc hl
+ld (hl),0ffh
+inc hl
+djnz idxendlp
+ret
+
+
+
+;display page from (curline) onwards, including status line.
+disp_page:
+ld a,1
+call putchar	;cls
+call drawstr_init
+
+ld hl,(curline)
+ld d,h
+ld e,l
+add hl,hl
+add hl,de
+ld de,lineptrs
+add hl,de
+ld a,(lpp)
+ld b,a
+
+disppglp:
+push bc
+;get offset
+ld e,(hl)
+inc hl
+ld d,(hl)
+inc hl
+ld c,(hl)
+inc hl
+push hl
+
+;if c is ffh, skip it.
+ld a,c
+cp 0ffh
+jr z,skipline
+
+ld hl,(filehndl)
+push hl
+call fseek
+pop hl
+ld de,080h
+ld bc,127
+ld a,10
+ld (0ffh),a
+call fgets
+;XXX should test for read failing like this:
+;ld a,(080h)
+;and a
+;jr z,readfailed
+
+ld hl,080h
+call drawstr
+
+skipline:
+pop hl
+pop bc
+djnz disppglp
+
+call drawstr_uninit
+
+;now do status bit
+ld a,16
+call putchar
+ld a,(is_nc200)
+and a
+ld a,32+9
+jr z,disppg0
+ld a,32+20
+disppg0:
+call putchar
+call ilprint
+defb 32+98,'line ',0
+
+ld hl,(curline)
+inc hl
+ex de,hl
+call dispdec
+
+ld a,'/'
+call putchar
+
+ld de,(numlines)
+call dispdec
+
+call ilprint
+defb ' (',0
+
+ld hl,(curline)
+ld de,(lpp)
+add hl,de
+
+;have to use 32-bit maths to get the percentage right on big files :-/
+ld ix,0
+ld de,0
+ld bc,100
+call mul32
+ld de,0
+ld bc,(numlines)
+call div32
+
+;now have percentage - if >=100, say "END" :-)
+ld a,l
+cp 100
+jr nc,disppg1
+
+ex de,hl
+call dispdec
+ld a,'%'
+call putchar
+jr disppg2
+
+disppg1:
+call ilprint
+defb 'END',0
+
+disppg2:
+call ilprint
+defb ')',0
+ret
+
+
+
+;--- the rest are from zcnlib ---
+
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/bc/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)
+
+
+
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+push ix
+ld ix,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+add ix,ix
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+sbc hl,de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+;we effectively need to do 'or ix,1'.
+
+ld a,1
+defb 0ddh
+or l		;or ixl
+defb 0ddh
+ld l,a		;ld ixl,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+push ix
+pop hl
+pop ix
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp: defb '0000000000000000$'
+
+;display number in de in decimal
+dispdec:
+ld b,10
+;FALLS THROUGH
+
+;display number in de, in given base (unsigned)
+;entry: de=number to display, b=base (from 2 to 36)
+;exit: af/bc/de/hl corrupt
+dispnum:
+ld hl,numtmp+16
+ld a,'$'
+ld (hl),a
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ld c,bdprint
+jp 5
+
+
+
+;this does z=x*y (32-bit unsigned multiply)
+;entry: ixhl=x, debc=y
+;exit:  ixhl=z
+;af/bc/de/iy/bc'/de'/hl' corrupt
+mul32:
+;need addon, result and y.
+;y stays in debc, result is hl'iy and addon is de'bc'.
+push ix
+push hl
+exx
+;addon=num1
+pop bc
+pop de
+;result=0
+ld hl,0
+ld iy,0
+exx
+
+ld a,32
+mu32lp:
+;y>>=1
+and a
+rr d
+rr e
+rr b
+rr c
+jr nc,mu32sp
+;result+=addon
+exx
+add iy,bc
+adc hl,de
+exx
+mu32sp:
+;addon<<=1
+exx
+and a
+rl c
+rl b
+rl e
+rl d
+exx
+dec a
+jr nz,mu32lp
+
+;result is in hl'iy, transfer to ixhl
+exx
+push hl
+exx
+pop ix
+push iy
+pop hl
+ret
+
+
+;does z1=x/y and z2=x mod y (32-bit unsigned divide)
+;entry: ixhl=x, debc=y
+;exit:  ixhl=z1 (result), debc=z2 (remainder)
+;af/bc'/de'/hl'/iy corrupt
+d32y: defw 0,0	;stores y
+div32:
+;need result, rem, addon, y
+;(d32y) is y, result is hlix (!), rem is hl'iy and addon is de'bc'.
+
+push ix
+push hl
+;addon=num1
+exx
+pop bc
+pop de
+exx
+
+;see if we're trying to divide by zero
+;if num2=0 ret
+ld a,d
+or e
+or b
+or c
+ret z
+
+;save num2
+ld (d32y+0),bc
+ld (d32y+2),de
+
+;result=0
+ld hl,0
+ld ix,0
+;rem=0
+exx
+ld hl,0
+exx
+ld iy,0
+
+ld a,32
+
+dv32lp:
+push af
+
+;rem<<=1
+exx
+add iy,iy
+rl l
+rl h
+exx
+
+;result<<=1
+add ix,ix
+rl l
+rl h
+
+;if top bit of addon is zero skip
+exx
+bit 7,d
+jr z,dv32s1
+
+;rem|=1
+;still alternate
+ld a,1
+defb 0fdh
+or l		;or iyl
+defb 0fdh
+ld l,a		;ld iyl,a
+
+dv32s1:
+;rem-=y
+;still alternate
+;tricky as can't 'sbc iy,...'
+push hl
+push iy		;save old rem
+
+push de
+
+ld de,(d32y+0)
+push hl
+push iy
+pop hl
+and a
+sbc hl,de
+push hl
+pop iy
+pop hl
+
+ld de,(d32y+2)
+sbc hl,de
+
+pop de
+
+bit 7,h
+jr nz,dv32s2
+
+;keep the rem-addon as new rem
+pop af
+pop af
+push hl
+push iy
+
+;result|=1
+ld a,1
+defb 0ddh
+or l		;or ixl
+defb 0ddh
+ld l,a		;ld ixl,a
+
+dv32s2:
+pop iy
+pop hl
+
+;addon<<=1
+and a
+rl c
+rl b
+rl e
+rl d
+exx	;finally back to normal
+
+pop af
+dec a
+jr nz,dv32lp
+
+;now do ixhl=hlix, and debc=hl'iy
+push ix
+push hl
+pop ix		;yes, really
+pop hl
+exx
+push hl
+push iy
+exx
+pop bc
+pop de
+ret
+
+
+
+;like C func. entry: hl=addr of number, exit: hl=actual number
+atoi:
+ld b,10
+;FALLS THROUGH
+
+;convert number of specified base as ASCII at hl to number.
+;the ASCII number should be terminated by a non-digit in this base.
+;supports bases from 2 to 36
+;entry: hl=address of first digit of ASCII number,
+;       b=base (e.g. 10 for decimal)
+;exit:  hl=number
+atoibase:
+ld de,0		;total of number so far.
+atoilp:
+ld a,(hl)
+;uppercase it
+call atoiislw
+jr nc,atoi0
+res 5,a
+atoi0:
+sub 48
+jr c,atoidone	;if not digit, end
+cp 10
+jr c,atoi0a
+sub 7		;compensate if we're using letters
+atoi0a:
+cp b
+jr nc,atoidone	;if not digit, end
+;otherwise, multiply our running total by base and add this.
+push hl
+push bc
+push af
+ld l,b
+ld h,0
+call multiply
+pop af
+ld e,a
+ld d,0
+add hl,de
+ex de,hl
+pop bc
+pop hl
+inc hl
+jr atoilp
+
+atoidone:
+;got number in de - put it in hl.
+ex de,hl
+ret
+
+atoiislw:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+
+
+;this does z=x*y
+;entry: hl=x, de=y
+;exit:  hl=z
+;af/bc/de corrupt
+multiply:
+ld b,h
+ld c,l
+ld hl,0
+ld a,16
+mulp:
+and a
+rr d
+rr e
+jr nc,musp
+add hl,bc
+musp:
+and a
+rl c
+rl b
+dec a
+jr nz,mulp
+ret

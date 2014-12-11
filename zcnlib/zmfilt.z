@@ -1,0 +1,133 @@
+;unix zmac to cp/m zmac filter
+;requires zcnlib stdio and string
+;turns ' equ' and '<TAB>equ' into '  = '.
+;removes lines beginning 'org '.
+;by using stdio text files turns lf into cr/lf.
+;turns ';ZZ' (at start of line) into '   '.
+;The last feature can be used to put things in source that unix zmac
+;shouldn't see, but cp/m zmac should.
+;given a source file filename.ext, writes new file as filename.asm.
+;usage: zmfilt unixver.z
+
+org 0100h
+
+;ZZglobal fopenfcb
+;ZZglobal fgets
+;ZZglobal fputs
+;ZZglobal fclose
+;ZZglobal strncmp
+;ZZglobal strncpy
+;ZZglobal strstr
+
+
+jr start
+
+linebuf equ 080h
+linesiz equ 080h
+inh: defw 0
+outh: defw 0
+goteq: defb 0
+eq1str: defb 32,'equ',0
+eq2str: defb 9,'equ',0
+eqrepl: defb '  = '
+orgstr: defb 'org '
+zzstr: defb ';ZZ'
+zzrepl: defb '   '
+minifcb: defb 0, 0,0,0,0,0,0,0,0, 0,0,0
+
+start:
+ld hl,05dh
+ld a,(hl)
+cp 32
+ret z
+
+ld hl,05ch
+ld de,minifcb
+ld bc,12
+ldir
+
+ld hl,minifcb
+ld a,0		;read text
+call fopenfcb
+ret nc
+ld (inh),hl
+
+ld ix,minifcb
+ld (ix+ 9),'A'
+ld (ix+10),'S'
+ld (ix+11),'M'
+
+ld hl,minifcb
+ld a,1		;write text
+call fopenfcb
+ret nc
+ld (outh),hl
+
+loop:
+ld hl,(inh)
+ld de,linebuf
+ld bc,linesiz
+call fgets
+ld a,(linebuf)
+and a
+jr z,done
+
+;first test for 'org'
+ld hl,linebuf
+ld de,orgstr
+ld bc,4
+call strncmp
+jr c,loop	;loop again (drop line) if it starts 'org '.
+
+;try for ';ZZ'
+ld hl,linebuf
+ld de,zzstr
+ld bc,3
+call strncmp
+jr nc,skip1
+
+ld hl,linebuf
+ld de,zzrepl
+ld bc,3
+call strncpy
+
+skip1:
+;replace ' equ'
+ld hl,eq1str
+ld de,linebuf
+call strstr
+ld a,h
+or l
+jr z,skip2
+
+ld de,eqrepl
+ld bc,4
+call strncpy
+
+skip2:
+;replace '<TAB>equ'
+ld hl,eq2str
+ld de,linebuf
+call strstr
+ld a,h
+or l
+jr z,skip3
+
+ld de,eqrepl
+ld bc,4
+call strncpy
+
+skip3:
+;now write the line
+ld hl,(outh)
+ld de,linebuf
+call fputs
+jr loop
+
+done:
+ld hl,(inh)
+call fclose
+
+ld hl,(outh)
+call fclose
+ret

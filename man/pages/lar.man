@@ -1,0 +1,39 @@
+NAME
+	lar - create/extract/etc. .lbr archives
+
+SYNOPSIS
+	lar opt_key filename.lbr [file1 [file2 ...]]
+
+DESCRIPTION
+	Lar deals with .lbr archives, letting you create them, extract
+	files from them, and so on.
+
+	Pmarc/pmext are preferable for archiving files - lar should
+	probably be used only for extracting files in existing .lbr
+	files.
+
+OPTIONS
+	opt_key should be one of the following:
+
+	d	delete files
+	e	extract files
+	p	print files (i.e. display files onscreen)
+	r	reorganise library (change number of file slots)
+	t	give table of contents of library
+	u	update (add files)
+
+	Any of these can optionally be followed by `v', to enable
+	verbose output.
+
+BUGS
+	Since lar.com is my rather crude port of the Unix-centric
+	original, wildcards are not supported (since wildcard
+	expansion is performed by the shell on Unix, and lar relies on
+	this to handle them). But you should only be using lar to
+	extract existing .lbr files, so that should be ok. ;-)
+
+AUTHOR
+	Stephen C. Hemminger
+
+SEE ALSO
+	pmarc, pmext

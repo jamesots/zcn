@@ -1,0 +1,54 @@
+NAME
+	bbcbas - run ROM BBC Basic
+
+SYNOPSIS
+	bbcbas [-h] [basic_file]
+
+DESCRIPTION
+	Run the NC100's ROM BBC Basic as if it were a ZCN program.
+	Auto-runs `basic_file' if specified.
+
+	This man page merely covers differences from running it
+	natively under the ROM software - actually documenting BBC
+	Basic would make it pretty huge. :-)
+
+OPTIONS
+	-h	give usage help (synopsis).
+
+DIFFERENCES
+	The most significant differences:
+
+	- runs about 10% faster
+	- supports BBC-style `copy' cursor which makes editing much
+	   easier (see below)
+	- supports writing CP/M-style text files (see below)
+	- supports larger files (up to 253k)
+	- can auto-run any basic file
+	- online help of sorts (do *KEY to get index)
+	- OPENUP is not fully supported (it acts like OPENIN)
+	- the "COM:" file is not supported
+	- text windows are not supported
+	- maximum of three files open at once
+	- keyboard `typeahead' is limited
+	- *DELETE works for wildcards
+	- the only way to exit is *BYE or *QUIT
+
+TEXT FILES
+	Anywhere in BBC Basic you can read/write a text file if you
+	prefix the name with a colon (`:'). Due to the way ZCN and
+	CP/M store inexact file lengths (in multiples of 128 bytes
+	only), you should always read/write text files like this to
+	avoid problems.
+
+THE COPY CURSOR
+	You can copy text from anywhere on the screen using the cursor
+	keys (or ^E/^S/^D/^X) to move a second cursor and pressing tab
+	to copy the character it's currently on.
+
+BUGS
+	Using it via the serial port can be problematic.
+
+	PTR#/EXT# give incorrect results for text files.
+
+SEE ALSO
+	calc, runrom

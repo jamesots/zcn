@@ -1,0 +1,182 @@
+* Changes between versions   -*- mode:indented-text; mode:outline-minor -*-
+
+This file (NEWS) documents the significant changes between all
+versions of ZCN since 1.2, with the newest changes first.
+
+
+* Changes in ZCN 1.3
+
+Some important bug fixes:
+
+(The first three were also fixed in zcn12fix.zip, so they probably
+won't be `new' fixes to most people)
+
+man was totally broken; it would mysteriously die without giving any
+reason, which would lead to subtle crashes later on. This was due to
+the most stupid thinko I think I've ever perpetrated. :-(
+
+A less stupid, but still significant, thinko meant that only 1992 and
+1996 were treated as leap years. (2000, 2004, etc. weren't.) ZCN now
+has no Y2K problems (it's ok until 2099). But be sure to set the time
+and date before 2004 so it has a chance to fix the old problem. :-)
+
+Previously, if you asked rrxfer for a list of the ROM files and there
+were none, it crashed (ouch!).
+
+In the context-restore routine, the stack pointer was pointing at the
+TPA at a Bad Time when restoring things, meaning that memory in the
+B1F8h-B1FDh range (6 bytes) got blasted. Not the sort of bug you'd
+usually notice easily, but it happened to break wade.
+
+The context-restore rewrote 0038h-003Ah despite not needing to, which
+could probably have broken wade in some (relatively unusual)
+circumstances.
+
+spellwd used to crash when run without args, when spellwd wasn't the
+last command you'd run.
+
+zcnpaint's eraser tool previously drew horizontal/vertical lines when
+used right at the top/left of the screen.
+
+And, incredibly, there's some non-bugfix stuff too... :-)
+
+The `kernel' now assembles into two versions - the original zcn.bin
+for NC100s, and a new zcn200.bin for NC200s. The NC200 version still
+has some rough edges, but supports most of the hardware except for the
+disk drive. Thanks to Ian Miller for helping a *lot* with testing the
+NC200 support (as I don't actually have an NC200).
+
+Added `serial' command, which allows you to disable/re-enable the
+serial line driver. It's enabled by default (just as in previous
+versions of ZCN), but disabling it should prolong battery life. Thanks
+to Emmanuel Roussin for bringing this up.
+
+`bigv' views a single file in much the same way as with `man's viewer.
+It uses a large, proportionally-spaced font - the intent is that bigv
+be comfortable to read from, especially for large texts such as online
+books (`etexts'). Thanks to Steven Flintham for the inspiration behind
+this.
+
+Some minor speed optimisations in a BDOS hotspot (the crawling horror
+that is `matchfcb' :-)).
+
+`keyb' changes the keyboard map. Currently this only supports the
+default UK map, and Dvorak for the UK layout. Thanks to Ian Miller for
+suggesting Dvorak support.
+
+`lfconv' converts Unix-format text files to CP/M (CR/LF) format.
+
+VDE has replaced ZDE as the text editor included with ZCN, mainly
+because it's the more widely-used version (ZDE is a VDE derivative),
+and it comes with full documentation. But don't worry, your old copy
+of ZDE will obviously still work if you'd prefer to stick with that.
+
+Removed nswp from distribution.
+
+
+* Changes in ZCN 1.2
+
+Decent online help. This comes in the shape of `man', a Unix-man-like
+program, and *many* man pages for it, documenting every ZCN command
+and most third-party ones bundled with ZCN, taking roughly 55k for the
+lot. The `help' program has been removed, as man makes it obsolete.
+
+`zap', a graphical program-launcher.
+
+`spell', an interactive spellchecker (which uses the ROM), a bit like
+a cross between `ispell' and the ROM wp's spellchecker.
+
+`rrinit.bin' now compensates for the ROM OS's stupid ^Z-stripping
+code, which broke it in ZCN v1.1.
+
+`cal', a calendar program like Unix `cal' - it's a Z80 port of a
+public domain C program by Martin Minow.
+
+`expr', a sort-of-clone of Unix `expr' - a Z80 port of a PD C program
+by Erik Baalbergen.
+
+Keyboard-reading code should now fully work around the bugs in the
+NC100's keyboard hardware (see top of src/keyread.z for full details
+of what the bugs are).
+
+ZCN now uses IM2 by default, and can no longer be made to use IM1. So
+the `useim2' command has been removed.
+
+`setbaud' replaced with `stty'; e.g. `setbaud 7' translates to the
+slightly more meaningful `stty 19200'.
+
+New `cd -' (or `user -') command, go to last user area selected.
+
+`note', a simple type-text-into-file internal command.
+
+Zcnclock is now much nicer, and there's also `dclock', a new cut-down
+version which fits in 1k.
+
+`dir' now looks more like CP/M's dir.
+
+Printer bug fixed - previously printing turned off the serial line
+driver which, er, wasn't ideal. You'd never guess I hardly ever print
+from ZCN, would you? :-)
+
+Corrected serious bug in documentation. (The NC100's Z80 *DOES NOT*
+run at 6MHz (it's more like 4.6MHz), even though it's a 6MHz-capable
+chip! Also, ZCN isn't actually much faster than the ROM OS. It's still
+better though. ;-))
+
+Cursor move control code (^P) now uses 20h+y rather than the old (and
+rather bizarre) 46h+y. 46h+y is still supported for now, but may not
+be in future.
+
+`ruler', displays a ruler onscreen.
+
+`slide', a slide-rule emulator. Terribly useful. :-)
+
+`calc' should now work on all ROM versions.
+
+New `cboot' internal command cold-boots ZCN from the memory card.
+
+New `capsctrl' internal command, swaps functions of Caps Lock and
+Control keys if you do `capsctrl 1'.
+
+New `crlf' internal command (not *another* internal command!) lets you
+disable/re-enable the usual CP/M-ish line-break (CR/LF) after each
+command finishes. Mainly intended for use in SUB files.
+
+New `vdu' internal command (AIEEEE! :-)) prints one or two characters,
+given their ASCII values. For example `vdu 1' clears the screen, and
+`vdu 13 10' prints CR/LF.
+
+You can now change the default LISTO setting for `bbcbas'. You have to
+edit the executable, which isn't ideal, but zcn.txt demonstrates how
+to do it with wade.
+
+Some additions to zcnlib's 32-bit integer routines.
+
+You can now change the address of the font used by ZCN. This lets
+ZCN-aware programs effectively use UDGs and the like.
+
+New `off' internal command, does what you'd expect. :-)
+
+`bmp', a way of printing such UDGs (and bitmaps generally) from SUB
+files. There's also utils/pbmtosub.c, which converts PBMs into
+`bmp'-using SUB files.
+
+ZCN checks for internal commands more quickly than it did before
+(though to be fair, this was near-instant anyway :-)).
+
+Removed the copyright message displayed when you boot ZCN. It may be a
+traditional CP/M thing to have, but frankly even *I* found it slightly
+irksome. Now when ZCN boots, it just displays what the `ver' command
+does.
+
+Esc as a prefix to a CR/LF now causes ZCN to ignore it. It's not clear
+how useful this is, though... :-)
+
+Fixed two .sub-related bugs. First, if a $$$.sub didn't contain a ^Z
+it wasn't deleted after ZCN finished running it. Second, it assumed
+(when deleting it) that $$$.sub remained in the current user, which
+isn't always the case.
+
+Fixed so things like `a:dir' (internal commands with drive specs)
+don't run the internal command - now ZCN (in this case) tries to run
+`dir.com' or `dir.sub' on drive A:.

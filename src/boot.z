@@ -1,0 +1,56 @@
+;ZCN v0.3 - a CP/M clone for the Amstrad NC100 Notepad.
+;Copyright (C) 1994,1995 Russell Marks. See 'zcn.txt' for license details.
+
+;ZCN loader
+;runs from bbc basic, or from already-running ZCN (as .com)
+
+;this is assembled separately from the main source, obviously, since
+;it loads it! (well, copies it, anyway)
+
+;will have problems if the main code gets bigger than 15k, but
+;so will everything else, really... :-)
+
+org 06000h
+
+first:
+di
+ld sp,first
+ld a,043h
+out (013h),a
+
+;see if we're running as a .com under ZCN
+ld a,(066h)
+cp 0f7h
+jr nz,bootup
+
+;we are, so copy it to the right place to copy to the, er, right place.
+;the words 'a', 'that's', 'kludge' and 'gross' spring instantly to mind.
+ld hl,0100h
+ld de,first
+ld bc,06000h
+ldir
+jp bootup	;jump to the copy of next bit in the right place
+
+bootup:
+;copy code
+ld hl,start
+ld de,(start+9)		;main assemble address - see main.z for details.
+ld bc,(start+11)	;length of code, similarly
+ldir
+
+;copy font
+ld hl,start
+ld de,(start+11)
+add hl,de
+ld de,0eac0h
+ld bc,96*6
+ldir
+
+;boot system
+ld hl,(start+9)
+ld de,250
+add hl,de
+jp (hl)			;go to (real) start+250 - init, and start ccp
+
+start:
+;i.e. start of the ZCN binary, cat'ted onto the end of this.

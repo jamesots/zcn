@@ -1,0 +1,92 @@
+NAME
+	zselx - a simple file manager
+
+SYNOPSIS
+	zselx [termtype] [du:]
+
+DESCRIPTION
+	Zselx is a simple file manager which lets you
+	copy/move/delete/view multiple files.
+
+	Running zselx gives you a list of files in a given drive/user.
+	(The current drive/user, unless you specified a different
+	one.) You can then choose files to copy/move/delete/view, etc.
+
+	Even if you don't like file managers, zselx might possibly be
+	of interest since it allows you to copy files from any
+	drive/user to any other directly (e.g. from A: user 1 to B:
+	user 3).
+
+OPTIONS
+	termtype	If specified, must be a single digit
+			corresponding to a terminal type. It defaults
+			to ZCN (type 3). Other supported types are 1
+			for VT100, 2 for VT52, and 4 for VC404.
+
+	du:		If specified, must be a drive/user spec. to
+			use instead of the current drive/user.
+
+KEYS
+	[Many operations can be obtained with more than one key, and
+	each key is listed. Where I say `the files', I'm referring to
+	the tagged (selected) files. If none are tagged, the
+	currently-pointed-to file is used.]
+
+	Esc x q		quit
+	h k ^p ^e	move cursor up
+	l j ^n ^x	move cursor down
+	0 <		go to top of file list
+	$ G >		go to end of file list
+	^b ^u ^r	move cursor back a page
+	^f ^v ^c	move cursor forward a page
+	c 1		copy the files to a given drive/user
+	d 2		delete the files, prompting for confirmation
+	m 3		move the files to a given drive/user
+	a 4		untag all files
+	v		view the files (press Esc/q/x to exit file view)
+	n 7		sort file list by name
+	e 8		sort file list by extension
+	s 9		sort file list by size
+	+ =		tag file at cursor
+	-		untag file at cursor
+	Space		toggle tagged status of file at cursor
+
+	In short, it supports both vi and Emacs keys, and the cursor
+	keys also work.
+
+HOW THE COMMANDS WORK
+	Some notes on the way the copy, move, etc. commands work:
+
+	- drive/user specifications are far from standard, and
+	different forms are used by different programs, among them
+	(for, say, drive B: user 4) 4/B:, 4B:, and B4:. Zselx uses the
+	last one, as that seems to be the most popular.
+
+	- when specifying drive/user to copy/move to, you can use any
+	of the forms a:, 0:, or a0:. If you don't give a drive/user,
+	i.e. you just press return, then no copy/move is performed.
+
+	- copy/move test for copying to the same drive/user, and don't
+	copy/move if this is the case.
+
+	- move works by copying then deleting, even if you're only
+	moving a file from one user to another on the same drive. This
+	means that, if you're moving a file between users on the same
+	drive, you temporarily need enough room for two copies of any
+	file you want to move. There's no such problem when moving
+	between different drives.
+
+	- view is designed only for text files. It strips the high bit
+	(for wordstar files), then displays control codes in ^x form,
+	so don't count on the control codes necessarily meaning
+	anything in binary files. A more serious problem with using it
+	to display binary files is that it treats ^Z as EOF; so, as I
+	say, it only really works for text files.
+
+BUGS
+	The screen-redrawing code is pretty much pessimal. :-( In
+	particular, scrolling is done `by hand', rather than using any
+	insert/delete line capability the terminal might have.
+
+SEE ALSO
+	pipe, umv

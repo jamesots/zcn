@@ -1,0 +1,22 @@
+NAME
+	invaders - (unfinished) space invaders clone
+
+SYNOPSIS
+	invaders
+
+DESCRIPTION
+	Invaders is an unfinished game. It's reasonably playable as is
+	though.
+
+KEYS
+	Z	move left
+	X	move right
+	Space	fire
+	Q	quit
+
+BUGS
+	The invaders gradually grow invisible because it starts
+	updating faster than the NC100's LCD screen can handle. That's
+	the main reason why I haven't bothered finishing it. :-/ But
+	you should be able to get by if you crank up the intensity
+	control.

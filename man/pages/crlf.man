@@ -1,0 +1,10 @@
+NAME
+	crlf - disable/re-enable line-break (CR/LF) after command
+
+SYNOPSIS
+	crlf [0|1]
+
+DESCRIPTION
+	Turn off (0) or on (1) the line-break after a command
+	finishes. Generally you'll always want this on, but it can be
+	useful to turn it off temporarily in a SUB file.

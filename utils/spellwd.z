@@ -1,0 +1,253 @@
+;spellwd - spellcheck a word given on cmdline
+;usage: spellwd word
+;uses ROM spellchecker
+
+org 09000h	;runs here as 200-8fff will get blasted
+
+wlookup equ 0a8ach	;the list of alternatives starts here
+
+;format of list at 'wlookup' is mword1^@mword2^@...
+;where 'm' is non-zero (can be 'm', 'q', etc., don't know *why*...)
+;actually, I think 'm' means 'likely' and 'q' means 'less likely',
+; or it might be a scale from 'm' to 'q'. whatever.
+
+
+start:
+;must be zcn
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;copy to real place to run
+ld hl,0100h
+ld de,09000h
+ld bc,eof-start
+ldir
+jp start2
+
+start2:
+ld a,(05dh)
+cp 32
+ld de,musage
+jp z,fin
+
+;make cmdline asciiz
+ld a,(080h)
+ld hl,081h
+ld e,a
+ld d,0
+add hl,de
+ld (hl),d
+
+;lowercase it
+ld hl,081h
+lowerlp:
+ld a,(hl)
+and a
+jr z,lowerdun
+call isupper
+jr nc,lowerskp
+set 5,a
+lowerskp:
+ld (hl),a
+inc hl
+jr lowerlp
+
+lowerdun:
+;check for NC200
+ld c,144
+call 5
+and a
+jr nz,start3
+
+ld a,044h	;NC200 ZCN uses page 44h at top
+ld (pageop+1),a
+
+start3:
+ld hl,082h
+call chkword
+jr c,wordok
+
+;if not found, say so and report any alternatives
+ld de,mwordnak
+ld c,9
+call 5
+
+ld a,(wlookup)
+and a
+jr z,noalt
+
+;found at least one alternative - report all
+ld de,mgotalt
+ld c,9
+call 5
+
+ld hl,wlookup
+wlp:
+ld a,(hl)
+and a
+jp z,0		;quit when done
+
+inc hl
+push hl
+ld e,32
+ld c,2
+call 5
+pop hl
+
+;print asciiz
+zprnlp:
+ld a,(hl)
+inc hl
+and a
+jr z,wlp
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+jr zprnlp
+
+
+noalt:
+ld de,mnoalt
+jr fin
+
+wordok:
+ld de,mwordack
+fin:
+ld c,9
+jp 5
+
+mwordack: defb 'word ok$'
+mwordnak: defb 'word not found - $'
+mgotalt: defb 'suggest:',13,10,'$'
+mnoalt: defb 'no alternatives found$'
+musage: defb 'usage: spellwd word$'
+
+;returns carry set if uppercase alpha char. in a
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+
+;entry: hl=addr of asciiz word to check
+;exit: nothing
+; be careful - this routine blasts 0200h-8fffh!
+chkword:
+;copy word to word buffer
+;hl set by caller
+ld de,wordbuf
+ld b,0
+loop:
+ld a,(hl)
+and a
+jr z,loopend
+ld (de),a
+inc hl
+inc de
+inc b
+jr loop
+
+loopend:
+ld a,b
+ld (wordlen),a
+
+;get rid of any drive lights before disabling ints...
+ei
+nop
+halt
+
+di
+ld (spsav),sp
+ld sp,09ffeh
+
+;disable poweroff
+ld a,0c9h
+ld (066h),a
+
+;put roms in top 16k and copy them down
+
+;put rom8 in
+ld a,8
+out (013h),a
+;copy most of it (c200-ffff) to RAM in low 16k
+ld hl,0c200h
+ld de,0200h
+ld bc,03e00h
+ldir
+
+;now rom9
+ld a,9
+out (013h),a
+
+ld hl,0c000h
+ld de,04000h
+ld bc,04000h
+ldir
+
+;we copy b000-bfff just in case it gets blasted somehow
+ld hl,0b000h
+ld de,08000h
+ld bc,01000h
+ldir
+
+call 0200h
+ld bc,0		;this means no user dict, I think (hope :-))
+call 0203h
+
+ld de,wordbuf
+call 0206h	;check word
+;now hl=0 if word not found
+push hl		;save for later
+ld a,h
+or l
+jr nz,cwgotwd
+;if not found...
+ld de,wordbuf
+call 0209h	;lookup alternatives
+;we ignore the result here 'cos it's easy to lookup
+cwgotwd:
+
+;put ram back
+pageop: ld a,043h	;modified on NC200
+out (013h),a
+
+;copy zcn bits back
+ld hl,08000h
+ld de,0b000h
+ld bc,01000h
+ldir
+
+;re-enable poweroff
+ld a,0f7h
+ld (066h),a
+
+pop hl		;pop 'found word?' result
+ld sp,(spsav)
+ei
+
+;return nc if word not found, else c
+ld a,h
+or l
+ret z
+
+scf
+ret
+
+
+spsav: defw 0
+
+wordbuf:
+;copy (asciiz) word into this 32-byte block
+;max 32 chars long, obviously :-)
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0         ; }
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0         ; }- 32 zeroes
+defb 0
+wordlen: defb 0         ;put length of word (not inc. the NUL) here
+defb 0
+
+eof:

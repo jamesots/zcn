@@ -1,0 +1,10 @@
+README for `utils' directory
+----------------------------
+
+In this directory is the source to the stock external commands for
+ZCN. The .COM files - the executable commands themselves - are in
+../bin. The commands are of course all optional - the system doesn't
+actually *require* any of them. Details of usage are given in
+`zcn.txt', in ../doc.
+
+-Rus.

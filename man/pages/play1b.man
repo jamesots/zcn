@@ -1,0 +1,11 @@
+NAME
+	play1b - play 1-bit sample
+
+SYNOPSIS
+	play1b sample_file
+
+DESCRIPTION
+	Play a 1-bit sample. See the `play4b' man page for details.
+
+SEE ALSO
+	play2b, play4b

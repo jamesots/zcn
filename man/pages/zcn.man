@@ -1,0 +1,30 @@
+NAME
+	ZCN - a CP/M-like OS for the Amstrad NC100
+
+SYNOPSIS
+	ZCN online help overview
+
+DESCRIPTION
+	ZCN is, well, probably what you're reading this with. :-) This
+	man page is mainly a sort of `meta-man-page' giving a top
+	level overview of the online help.
+
+	The most important man page is probably `index', which lists
+	all man pages and their `NAME' lines. There are also some man
+	pages which don't document commands, but instead discuss some
+	aspect of ZCN:
+
+	path - how external commands are found in ZCN
+	pause - how to pause output in ZCN
+	screendump - how to get a screen dump in ZCN
+	usernums - a description of user numbers
+
+FILES
+	a0:autoexec.sub - text file containing commands to be
+	automatically run when ZCN boots.
+
+AUTHOR
+	Russell Marks
+
+SEE ALSO
+	index, man, path, pause, screendump, usernums

@@ -1,0 +1,28 @@
+ZCN v1.3 - a free CP/M-like OS for the Amstrad NC100 Notepad & NC200 Notebook.
+Copyright (C) 1994-2001 Russell Marks. See `zcn.txt' for license details.
+
+This won't worry most people, but to whom it may concern:
+
+WARNING: COMMERCIAL DISTRIBUTION OF VDE IS NOT ALLOWED!
+
+Note that commercial distribution of VDE (included in the `support'
+directory) is *specifically prohibited* by the author. That is, you
+are not allowed to distribute it or distribute it bundled with
+anything else (such as ZCN) for profit. Non-profit distribution is
+fine. See near the end of `support/vde/vde266.doc' for details.
+
+Thus, any distributions of ZCN sold for any profit at all *MUST NOT
+INCLUDE VDE*. (You'd need to remove support/vde.com and all files in
+support/vde.) I include VDE in the `official' ZCN distribution as it's
+quite a good, zero-cost text editor, even if the licence does kind of
+suck a bit. :-/
+
+This is unfortunate, but short of my writing a complete replacement
+editor (no chance), or finding another free editor which is as good, I
+don't see what else I can do.
+
+If you want to know why I think allowing commercial distribution of
+free software can be a Good Thing, see `Why allow commercial
+distribution?' in `doc/zcn.txt'.
+
+-Rus.

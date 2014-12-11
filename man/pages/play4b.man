@@ -1,0 +1,27 @@
+NAME
+	play4b - play 4-bit sample
+
+SYNOPSIS
+	play4b sample_file
+
+DESCRIPTION
+	Play a 4-bit sample.
+
+	In common with play1b/play2b, play4b plays the sample at 8kHz.
+	Note that 1-bit samples sound terrible, 2-bit ones sound only
+	a bit better, and although 4-bit samples can sound quite good,
+	you can only play up to 11 seconds worth of 4-bit sample.
+
+	Keyboard input is ignored while play?b are running. However,
+	you can use the power on/off button to abort playback.
+
+BUGS
+	BEWARE! The programs don't (yet) stop loading the sample if it
+	gets larger than available memory, so don't try to run it on a
+	file any bigger than 43k!
+
+	`play4b', at least, plays samples back slightly too slowly,
+	not quite managing the full 8kHz.
+
+SEE ALSO
+	play1b, play2b

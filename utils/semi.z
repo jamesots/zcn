@@ -1,0 +1,99 @@
+;semi - otherwise known as ';.com'
+
+;writes $$$.SUB from semicolon-separated commands on cmdline.
+;then does warm boot, so ZCN runs the file (and then deletes it).
+
+;because of the way ZCN works, we can just convert the semicolons to
+;LFs, put a ^Z at the end of the cmdline, and write a single record
+;to $$$.SUB from 081h.
+
+
+org 0100h
+
+jp start
+
+bdos		equ 5
+
+bfopen		equ 15
+bfclose		equ 16
+bfread		equ 20
+bfwrite		equ 21
+bfmake		equ 22
+bsetdma		equ 26
+
+mnotzcn:	defb 'Needs ZCN.$'
+mnofile:	defb 'No file$'
+mopenstr:	defb 'Error opening output file$'
+
+outfcb:
+defb 0,'$$$     SUB',0,0,0,0
+defw 0,0,0,0, 0,0,0,0
+defb 0
+
+
+die:
+ld c,9
+call bdos
+jp 0
+
+start:
+;first, refuse to run unless on ZCN
+ld a,(066h)
+cp 0f7h
+ld de,mnotzcn
+jr nz,die
+
+;if cmdline is less than 2 chars, stop now
+ld a,(080h)
+cp 2
+ret c
+
+;put a ^Z at the end
+ld hl,080h
+ld d,0
+ld e,(hl)
+inc l
+add hl,de
+ld (hl),10	;well, LF first...
+inc hl
+ld (hl),01ah
+
+;replace semicolons with LFs
+ld hl,081h
+ld a,(080h)
+ld b,a
+loop:
+ld a,(hl)
+cp ';'
+jr nz,skip
+ld (hl),10
+skip:
+inc hl
+djnz loop
+
+;create $$$.SUB
+ld de,outfcb
+ld c,bfmake
+call bdos
+inc a
+ld de,mopenstr
+jp z,die
+
+;write a record from 081h
+;first, set dma
+ld de,082h
+ld c,bsetdma
+call bdos
+
+;now write it
+ld de,outfcb
+ld c,bfwrite
+call bdos
+
+;not really needed, but...
+ld de,outfcb
+ld c,bfclose
+call bdos
+
+;now exit and let ZCN run $$$.SUB
+jp 0		

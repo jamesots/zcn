@@ -1,0 +1,86 @@
+NAME
+	spell - interactively spellcheck a text file
+
+SYNOPSIS
+	spell filename
+
+DESCRIPTION
+	Spell is an interactive front-end for the ROM spellchecker.
+	It's roughly similar to that provided by the ROM
+	word-processor, but has also been somewhat influenced by (the
+	interface of) the popular `ispell' program.
+
+HOW SPELL WORKS
+	After invoking the program with `spell filename', the file
+	specified is renamed to have a `.bak' extension (with any
+	existing `.bak' file deleted first). This file is then read
+	from, with spellchecked output going to `filename'. This new
+	file will be on the same drive as the `.bak' file, even if
+	it's not the current drive.
+
+	If spell thinks there won't be enough disk space to write the
+	new file, it tells you before it starts, giving you the option
+	to abort the spellcheck or carry on anyway. The space that'll
+	be needed can't be determined for *certain* though, since
+	replacing short words with longer ones could make the file
+	bigger, so it may be best to check for yourself before running
+	spell to make sure you have a reasonable amount of disk space.
+
+USING SPELL
+	Once spell is up and running, it shows you how far it's got
+	with a display of the form `XX/YY'. XX is where it's got to in
+	the file (in 128-byte records), YY is how big the file is.
+
+	If it finds a word it doesn't recognise, it removes this
+	display and shows the word (highlighted), along with the
+	previous and current lines. You're then given a menu like
+	this:
+
+	[L]ookup, [A]uto-lookup (toggle), [R]eplace (edit), SPC - ignore
+
+	`L' looks up alternatives which might be the word you meant.
+	If none were found, it says so; otherwise, it lists them like
+	so (this example shows the result of looking up `addr'):
+
+	0) add  1) adder  2) adds
+
+	You can press 0 (zero) to replace the word with (in this case)
+	`add', 1 (one) for `adder', etc. (If more than 10 possible
+	choices are given, they use A, B, C and so on - be sure to use
+	an UPPERCASE letter if you want to choose any of those.)
+
+	`A' enables looking up of alternatives automatically, so you
+	don't have to press `L' every time. This can slow things down
+	though, as looking up words takes a little while. Pressing `A'
+	again disables auto-lookup.
+
+	`R' lets you type in a replacement for the highlighted word.
+	After pressing `R', type the text and press enter (or press
+	Esc to abort and return to the menu).
+
+	Pressing space ignores the highlighted word, leaving it
+	unmodified.
+
+	Finally, though it's not listed on the menu, you can press ^C
+	to effectively end the run early, by writing the rest of the
+	file unmodified. You're prompted to check if you really want
+	to do this or not.
+
+BUGS
+	The algorithm used to find a word to spellcheck isn't perfect
+	by any means. One example of punctuation use which catches it
+	out is the practice of using `(s)', e.g. `widget(s)'.
+
+	One-letter words are always considered valid. But "that's not
+	a bug, that's a feature!" - in fact, it's a feature borrowed
+	from `ispell'. (Spell doesn't yet have an equivalent of
+	ispell's `-W' option to set which word lengths are always
+	considered valid, though.)
+
+	The combination of some odd omissions from the ROM
+	spellchecker and spell's lack of a user dictionary can be a
+	pain at times. In particular, being prompted for common
+	abbreviations (like `e.g.' and `etc.') can get annoying.
+
+SEE ALSO
+	spellwd

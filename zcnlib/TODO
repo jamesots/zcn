@@ -1,0 +1,5 @@
+fix flood so that it can handle pixel-drawing routines which don't
+actually draw pixels. (this presumably needs a separate screen to
+flood.)
+
+double speed when above a certain delta in mouse.z

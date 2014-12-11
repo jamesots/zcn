@@ -1,0 +1,54 @@
+NAME
+	cpmtris - a tetris clone
+
+SYNOPSIS
+	cpmtris [termtype [mhz10]]
+
+DESCRIPTION
+	A tetris clone for CP/M machines. This should work on any
+	Z80-based CP/M, but has special support for ZCN. The way it
+	works means that it should run on ZCN, PCWs, and +3 CP/M
+	as-is; for other systems, a bit of patching may be required
+	(see cpmtris/README in the ZCN distribution for patching
+	details).
+
+	On ZCN you would normally run it as `cpmtris', but to run it
+	on a VT100 serial console, do `|s' if you haven't already,
+	then `cpmtris 1'.
+
+OPTIONS
+	termtype	if given, specifies the terminal type to use,
+			from the following supported types:
+
+			0	as defined in patch area
+			1	VT100
+			2	VT52 (PCW, +3, etc.) - the default
+			3	ZCN (this is auto-detected)
+			4	VC404
+
+	mhz10		if given, should be ten times the speed (in
+			MHz) of the Z80 the machine has. For example,
+			on a 3.5MHz machine you'd use '35'. You must
+			have specify `termtype' to use 'mhz10'.
+
+GAMEPLAY
+	Blocks fall from the top of the screen. You have to fit them
+	together to make solid horizontal lines, as a horizontal line
+	of blocks disappears to make room for more blocks. And why is
+	this the case? Well, if the pile of blocks reaches the top of
+	the screen, it's game over. So it quickly gets important to
+	fit the shapes together well, and not leave any gaps.
+
+KEYS
+	S		rotate block
+	D		drop block
+	K		move block left
+	L		move block right
+
+BUGS
+	Cpmtris does not (yet) speed up. It starts pretty fast and
+	stays that way. If you want to play it faster, specify a
+	`mhz10' rating on the command-line lower than 46.
+
+SEE ALSO
+	sokoban

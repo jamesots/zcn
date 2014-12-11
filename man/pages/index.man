@@ -1,0 +1,136 @@
+NAME
+	index - index of man pages
+
+SYNOPSIS
+	Index of man pages
+
+DESCRIPTION
+	The online help for ZCN is split into many `man pages' (try
+	`man man' if this sounds unfamiliar). This one is largely an
+	index of the others.
+
+	Most man pages describe a command, and there's an index of
+	commands below. But there are a few other man pages, which are
+	listed separately.
+
+	This page was last updated on 2001 Apr 14.
+
+COMMANDS
+	This index lists both internal commands (part of ZCN, always
+	available) and external ones (.COM files). External commands
+	are labelled as such - the others are internal.
+
+	batwarn - disable/enable battery level warnings
+Ext	bbcbas - run ROM BBC Basic
+Ext	bbcmin - run ROM BBC Basic (cut-down version of bbcbas)
+	bdosdbug - disable/enable BDOS call monitoring
+Ext	bigrun - run a command in a 62k TPA
+Ext	bigv - a text file viewer designed for easy reading of books etc.
+Ext	bmp - draw bitmaps
+Ext	bs - battleships game
+Ext	cal - display a calendar
+Ext	calc - run ROM calculator
+	capsctrl - disable/enable using caps lock as control key
+	cat - display a text file without pausing
+	cboot - cold boot ZCN from memory card
+	cd - change user area
+Ext	chess - play chess against the computer
+	cls - clear the screen
+Ext	codes - list ZCN terminal driver control codes
+Ext	cpmtris - a tetris clone
+	crlf - disable/re-enable line-break (CR/LF) after command
+Ext	dclock - a simple clock program
+Ext	defrag - defragment free space on drive
+	df - show free disk space
+Ext	dial - tone `dial' a phone number 
+	dir - show directory (list) of files
+Ext	dmp2txt - convert screen dump to text file
+Ext	du - disk usage
+	dump - give hex/ASCII dump of file
+	era - erase file(s)
+Ext	expr - evaluate expressions
+Ext	fish - the card game "Go Fish", played against the computer
+	format - format a logical drive
+	get - read in a file at a specified address
+Ext	head - display the head of a file
+	ifnpeek - run command (or not) based on a byte's value
+	ifpeek - run command (or not) based on a byte's value
+Ext	invaders - (unfinished) space invaders clone
+	k3 - show available memory
+Ext	keyb - change keyboard map
+Ext	lar - create/extract/etc. .lbr archives
+Ext	ls - list contents of drives and/or user areas
+Ext	makezapd - make a0:zapdesc.bin from *.zap
+Ext	man - a help system a little like Unix's `man'
+	memdump - give hex/ASCII dump of memory
+Ext	mft - copy one or more files from one card to another
+	more - display a text file a page at a time
+	note - type text into a file
+	off - turn the computer off
+Ext	optdir - optimise order of directory entries, speeding up file I/O
+Ext	pipe - file copier
+Ext	play1b - play 1-bit sample
+Ext	play2b - play 2-bit sample
+Ext	play4b - play 4-bit sample
+Ext	pmarc - efficient file compressor/archiver
+Ext	pmext - list or extract/view/run files from a .PMA or .LZH archive
+	poke - set a byte to a value
+	prompt - how to set the prompt with the `%' command
+	quitsub - abort any running SUB file, then optionally run command
+	realbeep - disable/enable audible beep
+	rem - do nothing (for comments in SUB files)
+	ren - rename file
+	rexec - read a uuencoded file from the serial port
+	rm - remove file(s)
+Ext	rogue - exploring The Dungeons of Doom
+Ext	rrxfer - copy files to/from the ROM software via `runrom.ram'
+Ext	ruler - display a (cm) ruler at the top of the screen
+Ext	runrom - use the ROM software
+	save - save N `pages' of memory
+Ext	semi - run multiple commands from one command-line
+	serial - disable/enable serial line driver
+	sertest - simple terminal program
+Ext	setbaud - set baud rate used by serial port
+Ext	slide - a slide-rule emulator
+Ext	sokoban - a puzzle game
+Ext	spell - interactively spellcheck a text file
+Ext	spellwd - check spelling of a word using ROM spellchecker
+Ext	stat - emulate old ZCN `stat' command (like k3 and df combined)
+	stty - set baud rate used by serial port
+Ext	submit - run a SUB file with arguments
+	sys - make a drive bootable (install ZCN on it)
+Ext	time - display current time/date
+	timeout - set time before auto-poweroff (or disable it)
+Ext	timeset - set current time/date
+	type - display a text file without pausing
+	umv - move files to another user area
+	unsys - make drive unbootable (remove ZCN from it)
+	user - change user area
+	vdu - output one or two chars given their ASCII values
+Ext	vde - a text editor
+	ver - report ZCN and ROM version numbers
+Ext	vinst - vde configuration program
+Ext	wade - symbolic Z80 debugger
+	xyzzy - you are in a little maze of twisty passages, all different
+Ext	zap - graphical program-launcher
+Ext	zcnbrot - plot the Mandelbrot set
+Ext	zcnclock - an ana/digi `world time' clock program
+Ext	zcnpaint - a mouse-based paint program
+Ext	zdbe - a disk block (hex) editor
+Ext	zrx - XMODEM receive a file when serial console is being used
+Ext	zselx - a simple file manager
+
+OTHER MAN PAGES
+	There are a few other man pages:
+
+	games - the games which come with ZCN
+	index - this man page
+	path - how external commands are found in ZCN
+	pause - how to pause output in ZCN
+	screendump - how to get a screen dump in ZCN
+	undoc - list of programs without man pages
+	usernums - a description of user numbers
+	zcn - ZCN online help overview (higher-level than this index)
+
+SEE ALSO
+	man, undoc

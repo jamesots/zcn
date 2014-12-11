@@ -1,0 +1,30 @@
+ZCN v1.3 - a free CP/M-like OS for the Amstrad NC100 Notepad & NC200 Notebook.
+Copyright (C) 1994-2001 Russell Marks. See `zcn.txt' for license details.
+
+ZCN is a free operating system for the Amstrad NC100 (Notepad) and
+NC200 (Notebook). It's largely compatible with CP/M 2.2. It runs most
+CP/M 2.2 programs, including VDE, QTERM, Mallard Basic, and Hitech C.
+It can also run the NC100's ROM BBC Basic as if it were a native ZCN
+program. You need an NC100 (or NC200) and at least one PCMCIA memory
+card to use it, and a separate computer (perhaps a PC) and a serial
+lead to get the system code to it for the first time.
+
+ZCN isn't just some random hack; it comes with serious amounts of
+documentation, including a guide to programming CP/M and ZCN, and has
+optional online help.
+
+You should probably consider using ZCN if you like the idea of a
+portable CP/M box, or want to use the NC as something a bit closer to
+a `real computer'. It comes together with many custom-written
+utilities, as well as various free CP/M programs.
+
+See `zcn.txt' in the `doc' subdirectory for more details.
+
+
+All text files (source and documentation) other than this one are in
+Unix text format - that is, lines end in LF rather than CR/LF. If you
+use Unix/Linux, no problem. (RISC OS should also be ok.) If you use
+MS-DOS, the `edit' command should cope. For Windows, try Wordpad (or
+in Win 3.x, Write).
+
+-Rus.

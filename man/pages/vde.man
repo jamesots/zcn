@@ -1,0 +1,48 @@
+NAME
+	vde - a text editor
+
+SYNOPSIS
+	vde [filename] [anw]
+
+DESCRIPTION
+	VDE is a Wordstar-style text editor. It can edit only one file
+	at a time, and the file must not be larger than remaining
+	memory (about 30k, on ZCN). Despite these limitations, it's
+	probably the best free CP/M text editor.
+
+OPTIONS
+	a		load file as ASCII with word-wrap enabled
+			(default; intended for editing normal text files)
+	n		load file as ASCII with word-wrap disabled
+			(intended for editing program files, e.g. assembly)
+	w		load file as Wordstar format (these files
+			normally have the extension `.ws')
+
+	Note that using the syntax e.g. `vde foo.asm[n' is also
+	allowed.
+
+	These options can also be used when prompted for a file to
+	load by the ^K L command. (You can change modes for an
+	already-loaded file by doing ^K L and using an option on its
+	own, without a filename.)
+
+KEYS
+	Help on keystrokes is available from within VDE by using the
+	^K H key combination (that's control-K, then H). You can then
+	use space to remove the help text, or ^K/^O/^Q to get
+	differing help texts (for key combos beginning with those
+	keys).
+
+	Note that key combos beginning with ^K can alternatively be
+	started with Esc, so for example Esc H shows the help text
+	too.
+
+	On ZCN, the cursor keys can be used (as they produce
+	Wordstar-style cursor control codes), as can both Del keys.
+
+AUTHORS
+	Eric Meyer, based on George Peace's port of an earlier 4k
+	editor (VDO) by Fritz Schneider.
+
+SEE ALSO
+	vinst

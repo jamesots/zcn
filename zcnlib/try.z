@@ -1,0 +1,23 @@
+;getopt test
+
+org 0100h
+
+call makeargv
+
+optloop:
+ld hl,optstr
+call getopt
+
+cp 255
+ret z
+
+call putchar
+
+cp ':'
+ret z
+cp '?'
+ret z
+jr optloop
+
+;option string
+optstr:	defb 'ab:c',0

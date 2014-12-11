@@ -1,0 +1,21 @@
+NAME
+	pipe - file copier
+
+SYNOPSIS
+	pipe filespec [d:][dest_filespec]
+
+DESCRIPTION
+	Pipe copies one or more files to either a different drive, or
+	a file with a different name. If the destination is omitted,
+	all files are copied to the current drive.
+
+	If a copy operation would result in a file being overwritten,
+	you're prompted with `Erase? (y/N/q)'. `n' skips the copy (and
+	is the default); `y' results in the file being overwritten;
+	`q' aborts completely.
+
+AUTHOR
+	Rob Friefeld
+
+SEE ALSO
+	umv, zselx

@@ -1,0 +1,34 @@
+This packages was originally a port of sokoban to minix. but with  a 
+few hacks it works fine with linux too.
+
+
+I have done some hacking in source-code to
+obtain the following:
+
+1. It is now possible to use the arrow-keys
+   to move the player, you can also use the
+   numerical-keypad.
+
+2. The objects now contains of two diffrent
+   characters so you can make packages thats
+   looks like '[]', earlier you just had one
+   character that where repeated twice.
+
+3. The getch function in curses dont behave well
+   in combination with tcsh (6.01) so i 'borrowed'
+   from tt (the Tetris clone) the method to use 
+   read instead. 
+
+The Executable is compiled with gcc2.1 and shared libs, but it should 
+be no problems to re-compile it with gcc 1.40
+
+The compiled version looks for screenfiles in /usr/games/sokob, it also 
+puts its highscore file there.
+
+Dont forget to make a highscore file first, sokoban want work if you don't.
+
+
+Bengt Andersson.
+Student at KTH (The Royal Tecnical High School) Sweden.
+email: da1-ban@nada.kth.se
+    

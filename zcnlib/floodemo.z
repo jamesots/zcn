@@ -1,0 +1,50 @@
+;flood-fill test program
+
+org 0100h
+
+jr start
+
+x1: defw 10
+x2: defw 200
+x3: defw 300
+y1: defb 32
+y2: defb 2
+y3: defb 60
+
+start:
+ld hl,08000h
+ld de,08001h
+ld bc,01fffh
+ld (hl),0ffh
+ldir
+
+ld sp,0a000h
+
+ld bc,10000
+
+call srand
+
+loop:
+push bc
+
+ld hl,480
+call rand
+push hl
+ld hl,63
+call rand
+ld c,l
+pop de
+call pset
+
+pop bc
+dec bc
+ld a,b
+or c
+jr nz,loop
+
+
+ld de,479
+ld c,63
+call flood
+
+jp 0

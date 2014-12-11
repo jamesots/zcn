@@ -1,0 +1,530 @@
+;XXX *like the original*, this is broken for expressions which start
+;with a bracket and have operators after, e.g. `expr ( 1 + 2 ) * 3'.
+
+;XXX apart from the above, this is finished, *but* it's only minimally
+;tested, so I need to do that.
+
+;expr - evaluate expression, based on C original by Erik Baalbergen
+; (as posted to comp.os.minix in 1987).
+;
+;this port of it removes all the boolean stuff like <= etc., and uses
+; (like the original, admittedly :-)) 32-bit integers.
+
+org 0100h
+
+jr exprmain
+
+EOI	equ 0
+PLUS	equ 9
+MINUS	equ 10
+TIMES	equ 11
+DIV	equ 12
+_MOD	equ 13
+LPAREN	equ 15
+RPAREN	equ 16
+OPERAND	equ 20
+
+ip:	defw 0		;char **ip;		(current arg)
+ipnum:	defb 0		;			(ip==argv[ipnum])
+ip_op:	defw 0		;struct op *ip_op;
+
+
+exprmain:
+;zero argv pointers so we can act as if argv[argc]==NULL.
+;there are 64 elements in argv[].
+ld hl,argv
+ld de,argv+1
+ld bc,64*2-1
+ld (hl),0
+ldir
+
+call makeargv
+
+ld hl,0
+ld (ipnum),hl
+call ipincr	;incr ipnum and set ip from it
+call lex	;returns result in hl
+ld e,MAXPRIO
+call expr	;returns result in ixhl
+
+push hl
+call ipincr
+ld hl,(ip)
+ld a,h
+or l
+pop hl
+jp nz,syntaxerr		;if some args not dealt with, give error
+
+;save LSB of result in 80h (so SUB files can use it with if(n)peek 3)
+ld a,l
+ld (080h),a
+
+;print result
+call sgn32
+;if negative, print `-' and negate
+jr nc,signskip
+push hl
+ld e,'-'
+ld c,2
+call 5
+pop hl
+call neg32
+signskip:
+
+call dispdec32
+
+rst 0
+
+
+ipdecr:
+ld a,(ipnum)
+dec a
+jr ipincr2
+
+ipincr:
+ld a,(ipnum)
+inc a
+ipincr2:
+ld (ipnum),a
+push de
+push hl
+call getargv
+ld (ip),hl
+pop hl
+pop de
+ret
+
+
+;entry:	none (but ip contains ptr to current arg)
+;exit:	token in h, priority in l
+;
+;zero priority is returned if not an operator.
+;
+;priorities are:
+;	3	+ -
+;	2	* / %
+;	1	( )
+MAXPRIO	equ 3
+
+lex:
+;if ip is 0, we've reached the end.
+ld hl,(ip)
+ld a,h
+or l
+ld hl,EOI*256
+ret z
+
+;all supported operators are one char long; if it's not one char long,
+;it's an operand (or a syntax error :-)).
+ld hl,(ip)
+ld a,(hl)
+and a
+jp z,syntaxerr	;zero len - can't happen, but give syntax error if it does :-)
+inc hl
+ld a,(hl)
+and a
+ld hl,OPERAND*256
+ret nz
+
+;ok, it's one char long, get that char.
+ld hl,(ip)
+ld a,(hl)
+
+;compare against each op in turn.
+ld hl,PLUS*256	+3
+cp '+'
+ret z
+ld hl,MINUS*256	+3
+cp '-'
+ret z
+ld hl,TIMES*256	+2
+cp '*'
+ret z
+ld hl,DIV*256	+2
+cp '/'
+ret z
+ld hl,_MOD*256	+2
+cp '%'
+ret z
+ld hl,LPAREN*256+1
+cp '('
+ret z
+ld hl,RPAREN*256+1
+cp ')'
+ret z
+
+;otherwise, it's (presumably) a number.
+ld hl,OPERAND*256
+ret
+
+
+groknum:
+;see if it's negative
+ld a,(hl)
+cp '-'
+jr nz,gnskip
+ld de,neg32
+push de
+inc hl
+gnskip:
+;check that arg matches the regexp ^-?[0-9]+$
+;(already dealt with sign, so only need to check for digits)
+
+push hl		;save ptr to start of (unsigned part of) number
+
+;ok, has to contain at least one digit.
+ld a,(hl)
+call isdigit
+jp nc,syntaxerr
+inc hl
+
+;check is zero-or-more digits then NUL
+gnlp:
+ld a,(hl)
+and a
+jr z,gnlpend
+call isdigit
+jp nc,syntaxerr
+inc hl
+jr gnlp
+
+gnlpend:
+pop hl		;restore number pos
+call atoi32
+ret
+
+
+syntaxerr:
+ld de,msyntax
+ld c,9
+call 5
+rst 0
+
+msyntax:
+defb 'expr: syntax error$'
+
+
+;entry:	token in h, token priority in l	(like lex exit conditions)
+;	current priority (depth :-)) in e
+;entry: 
+
+expr:
+ld a,h
+cp EOI
+jp z,syntaxerr
+
+cp LPAREN
+jr nz,exprnotp
+
+;parse up to matching close bracket
+call ipincr
+call lex
+ld e,MAXPRIO
+call expr
+
+;check we actually got the close bracket
+push hl
+call ipincr
+call lex
+ld a,h
+pop hl
+cp RPAREN
+jp nz,syntaxerr
+ret
+
+exprnotp:
+;ok, expression must start with a number then.
+cp OPERAND
+jp nz,syntaxerr
+
+ld b,h
+ld c,l
+
+ld hl,(ip)
+ld a,e
+cp 1
+jp z,groknum	;ret via this (grokking number and returning it)
+
+;	res = expr(n, prio - 1);
+push de
+ld h,b
+ld l,c
+dec e
+call expr	;returns result in ixhl
+pop de
+
+;token/token priority aren't needed any more, so losing bc was ok.
+
+;now e=current priority, ixhl=res.
+;from here on we use b for token and c for token priority.
+
+;	while ((n = lex(*++ip)) && ip_op && ip_op->op_prio == prio)
+exprlp:
+push de
+push hl
+call ipincr
+call lex
+ld b,h
+ld c,l
+pop hl
+pop de
+
+ld a,b
+cp EOI
+jr z,exprlpend
+
+ld a,e		;prio
+cp c		;ip_op->op_prio
+jr nz,exprlpend
+
+;		res = eval(res, n, expr(lex(*++ip), prio - 1));
+;save `n' (b from previous lex call) for later
+ld a,b
+push af
+push de
+push hl
+call ipincr
+call lex
+;save hl in bc as new token/token priority
+ld b,h
+ld c,l
+pop hl
+pop de
+pop af		;`n'
+
+;now bc is token/tok_pri, ixhl is res, e is cur_pri, a is `n'
+
+push bc
+push de
+
+push af
+push hl
+push ix		;recursing, so need to save ix too here
+ld h,b
+ld l,c
+dec e
+call expr
+;copy ixhl to debc
+push ix
+pop de
+ld b,h
+ld c,l
+;restore previous ixhl, and `n'
+pop ix
+pop hl
+pop af
+call eval	;returns result in ixhl
+
+pop de
+pop bc
+
+jr exprlp
+
+exprlpend:
+call ipdecr
+ret
+
+
+;entry:	ixhl=num1, debc=num2, a=token
+;exit:	ixhl=result
+eval:
+cp PLUS
+jp z,add32
+cp MINUS
+jp z,sub32
+cp TIMES
+jp z,smul32
+cp DIV
+jp z,sdiv32
+cp _MOD
+jr z,eval_mod
+
+;none of the above - can't happen
+ld de,mcanthap
+ld c,9
+call 5
+rst 0
+mcanthap: defb 'expr: can',39,'t happen!$'
+
+eval_mod:
+call sdiv32
+jp swap32
+
+
+
+;XXX really needed or not?
+;putchar - put char in a
+;puts CR before any LF output
+;f corrupt, others preserved
+putchar:
+cp 10
+jr nz,putbyte
+ld a,13
+call putbyte
+ld a,10
+;FALLS THROUGH
+
+;putbyte - put char in a without translation
+;preserves all regs
+putbyte:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+
+
+;args.z is included here literally since I make some assumptions
+;about how it works etc., and it's just safer to use my own copy
+;in case args.z is ever incompatibly changed (not likely, admittedly).
+
+;args - a clone of C's arg[cv].
+;requires string and ctype
+
+;NB: *this lowercases the cmdline* as well as splitting it into
+; separate args.
+
+;use by calling 'makeargv' as early as possible in your program. Then
+; you can use argc (really a byte, but you can read it as a word if
+; that's more convenient) and the argv[] array to deal with args.
+; the routine 'getargv' returns hl=argv[a]. as you might expect, the
+; strings in argv[] are asciiz.
+
+;for cpm zmac:
+;ZZglobal argv
+;ZZglobal argc
+;ZZglobal makeargv
+;ZZglobal getargv
+
+;this holds a copy of the cmdline
+argline: defs 128
+
+;this holds pointers to the (up to 64) args
+argv: defs 128
+
+argc:	defw 0		;arg count, includes 'program name'
+
+argempty: defb 0	;zero-length string used for argv[0]
+
+
+;makeargv - make argv[] and argc from cmdline
+;entry:	none (but cmdline at 80h-ffh must be intact)
+;exit:	none (but argv/argc filled)
+;af/bc/de/hl/ix corrupt, cmdline corrupt
+;notes:
+;- after calling this routine, you can do whatever you want with
+;   80h-ffh, the argc/argv aren't affected.
+;- there is no way of quoting arguments; one or more spaces always
+;   separates them, no matter what.
+
+makeargv:
+;make argv[0] point to argempty
+ld hl,argempty
+ld (argv),hl
+
+;make cmdline asciiz
+ld a,(080h)
+ld l,a
+ld h,0
+ld de,081h
+add hl,de
+ld (hl),0
+
+;we go through the cmdline, copying asciiz args to argline as we go,
+;and also filling argv[].
+;ix=pointer to current argv element,
+;hl=pointer in cmdline
+;de=pointer in argline
+
+ld ix,argv+2	;skip argv[0], of course
+ld hl,081h
+ld de,argline
+ld c,1		;argc
+
+margvlp:
+;point to next arg
+call argfnspc
+
+;if a is zero, no next arg
+and a
+jr z,margvdun
+
+push hl
+;point to past end of arg
+call argfspc
+ld (hl),0
+pop hl
+and a		;test for nul
+push af
+ld (ix+0),e
+ld (ix+1),d
+ex de,hl
+call strcpy
+ex de,hl
+inc hl
+inc de
+inc ix
+inc ix
+inc c
+pop af
+jr nz,margvlp
+
+margvdun:
+ld a,c
+ld (argc),a
+
+;finally, lowercase all of argv[].
+ld hl,argline
+ld b,128
+margvlp2:
+ld a,(hl)
+call tolower
+ld (hl),a
+inc hl
+djnz margvlp2
+ret
+
+;find next space
+argfspc:
+ld a,(hl)
+cp 32
+ret z
+and a
+ret z
+inc hl
+jr argfspc
+
+;find next non-space
+argfnspc:
+ld a,(hl)
+cp 32
+ret nz
+inc hl
+jr argfnspc
+
+
+;getargv - hl=argv[a]
+;entry: a=argv element to look up
+;exit:	hl=addr of argv[a]
+getargv:
+ld l,a
+ld h,0
+add hl,hl
+push de
+ld de,argv
+add hl,de
+ld e,(hl)
+inc hl
+ld d,(hl)
+ex de,hl
+pop de
+ret

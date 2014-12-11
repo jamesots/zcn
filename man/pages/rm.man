@@ -1,0 +1,13 @@
+NAME
+	rm - remove file(s)
+
+SYNOPSIS
+	rm filespec
+
+DESCRIPTION
+	Delete any files matching filespec. `rm' is an alternative
+	name for `era'.
+
+BUGS
+	Does not prompt when deleting multiple files, unlike CP/M
+	`era'.

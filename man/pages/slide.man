@@ -1,0 +1,25 @@
+NAME
+	slide - a slide-rule emulator
+
+SYNOPSIS
+	slide
+
+DESCRIPTION
+	Emulates a slide-rule. The upper and lower parts of the rule
+	remain static, but the middle part can be moved with `,' and
+	`.' (use shift to move more slowly), or cursor left/right. The
+	cursor, a line which helps you read the rule more accurately,
+	can be moved with `z' and `x' (again, use shift to move
+	slowly). Esc exits.
+
+	See zcn.txt for a simple example of how to use a slide-rule.
+
+BUGS
+	It's not very accurate due to the NC's low resolution display.
+	For example, 2x2 comes out as 3.975. :-)
+
+	It's only a fairly minimal slide-rule, e.g. there's no
+	sin/cos.
+
+SEE ALSO
+	calc, bbcbas

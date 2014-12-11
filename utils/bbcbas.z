@@ -1,0 +1,2850 @@
+;bbcbas - run BBC Basic from ZCN
+
+;don't try to follow this without reading nciospec.doc or your
+;brains will melt. :-)
+
+;remaining missing features (aka "TODO" :-)):
+;
+;ones I expect to do at some point:
+;- correct cls/cursor-move codes (well, VT100) when via serial
+;  (when via parallel, should stick to normal ZCN ones)
+;  (could support changing number-of-lines by *KEYs less than, say, 64)
+;
+;ones I may or may not do (probably nearer the latter than the former :-)):
+;- correct backspace past screen-line start on long input line in editbuf
+;- *KEY support (for actually defining keys, that is... :-))
+;- text window
+;
+;ones I almost certainly won't do:
+;- openup support				(tricky)
+;- ROM-like editing in editbuf			(seems pointless now, IMHO)
+;- set time via TIME$ (i.e. padsettime)		(pointless)
+;- type-ahead when ZCN not paged in		(fairly pointless)
+
+
+;once we're up and running, the memory map goes like this:
+
+;0000-00ff	usual ZCN zero page, but with modified int/NMI jps
+;0100-(lomem-1)	about half of the program, and the stack
+;lomem-9fff	basic's memory available for programs
+;a000-a3ff	used by basic
+;a400-afff	3k of our code (block1_st to block1_end)
+;b000		unused
+;b001		needed by basic and our NMI handler (last out to 011h)
+;b002-b00f	unused
+;b010-b3ff	used for *CAT (in bbc_cat.z)
+;b400-b7ff	1k of our code (block2_st to block2_end - bbc_io.z)
+;b800-b8ff	used by us to emulate sys calls
+;b900-bfff	used by ZCN (if not all, then most of it)
+;c000-cfff	either the rest of ZCN, or the basic ROM (ROM5)
+
+
+
+org 0100h
+
+jr start
+
+bbc_rom		equ 5	;BBC Basic is ROM 5
+
+;block1_siz must be <=3k, block2_siz must be <=1k.
+;(the Makefile checks this)
+block1_siz	equ block1_end-block1_st	;size of block 1 (for a400h)
+block2_siz	equ block2_end-block2_st	;size of block 2 (for b400h)
+
+lomem: defw 0	;set to where basic starts (actually page, not lomem)
+
+listodef: defb 7		;default LISTO setting
+
+;105h - alternative bdos provided for m/c programs running under basic.
+;(this is provided as calling 5 from such a program won't work and
+;will almost certainly crash the machine)
+;disallows function 0, but all the others are intact.
+ld a,c
+and a
+ret z
+call zcnon
+call 5
+jr zcnoffjr
+
+
+;110h - call routine at ix with ZCN paged in.
+;(primarily provided so you can write code which writes to the screen
+;without too much hassle.)
+;all registers preserved both before and after.
+call zcnon
+call jpix
+zcnoffjr:	;used above
+jp zcnoff
+
+jpix: jp (ix)
+
+
+;table of addresses for start of each char. line
+;this is here to guarantee that it isn't split across a 256-byte page
+;(so I can do 'add a,l, ld l,a' rather than 'add hl,a', so to speak)
+yaddrtbl:
+defw 0f080h,0f200h,0f380h,0f500h,0f680h
+defw 0f800h,0f980h,0fb00h,0fc80h,0fe00h
+
+;bit of userfcb1 saved in case there's a file they want to auto-load
+usrfcbsav: defs 12
+
+
+
+
+start:
+ld a,(066h)
+cp 0f7h
+ret nz		;needs ZCN
+
+;needs ZCN ver >=1.1
+ld c,128
+call 5
+ld a,h
+cp 2
+jr nc,zcnok	;if >=2.x, ok
+and a
+jr z,oldzcn	;if 0.x, not ok :-)
+;ok, version 1.x, check minor rev. num.
+ld a,l
+cp 1
+jr nc,zcnok
+
+oldzcn:
+ld de,moldzcn
+ld c,9
+jp 5
+
+zcnok:
+;calc lomem
+;want end of used tpa, plus 512 bytes stack (generous, but not
+;unreasonable), and round it up to nearest 256-byte boundary to make
+;it look nicer. :-)
+ld hl,tpa_eof
+;add 2 for the 512
+inc h
+inc h
+ld de,255
+add hl,de
+ld l,0
+ld (lomem),hl
+
+;check there's enough memory
+ld hl,(6)
+ld l,0
+ld de,minbdos
+and a
+sbc hl,de
+jp c,nomem
+
+;not even close to being re-entrant...
+ld a,0c9h
+ld (0100h),a
+
+;copy the code for block1 (a400-afff) and block2 (b400-b7ff).
+ld hl,block1_st
+ld de,0a400h
+ld bc,block1_siz
+ldir
+ld hl,block2_st
+ld de,0b400h
+ld bc,block2_siz
+ldir
+
+;also copy the rom-routine-emulations jump table needed at b800-b8ffh.
+ld hl,jptbl
+ld de,0b800h
+ld bc,jptblend-jptbl
+ldir
+
+;basic uses b001h, so...
+ld a,041h
+ld (0b001h),a
+
+;save fcb1 in case they want to auto-run a program
+ld hl,05ch
+ld de,usrfcbsav
+ld bc,12		;enough for fopenfcb to work :-)
+ldir
+
+call filechk		;if there's a filename, check it exists
+			;(also deals with `-h')
+
+call serchk		;check for redirection to serial
+call getkeyaddrs	;get addrs of fast key read routines
+
+
+ld sp,(lomem)
+
+;blast memory used by basic so it's a bit nicer :-)
+;(since `old' would be unreliable anyway, and definitely wouldn't
+;ever work unless you had quite a high PAGE, I don't think there's
+;any harm in this.)
+call blast_basmem
+
+;turn cursor off to start off with
+;(cursor is only on in basic when waiting for line of input, or when
+;explicitly turned on with VDU)
+call curs_off
+
+call newint_on
+call zcnoff
+
+call 0c000h	;run basic
+
+call zcnon
+call newint_off
+
+;warm boot will also go back to IM2 if needed
+;(and turn cursor back on :-))
+rst 0
+
+
+
+blast_basmem:
+;zero out everything from PAGE to HIMEM-1.
+ld hl,0a000h	;himem
+ld de,(lomem)
+and a
+sbc hl,de
+ld b,h
+ld c,l
+dec bc		;bc=a000-lomem-1
+ld h,d
+ld l,e
+inc de
+ld (hl),0
+ldir
+ret
+
+
+;help text is here to ensure it goes below (lomem).
+
+txttbl: defw k0mes,k1mes,k2mes,k3mes
+
+
+k0mes:
+defb '*KEY1 for PLOT help',13,10
+defb '*KEY2 for VDU codes',13,10
+defb '*KEY3 for a sample Z80 assembly routine',13,10
+defb '$'
+
+
+;the funny indentation after the `defb' for the following made it
+;easier to use `tabify' in Emacs, meaning I could save about 150 bytes!
+
+k1mes:
+defb   '--- PLOT commands ---',13,10
+defb   '0  move relative	     8-15  as 0-7 but plot last point twice',13,10
+defb   '1  draw line relative	    16-31  as 0-15 but draw dotted line',13,10
+defb   '2  draw xor line relative   32-63  as 0-31 but plot first point twice',13,10
+defb   '3  undraw line relative	    64-71  as 0-7 but plot single point',13,10
+defb   '4  move absolute	    72-79  fill left/right',13,10
+defb   '5  draw line absolute	    80-87  draw filled triangle',13,10
+defb   '6  draw xor line absolute   88-95  unfill left/right',13,10
+defb   '7  undraw line absolute	   96-103  draw filled rectangle'
+defb 13,10,'$'
+
+k2mes:
+defb   '--- VDU codes ---',13,10
+defb   ' 0 ignored		 8 cur. left	16 clg		       24 set gfx win',13,10
+defb   ' 1 snd nxt to printer	 9 cur. right	17 bold on	       25 plot',13,10
+defb   ' 2 enable printer	10 cur. down	18 bold off	       26 reset wins',13,10
+defb   ' 3 disable printer	11 cur. up	19 undrln on	       27 literal nxt',13,10
+defb   ' 4 hide cursor		12 cls		20 undrln off	       28 set txt win',13,10
+defb   ' 5 show cursor		13 CR		21 disable scrn disp.  29 move (gfx)',13,10
+defb   ' 6 enable screen disp.	14 inv. on	22 ignored	       30 home',13,10
+defb   ' 7 beep			15 inv. off	23 ignored	       31 move (txt)',13,10
+defb '$'
+
+
+k3mes:
+defb   '10 DIM Q% bytes_to_reserve     --- Sample Z80 assembler use ---',13,10
+defb   '20 FOR I=0 TO 3 STEP 3		...or "2 STEP 2" for no listing',13,10
+defb   '30 P%=Q%',13,10
+defb   '40 [OPT I',13,10
+defb   '50 \ Assembly here...	(with label defs preceded by full stop)',13,10
+defb   '60 ]',13,10
+defb   '70 NEXT',13,10
+defb   '80 CALL Q%		   (if you want to call it right after)',13,10
+defb '$'
+
+
+;bitmaps for high-half chars
+fontdata:
+defb 066h,088h,088h,066h,022h,044h,0AAh,000h
+defb 0AAh,0AAh,0EEh,000h,022h,044h,0EEh,088h
+defb 066h,000h,044h,066h,0AAh,0AAh,066h,000h
+defb 0AAh,066h,0AAh,0AAh,066h,000h,088h,066h
+defb 0AAh,0AAh,066h,000h,044h,066h,0AAh,0AAh
+defb 066h,000h,000h,066h,088h,066h,022h,044h
+defb 0EEh,044h,0EEh,088h,066h,000h,0AAh,044h
+defb 0EEh,088h,066h,000h,088h,044h,0EEh,088h
+defb 066h,000h,0AAh,000h,044h,044h,044h,000h
+defb 044h,0AAh,044h,044h,044h,000h,088h,000h
+defb 044h,044h,044h,000h,0AAh,044h,0AAh,0EEh
+defb 0AAh,000h,044h,044h,0AAh,0EEh,0AAh,000h
+defb 022h,0EEh,0CCh,088h,0EEh,000h,000h,066h
+defb 0BBh,0AAh,077h,000h,033h,066h,077h,0AAh
+defb 0BBh,000h,044h,044h,0AAh,0AAh,044h,000h
+defb 0AAh,044h,0AAh,0AAh,044h,000h,088h,044h
+defb 0AAh,0AAh,044h,000h,044h,0AAh,0AAh,0AAh
+defb 066h,000h,088h,000h,0AAh,0AAh,066h,000h
+defb 0AAh,000h,0AAh,0EEh,022h,0CCh,0AAh,044h
+defb 0AAh,0AAh,044h,000h,0AAh,000h,0AAh,0AAh
+defb 0EEh,000h,011h,066h,0EEh,0AAh,044h,000h
+defb 022h,055h,0EEh,044h,0FFh,000h,066h,0AAh
+defb 0EEh,0AAh,0CCh,000h,0CCh,0CCh,0BBh,0AAh
+defb 099h,000h,022h,044h,0EEh,044h,044h,088h
+defb 022h,066h,0AAh,0AAh,066h,000h,022h,000h
+defb 044h,044h,044h,000h,022h,044h,0AAh,0AAh
+defb 044h,000h,022h,000h,0AAh,0AAh,066h,000h
+defb 0EEh,000h,0CCh,0AAh,0AAh,000h,0EEh,000h
+defb 0EEh,0AAh,0AAh,000h,000h,066h,0AAh,066h
+defb 000h,0EEh,000h,044h,0AAh,044h,000h,0EEh
+defb 044h,000h,044h,088h,044h,000h,000h,000h
+defb 0EEh,088h,088h,000h,000h,000h,0EEh,022h
+defb 022h,000h,088h,022h,044h,0BBh,022h,077h
+defb 088h,022h,044h,0BBh,077h,022h,044h,000h
+defb 044h,044h,044h,000h,000h,055h,0AAh,055h
+defb 000h,000h,000h,0AAh,055h,0AAh,000h,000h
+defb 0AAh,000h,0AAh,000h,0AAh,000h,0AAh,055h
+defb 0AAh,055h,0AAh,055h,0FFh,055h,0FFh,055h
+defb 0FFh,055h,044h,044h,044h,044h,044h,044h
+defb 044h,044h,0CCh,044h,044h,044h,044h,0CCh
+defb 044h,0CCh,044h,044h,0AAh,0AAh,0AAh,0AAh
+defb 0AAh,0AAh,000h,000h,0EEh,0AAh,0AAh,0AAh
+defb 000h,0CCh,044h,0CCh,044h,044h,0AAh,0AAh
+defb 022h,0AAh,0AAh,0AAh,0AAh,0AAh,0AAh,0AAh
+defb 0AAh,0AAh,000h,0EEh,022h,0AAh,0AAh,0AAh
+defb 0AAh,0AAh,022h,0EEh,000h,000h,0AAh,0AAh
+defb 0EEh,000h,000h,000h,044h,0CCh,044h,0CCh
+defb 000h,000h,000h,000h,0CCh,044h,044h,044h
+defb 044h,044h,077h,000h,000h,000h,044h,044h
+defb 0FFh,000h,000h,000h,000h,000h,0FFh,044h
+defb 044h,044h,044h,044h,077h,044h,044h,044h
+defb 000h,000h,0FFh,000h,000h,000h,044h,044h
+defb 0EEh,044h,044h,044h,044h,077h,044h,077h
+defb 044h,044h,0AAh,0AAh,0BBh,0AAh,0AAh,0AAh
+defb 0AAh,0BBh,088h,0FFh,000h,000h,000h,0FFh
+defb 088h,0BBh,0AAh,0AAh,0AAh,0BBh,000h,0FFh
+defb 000h,000h,000h,0FFh,000h,0BBh,0AAh,0AAh
+defb 0AAh,0BBh,088h,0BBh,0AAh,0AAh,000h,0FFh
+defb 000h,0FFh,000h,000h,0AAh,0BBh,000h,0BBh
+defb 0AAh,0AAh,044h,0FFh,000h,0FFh,000h,000h
+defb 0AAh,0AAh,0FFh,000h,000h,000h,000h,0FFh
+defb 000h,0FFh,044h,044h,000h,000h,0FFh,0AAh
+defb 0AAh,0AAh,0AAh,0AAh,0FFh,000h,000h,000h
+defb 044h,077h,044h,077h,000h,000h,000h,077h
+defb 044h,077h,044h,044h,000h,000h,0FFh,0AAh
+defb 0AAh,0AAh,0AAh,0AAh,0FFh,0AAh,0AAh,0AAh
+defb 044h,0EEh,044h,0EEh,044h,044h,044h,044h
+defb 0CCh,000h,000h,000h,000h,000h,077h,044h
+defb 044h,044h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
+defb 000h,000h,000h,0FFh,0FFh,0FFh,0CCh,0CCh
+defb 0CCh,0CCh,0CCh,0CCh,033h,033h,033h,033h
+defb 033h,033h,0FFh,0FFh,0FFh,000h,000h,000h
+defb 000h,055h,0AAh,0AAh,055h,000h,044h,0AAh
+defb 0CCh,0AAh,0EEh,088h,0EEh,0AAh,088h,088h
+defb 088h,000h,000h,0FFh,0AAh,0AAh,0AAh,000h
+defb 0FFh,044h,022h,044h,0FFh,000h,000h,077h
+defb 0AAh,0AAh,044h,000h,000h,0AAh,0AAh,0AAh
+defb 0EEh,088h,000h,055h,0EEh,044h,044h,000h
+defb 0EEh,044h,0AAh,044h,0EEh,000h,044h,0AAh
+defb 0EEh,0AAh,044h,000h,066h,099h,099h,066h
+defb 099h,000h,044h,088h,044h,0AAh,044h,000h
+defb 000h,055h,0BBh,055h,000h,000h,011h,066h
+defb 0AAh,0EEh,0CCh,000h,066h,099h,044h,099h
+defb 066h,000h,000h,066h,099h,099h,099h,000h
+defb 0EEh,000h,0EEh,000h,0EEh,000h,044h,0EEh
+defb 044h,000h,0EEh,000h,0CCh,022h,0CCh,000h
+defb 0EEh,000h,066h,088h,066h,000h,0EEh,000h
+defb 022h,055h,044h,044h,044h,044h,044h,044h
+defb 044h,044h,088h,000h,044h,000h,0EEh,000h
+defb 044h,000h,044h,0AAh,000h,044h,0AAh,000h
+defb 044h,0AAh,044h,000h,000h,000h,000h,044h
+defb 0EEh,044h,000h,000h,000h,000h,044h,000h
+defb 000h,000h,066h,044h,044h,0CCh,044h,000h
+defb 0CCh,0AAh,000h,000h,000h,000h,0CCh,022h
+defb 044h,0EEh,000h,000h,0EEh,0EEh,0EEh,0EEh
+defb 0EEh,000h,000h,000h,000h,000h,000h,000h
+
+
+include bbc_cat.z		;include ls-like *CAT code
+
+
+
+;******************* end of low resident code **********************
+tpa_eof:
+
+;WARNING: any code which goes between here and block1_st below
+;*IS EFFECTIVELY BLASTED* when we do `ld sp,(lomem)' in init code.
+;(so it must be stuff only required in the init code!)
+
+;currently consists of getkeyaddrs, nomem, serchk, filechk, and jptbl.
+
+
+getkeyaddrs:
+;get the special key check/read shortcut addrs ZCN provides for us
+;(for now, they're solely used by testescape - it'll probably stay
+;that way, as this is just an ugly hack to get it going faster)
+ld ix,(1)
+ld e,(ix-13)
+ld d,(ix-12)
+ld (kbasget+1),de
+ld e,(ix-11)
+ld d,(ix-10)
+ld (kbaschk+1),de
+ret
+
+
+nomem:
+;not enough memory
+ld de,mnomem
+ld c,9
+call 5
+rst 0
+
+mnomem: defb 'Not enough memory (try "useim2 0" before running)$'
+
+moldzcn: defb 'Requires ZCN v1.1 or better$'
+
+
+serchk:
+ld c,132	;console in/out assignments
+call 5
+ld a,l
+ld (serial),a	;non-zero if via serial or printer
+ret
+
+
+filechk:
+;check any file specified exists, as basic won't give an error.
+;since you have to explicitly specify a filename, I think it's
+;only fair for it to die if it's bogus. :-)
+
+;but first, we give a usage message for `-h':
+ld hl,(05dh)
+ld de,0482dh	;`-H'
+and a
+sbc hl,de
+jr nz,flchk1
+
+ld de,musage
+ld c,9
+call 5
+ld a,(listodef)
+and 7
+or 48
+ld e,a
+ld c,2
+call 5
+rst 0
+
+musage:
+defb 'usage: bbcbas [-h] [basic_file]',13,10
+defb ' default LISTO setting: $'
+
+flchk1:
+;see if we have a filename
+ld a,(05dh)
+cp 32
+ret z
+
+;ok, see if we can open it
+ld de,05ch
+ld c,15		;bfopen
+call 5
+inc a
+ret nz		;ret if ok
+
+;ok, can't find it. give a reasonably friendly :-) error message.
+ld de,mbadfile
+ld c,9
+call 5
+rst 0
+
+mbadfile: defb 'bbcbas: file not found$'
+
+
+;this table was generated with this:
+;  awk 'BEGIN { for(f=47104;f<47872;f+=3) {printf "jp not_here\t;%04X\n",f}}'
+;and then edited, to add our rom routine emulations.
+;(b8ff onwards were deleted)
+
+jptbl:		;goes at b800
+jp editbuf	;B800
+jp kmcharreturn	;B803
+jp kmreadkbd	;B806
+jp kmsetexpand	;B809
+jp kmsettick	;B80C
+jp kmwaitkbd	;B80F
+jp not_here	;B812
+jp testescape	;B815
+jp not_here	;B818
+jp not_here	;B81B
+jp not_here	;B81E
+jp not_here	;B821
+jp txtclrwin	;B824
+jp txtcuroff	;B827
+jp txtcuron	;B82A
+jp txtgetcursor	;B82D
+jp txtgetwindow	;B830
+jp txtoutput	;B833
+jp txtsetcur	;B836
+jp txtsetwin	;B839
+jp txtwrchar	;B83C
+jp txtboldoff	;B83F
+jp txtboldon	;B842
+jp txtinvoff	;B845
+jp txtinvon	;B848
+jp txtunderoff	;B84B
+jp txtunderon	;B84E
+jp mcprintchar	;B851
+jp not_here	;B854
+jp mcsetprinter	;B857
+jp padinitserial;B85A
+jp padinserial	;B85D
+jp padoutparl	;B860
+jp padoutserial	;B863
+jp padreadyparl	;B866
+jp padreadyser	;B869
+jp padresetser	;B86C
+jp padserwaiting;B86F
+jp padgetticker	;B872
+jp padgettime	;B875
+jp not_here	;B878
+jp padsettime	;B87B
+jp heapaddress	;B87E
+jp heapalloc	;B881
+jp heapfree	;B884
+jp heaplock	;B887
+jp heapmaxfree	;B88A
+jp not_here	;B88D
+jp _fclose	;B890
+jp _ferase	;B893
+jp _finblock	;B896
+jp _finchar	;B899
+jp not_here	;B89C
+jp not_here	;B89F
+jp _fopenin	;B8A2
+jp _fopenout	;B8A5
+jp _fopenup	;B8A8
+jp _foutblock	;B8AB
+jp _foutchar	;B8AE
+jp _frename	;B8B1
+jp _fseek	;B8B4
+jp _fsize	;B8B7
+jp _fsizehandle	;B8BA
+jp _ftell	;B8BD
+jp _ftesteof	;B8C0
+jp selectfile	;B8C3
+jp not_here	;B8C6
+jp not_here	;B8C9
+jp _fsetattr	;B8CC
+jp not_here	;B8CF
+jp kmgetyellow	;B8D2
+jp not_here	;B8D5
+jp not_here	;B8D8
+jp not_here	;B8DB
+jp not_here	;B8DE
+jp not_here	;B8E1
+jp not_here	;B8E4
+jp not_here	;B8E7
+jp not_here	;B8EA
+jp not_here	;B8ED
+jp not_here	;B8F0
+jp not_here	;B8F3
+jp not_here	;B8F6
+jp not_here	;B8F9
+jp not_here	;B8FC
+jptblend:
+
+
+
+
+
+;******************* high memory code starts here ******************
+
+block1_st:
+phase 0a400h
+
+
+;see ZCN's keyread.z for usage for these two
+;(they're called the same there)
+kbasget: jp 0	;modified
+kbaschk: jp 0	;modified
+
+
+;ZCN must be no lower than b900h.
+;this is REALLY tight - currently bb00h in IM1, and exactly b900h in IM2!
+;there's a warning to this effect next to the `org' in ZCN's main.z
+;though, so it should be ok.
+
+minbdos		equ 0b900h
+
+
+zcninthndl:	defw 0
+zcnpowrhndl:	defw 0
+drvlitsav:	defw 0,0
+in_zcn:		defb 1
+snap_zcn:	defb 0
+bas_tick:	defw 0,0
+serial:		defb 0
+
+hlsav:		defw 0
+
+
+powroff:
+inc sp
+inc sp		;lose the ret addr from the `rst 30h'
+push af
+push bc
+push de
+ld (hlsav),hl
+
+ld a,(in_zcn)
+ld (snap_zcn),a
+and a
+call z,zcnon_ni
+
+pop de
+pop bc
+pop af
+
+ld hl,powron
+push hl
+push hl		;it'll drop this, thinking it's from the `rst 30h'
+ld hl,(zcnpowrhndl)
+jp (hl)
+
+
+powron:
+;it may have re-enabled ints and done a ZCN int before we could
+;stop it, if in IM2. This doesn't matter; the important point
+;is that it's in IM1 before the ROM is (potentially) paged in.
+
+im 1		;don't need to disable ints to do this, IIRC
+
+push af
+push bc
+push de
+ld a,(snap_zcn)
+and a
+call z,zcnoff_ni
+pop de
+pop bc
+
+;ZCN wouldn't have known about about any paging basic did to write
+;to the screen, so we have to fix that here.
+ld a,(0b001h)
+out (011h),a
+pop af
+
+ld hl,(hlsav)
+ret
+
+
+newint_on:
+;replace ZCN's interrupt handler with one of our own,
+;which runs even when ZCN is paged out.
+;also does new power-off handler bit.
+di
+ld hl,(039h)
+ld (zcninthndl),hl
+ld hl,inthndl
+ld (039h),hl
+im 1
+ld hl,(031h)
+ld (zcnpowrhndl),hl
+ld hl,powroff
+ld (031h),hl
+ei
+ret
+
+newint_off:
+;restore ZCN's int (and NMI).
+;this doesn't restore IM2 (if necessary), but the bdos fixes
+;that on warm boot, and IM1 is good enough until that happens.
+di
+ld hl,(zcninthndl)
+ld (039h),hl
+ld hl,(zcnpowrhndl)
+ld (031h),hl
+ei
+ret
+
+
+;not doing ZCN's read-keyboard interrupt stuff effectively
+;means that there's no type-ahead. I've decided not to do this because
+;it's rather complicated and would slow it down. One of those things,
+;I guess...
+;(however, I do check for esc because that's easy, and is necessary.)
+
+inthndl:
+di
+push af
+push hl
+in a,(090h)
+bit 3,a
+jr nz,nidone	;only incr if it's a 1/100th int
+
+;if ZCN's not paged in, check for esc.
+;we need this so esc will still work in busy loops like REPEAT:UNTIL 0.
+ld a,(in_zcn)
+and a
+jr nz,niskip0
+in a,(0b1h)
+bit 2,a
+jr z,niskip0
+ld a,1
+ld (gotesc),a
+
+niskip0:
+;decr don't-test-escape-yet ticker
+ld a,(esc_tickr)
+and a
+jr z,niskip2
+dec a
+ld (esc_tickr),a
+
+niskip2:
+;incr basic's ticker
+ld hl,(bas_tick)
+inc hl
+ld (bas_tick),hl
+ld a,h
+or l
+jr nz,nidone
+ld hl,(bas_tick+2)
+inc hl
+ld (bas_tick+2),hl
+
+nidone:
+pop hl
+pop af
+intjpop: jp do_reti	;modified
+
+do_reti:
+push af
+in a,(090h)
+out (090h),a
+pop af
+ei
+reti
+
+
+
+;zcnon_ni/zcnoff_ni must be called instead of zcnon/off if interrupts
+;should be kept disabled.
+
+
+zcnoff:
+di
+call zcnoff_ni
+ei
+ret
+
+
+zcnoff_ni:
+push af
+push hl
+
+;don't jump to ZCN's int routine from ours
+ld hl,do_reti
+ld (intjpop+1),hl
+
+;restore area of screen used for drive lights
+ld hl,(drvlitsav)
+ld (0ffc0h),hl
+ld hl,(drvlitsav+2)
+ld (0ffc2h),hl
+
+xor a
+ld (in_zcn),a
+
+ld a,bbc_rom
+out (013h),a
+
+pop hl
+pop af
+ret
+
+
+zcnon:
+di
+call zcnon_ni
+ei
+ret
+
+
+zcnon_ni:
+push af
+push hl
+
+ld a,1
+ld (in_zcn),a
+
+ld a,043h
+out (013h),a
+
+;save area of screen used for drive lights
+ld hl,(0ffc0h)
+ld (drvlitsav),hl
+ld hl,(0ffc2h)
+ld (drvlitsav+2),hl
+
+;*do* jump to ZCN's int routine from ours :-)
+ld hl,(zcninthndl)
+ld (intjpop+1),hl
+
+pop hl
+pop af
+ret
+
+
+
+cls:
+;clear screen (when in normal zcn configuration)
+
+;make sure we pre-emptively delete the bit drive lights overwrite
+ld hl,0
+ld (drvlitsav),hl
+ld (drvlitsav+2),hl
+
+;write a ^A
+;(skip if via serial)
+ld a,(serial)
+cp 1
+ret z
+ld e,1
+ld c,2
+jp 5
+
+
+;curs_on and curs_off assume ZCN is on
+curs_on:
+push af
+push bc
+push de
+push hl
+;use bdos directly rather than putbyte
+;but don't do if via serial
+ld a,(serial)
+cp 1
+jr z,curskip1
+ld e,3
+ld c,2
+call 5
+curskip1:
+ld a,1
+curs_pop:
+ld (cursor),a
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+curs_off:
+push af
+push bc
+push de
+push hl
+ld a,(serial)
+cp 1
+jr z,curskip2
+ld e,4
+ld c,2
+call 5
+curskip2:
+xor a
+jr curs_pop
+
+cursor: defb 0
+
+
+;wrappers for ROM calls
+txtcuroff:
+call zcnon
+call curs_off
+call zcnoff
+ret
+
+txtcuron:
+call zcnon
+call curs_on
+call zcnoff
+ret
+
+
+txtboldoff:
+push af
+ld a,2
+jr setattr
+
+txtboldon:
+push af
+ld a,5
+jr setattr
+
+txtinvoff:
+push af
+xor a
+ld (invvideo),a
+ld a,24
+jr setattr
+
+txtinvon:
+push af
+ld a,1
+ld (invvideo),a
+ld a,25
+jr setattr
+
+;underline is mapped to italics
+txtunderoff:
+push af
+ld a,14
+jr setattr
+
+txtunderon:
+push af
+ld a,15
+;falls through
+
+setattr:
+call putbyte
+pop af
+ret
+
+invvideo: defb 0
+
+
+
+not_here:
+;if we get here, it jumped to a rom routine we haven't emulated.
+;this is not a good sign, so cough and die. :-)
+call zcnon
+call newint_off
+call cls
+ld de,mnotemu
+ld c,9
+call 5
+
+;find out where the call was from (or rather, where we'd return to)
+pop hl
+ld (0100h),hl
+
+rst 0
+
+mnotemu:	defb 'Bad ROM call - can',39,'t happen!$'
+
+
+
+;NB: I had some problems with basic assuming certain registers were
+;preserved, so all the routines are now scrupulous about preserving
+;every register they possibly can.
+
+
+txtfirst: defb 1
+
+txtclrwin:
+;we use ZCN so that the cursor is moved to top-left too.
+;XXX want to support text window eventually
+
+push af
+push bc
+push de
+push hl
+
+;the first call to this is dealt with differently, so that it looks
+;more like a native ZCN program.
+ld hl,txtfirst
+ld a,(hl)
+ld (hl),0
+and a
+jr nz,tcw_first
+
+call zcnon
+call cls
+call zcnoff
+
+tcw_end:
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+tcw_first:
+;want an LF if we're not auto-executing and if cursor isn't on first
+;line. (If cursor *is* on first line, we're almost certainly running
+;from zap.)
+ld a,(usrfcbsav+1)
+cp 32
+jr nz,tcw_end	;if auto-executing, skip it
+ld a,(serial)
+and a
+jr nz,tcwskip	;if running via serial, do it
+push ix
+ld ix,(1)
+ld a,(ix-4)
+and a
+pop ix
+jr z,tcw_end	;if on console and cursor on first line, skip it
+tcwskip:
+ld a,10
+call putbyte
+jr tcw_end
+
+
+
+txtsetwin:
+;XXX want to support text window eventually
+ret
+
+
+;sets up tick event
+;we know it's only used by basic for a single event, so de is ignored.
+kmsettick:
+ld (ticksset),hl
+ret
+
+
+txtwrchar:
+txtoutput:
+;these fall through into...
+
+;putbyte - put char in a without translation
+;preserves all regs
+putbyte:
+push af
+push bc
+push de
+push hl
+call zcnon
+ld hl,serial
+bit 0,(hl)
+jr nz,pbser
+cp 128
+jr nc,pbhigh
+ld e,a
+ld c,2
+call 5
+pbfin:
+call zcnoff
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+pbser:
+;explicitly sending via serial makes sure even F7h is sent literally.
+ld e,a
+ld c,4
+call 5
+jr pbfin
+
+
+pbhigh:
+;deal with values >=128.
+;right now hl=serial
+bit 1,(hl)
+call nz,pbprint
+push ix
+call highchar
+pop ix
+jr pbfin
+
+pbprint:
+;send char to printer before printing onscreen.
+;this is pretty trivial so we don't bother ZCN with it.
+push af
+call pputbyte
+pop af
+ret
+
+
+;pputbyte and pcanput are from ZCN's serial.z
+
+;send byte in e to printer, nc if couldn't
+pputbyte:
+call pcanput
+ret nc
+ld a,e
+out (040h),a
+ld a,0afh
+out (030h),a	;strobe low
+ld a,0efh
+out (030h),a	;...and high
+scf
+ret
+
+;c if printer ok, nc if busy
+pcanput:
+in a,(0a0h)
+;if bit 1 is set, it's busy
+rra
+rra
+ccf	;(we want to know if it's *not* busy)
+ret
+
+
+
+;for ticker events (not basic ticker!)
+tickscount:	defw 0
+ticksset:	defw 0
+
+
+;kmwaitkbd - get char into a and bc
+;preserves all others but f
+kmwaitkbd:
+push de
+push hl
+call zcnon
+ld hl,(ticksset)
+ld (tickscount),hl
+
+getchlp:
+halt
+ld hl,(tickscount)
+ld a,h
+or l
+jr z,gcskip
+dec hl
+ld (tickscount),hl
+ld a,h
+or l
+jr z,gctimout
+gcskip:
+call kbhit
+jr nc,getchlp
+
+gcfin:		;jumped to from kmreadkbd
+ld e,0ffh
+ld c,6
+call 5
+push af
+call zcnoff
+pop af
+pop hl
+pop de
+;invert case of a
+call invcase
+ld b,0
+ld c,a
+
+cp 27
+jr z,gcesc
+cp 127
+jr z,gcdel
+
+scf		;in case we're end of kmreadkbd
+ret
+gcesc:
+ld bc,02fch	;esc
+scf
+ret
+gcdel:
+ld bc,027fh	;del
+scf
+ret
+
+gctimout:
+call zcnoff
+pop hl
+pop de
+ld bc,03adh	;this is what it expects if we timed out, apparently
+ret
+
+
+;if A is a letter (so to speak :-)), invert case.
+invcase:
+call isalpha
+ret nc
+xor 020h
+ret
+
+isalpha:
+call _isupper
+ret c
+;this is islower...
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+_isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+
+
+;kbhit - like the common DOS C function
+;returns c if key pressed, nc if not
+kbhit:
+ld c,11
+call 5
+rra
+ret
+
+
+;doesn't need to cope with ticker events - that's only used by
+;basic to cope with timed inkey(), and only kmwaitkbd has to deal
+;with it.
+kmreadkbd:
+push de
+push hl
+call zcnon
+
+halt
+
+call kbhit
+jr c,gcfin	;if there's a key, use end of kmwaitkbd to deal with it
+
+call zcnoff
+pop hl
+pop de
+and a		;no key
+ret
+
+
+
+
+txtsetcur:
+push af
+push hl
+ld a,16
+call putbyte
+pop hl
+push hl
+ld a,l
+add a,32
+call putbyte
+pop hl
+push hl
+ld a,h
+add a,32
+;last one could be >=128, so send literally to avoid high-half graphic
+push bc
+push de
+call zcnon
+ld e,a
+ld c,2
+call 5
+call zcnoff
+pop de
+pop bc
+
+pop hl
+pop af
+ret
+
+
+;it uses this to pre-emptively press enter when doing *EXEC,
+;so we only need to support this special case.
+kmcharreturn:
+push af
+ld a,1
+ld (fake_cr),a
+pop af
+ret
+
+
+kmsetexpand:
+;for *KEY - mostly ignored for now
+ld a,c
+cp 4
+ret nc
+
+;for *KEY0/1/2/3 we do help text instead.
+;(*HELP would be better, but it doesn't have *HELP and
+;there's no way to add extra commands.)
+
+;I don't think it cares about the registers, but just in case...
+push bc
+push de
+push hl
+
+ld h,0
+ld l,a
+add hl,hl
+ld de,txttbl
+add hl,de
+ld e,(hl)
+inc hl
+ld d,(hl)
+call zcnon
+ld c,9
+call 5
+call zcnoff
+
+pop hl
+pop de
+pop bc
+
+scf	;pretend it worked :-)
+ret
+
+
+
+
+;esc_tickr tells us if it's worth checking esc yet (happens once every
+; 1/50th max). It's set to 2 when we really check escape, and decr'd
+; if non-zero by the 100-times-a-sec interrupt routine (the same bit
+; of code operates the `TIME' ticker used by basic).
+;This saves time because, based on a bit of profiling I did with a
+; hacked copy of nc100em, basic calls testescape roughly *FIVE HUNDRED
+; TIMES A SECOND*! (That pretty obviously makes optimising this hugely
+; important.)
+
+esc_tickr:	defb 0
+
+gotesc:		defb 0
+
+
+;we rely on basic not caring if A is corrupted
+;(nciospec.doc documents A being preserved)
+testescape:
+ld a,(esc_tickr)
+and a
+scf
+ret nz		;and c (no esc)
+
+;this test will stand for 1/50th-sec.
+ld a,2
+ld (esc_tickr),a
+
+;first check the ZCN-not-paged-in esc flag.
+call gotesc_chk
+ret nc		;ret nc if that says there was an esc
+
+push bc
+push de
+push hl
+call zcnon
+call kbaschk
+ccf
+jr c,teskip1
+cp 27
+scf
+jr nz,teskip1	;and c (no esc)
+
+call kbasget	;to remove the esc from keyboard buffer
+xor a
+ld (esc_tickr),a
+and a		;nc, esc found
+
+teskip1:
+call zcnoff
+pop hl
+pop de
+pop bc
+ret
+
+
+;returns c if (according to (gotesc)) esc is NOT pressed
+gotesc_chk:
+ld a,(gotesc)
+and a
+scf
+ret z
+
+;wait for esc to be let go (otherwise ZCN will get to see it and
+;generate an additional esc, which would suck a bit).
+tewait:
+in a,(0b1h)
+bit 2,a
+jr nz,tewait
+
+xor a
+ld (gotesc),a
+ld (esc_tickr),a	;make sure we test again next time
+
+;finally, ret nc to signify esc pressed.
+and a
+ret
+
+
+txtgetcursor:
+push af
+push bc
+push de
+push ix
+call zcnon
+ld ix,(1)
+ld d,(ix-5)
+ld e,(ix-4)
+call zcnoff
+ex de,hl
+pop ix
+pop de
+pop bc
+pop af
+ret
+
+
+txtgetwindow:
+;XXX this'll do for now I s'pose
+ld h,0
+ld l,0
+ld d,119
+ld e,9
+and a	;nc, this is whole screen
+ret
+
+
+padgetticker:
+ld hl,bas_tick
+ret
+
+
+padgettime:
+;format is as in nciospec.doc, but note numbers are normal Z80 words/bytes
+;and *NOT* BCD...
+;                bytes 0,1 = year (low,high)
+;                2=month  3=date
+;                4=hour  5=minute  6=second
+push af
+push bc
+push de
+push hl
+push ix
+call gettime
+pop ix
+pop hl
+push hl
+
+ld a,(timebuf1)
+call convbcd
+ld hl,1990
+ld d,0
+ld e,a
+add hl,de
+ex de,hl
+pop hl
+push hl
+ld (hl),e
+inc hl
+ld (hl),d
+inc hl
+
+ld b,5
+ld de,timebuf1+1
+pgtlp:
+push bc
+ld a,(de)
+call convbcd
+ld (hl),a
+inc de
+inc hl
+pop bc
+djnz pgtlp
+
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+padsettime:
+;ignored
+ret
+
+
+;convert a byte in BCD to an integer
+;entry:	a=BCD
+;exit:	a=byte, f/b corrupt
+;this is hardly optimal :-)
+convbcd:
+push af
+rrca
+rrca
+rrca
+rrca
+and 15
+;want a*10
+rlca	;*2
+ld b,a	;save a*2
+rlca	;*4
+rlca	;*8
+add a,b	;*10
+ld b,a
+pop af
+and 15
+add a,b
+ret
+
+
+timebuf1: defw 0,0,0
+timebuf2: defw 0,0,0
+
+
+;get time in ZCN's usual BCD format at timebuf1.
+gettime:
+call zcnon
+
+ld c,085h
+ld de,timebuf1
+call 5
+
+ld c,085h
+ld de,timebuf2
+call 5
+
+call zcnoff
+
+;now, if t1<t2 then t1:=t2
+
+ld ix,timebuf1
+ld b,6
+tchklp:
+ld a,(ix)
+cp (ix+6)
+jr c,uset2
+inc ix
+djnz tchklp
+ret
+
+uset2:
+ld hl,timebuf2
+ld de,timebuf1
+ld bc,6
+ldir
+ret
+
+
+
+
+;the heap routines are based on knowing how basic uses the heap
+;routines - i.e. hardly at all. :-)
+;
+;basic allocates a 2k block, then allocates all the rest of available
+;memory, then frees the 2k block. That's all.
+;(well, ok, it locks the main block then gets its addr too, but
+;that's trivial.)
+
+heapaddress:
+ld hl,(lomem)
+ret
+
+heapalloc:
+ld hl,3		;only has to be non-zero, though
+ret
+
+heapfree:	;ignored
+heaplock:	;ignored
+ret
+
+heapmaxfree:
+;don't really need to return meaningful value, but it's
+;dead easy so might as well.
+push af
+push de
+ld hl,0a000h
+ld de,(lomem)
+and a
+sbc hl,de
+pop de
+pop af
+ret
+
+
+selectfile:
+push af
+push bc
+push de
+push hl
+push ix
+call dozcndir
+pop ix
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+kmgetyellow:
+;ignored, we have no need for `yellow events' (to quit with)
+ld bc,0
+and a
+ret
+
+
+
+;get len of asciiz string at hl, and retn len in bc
+;entry: hl=addr of string
+;exit:	bc=length of string, excluding the trailing NUL
+;	hl=addr of trailing NUL
+;af corrupt
+strlen:
+ld bc,0
+strlnlp:
+ld a,(hl)
+and a
+ret z
+inc hl
+inc bc
+jr strlnlp
+
+
+;editbuf - based on ZCN's bgetbuf
+;checks for Esc
+;assumes flag byte (A) is unused, i.e. zero
+;XXX only editing supported is delete backwards
+
+;temp vars:
+bgbpos:	defb 0	;position, where 0 = at (bgbbuf)
+bgbbuf:	defw 0	;buffer being filled - from hl
+bgblen: defb 0  ;current length of string
+bgbmax: defb 0	;max len (not including NUL)
+bgbchar: defw 0	;last char. input (keycode)
+
+;set by kmcharreturn for each line that's *EXEC'd
+fake_cr: defb 0
+
+editbuf:
+ld (bgbbuf),hl
+ld a,b
+ld (bgbmax),a
+
+call zcnon
+;get rid of any possible spurious pending (gotesc)
+xor a
+ld (gotesc),a
+ld (cur2on),a
+call curs_on	;saves regs
+call zcnoff
+
+;we know max len is going to be 255, so don't bother testing for zero len
+
+;see where we should start
+call strlen
+ld a,c
+ld (bgbpos),a
+ld (bgblen),a
+
+;print existing string
+ld hl,(bgbbuf)
+bgbprlp:
+ld a,(hl)
+and a
+jr z,bgbcont
+call putbyte
+inc hl
+jr bgbprlp
+
+bgbcont:
+;skip straight to end if (fake_cr) set
+ld a,(fake_cr)
+and a
+jr z,bgbloop
+xor a
+ld (fake_cr),a
+jp bgbfin
+
+bgbloop:
+call kmwaitkbd
+;we can still use a to compare for esc and del, fortunately...
+cp 27		;is it esc?
+jp z,bgbexit	;if so, exit
+ld (bgbchar),bc
+
+;if it was del, print a backspace/space/backspace
+cp 127
+jr nz,bgb1
+
+;delete char onscreen and in buffer if pos!=0
+ld a,(bgbpos)
+and a
+jr z,bgbagain
+
+dec a
+ld (bgbpos),a
+ld a,(bgblen)
+dec a
+ld (bgblen),a
+
+;XXX this will screw up if deleting back into a previous screen line
+call ebcuroff
+ld a,8
+call putbyte
+ld a,32
+call putbyte
+ld a,8
+call putbyte
+call ebcuron
+
+bgb1:
+;deal with possibility of it being a BBC-style cursor move or `copy' (tab)
+;returns c if that dealt with it and we shouldn't carry on
+call eb_beebkeys
+jr c,bgbagain
+
+;now echo and add, but only if printable
+ld hl,(bgbchar)
+ld a,h
+and a
+jr nz,bgbagain
+
+ld a,l
+
+;check for pound sign first, as we allow that.
+cp 156
+jr z,bgbpsign
+
+call isprint
+jr nc,bgbagain
+
+bgbpsign:
+;add char to string
+;XXX this only works if (bgbpos)=(bgblen), i.e. cursor is at end of
+;string
+
+;check for size - if bgblen=bufsiz then buffer is full
+ld hl,bgbmax
+ld a,(bgblen)
+cp (hl)
+jr z,bgbagain
+
+ld hl,(bgbbuf)
+;a is still (bgblen)
+ld b,0
+ld c,a
+add hl,bc
+ld a,(bgbchar)
+ld (hl),a
+
+;incr. len of string
+ld hl,bgbpos
+inc (hl)
+ld hl,bgblen
+inc (hl)
+
+;echo char
+call ebcuroff
+call ebscrollcheck	;compensate for scrolling to come if in column 119
+ld a,(bgbchar)
+call putbyte
+call ebcuron
+
+;end of loop bit
+bgbagain:
+;check for CR
+;(have to do full two-byte check here)
+ld hl,(bgbchar)
+ld bc,13
+and a
+sbc hl,bc
+jp nz,bgbloop
+
+bgbfin:
+;finished - add the NUL and fix bc/hl as reqd.
+
+;but first, turn off cursor(s)
+call ebcuroff
+
+ld hl,(bgbbuf)
+push hl
+ld a,(bgblen)
+ld b,0
+ld c,a
+add hl,bc
+ld (hl),b	;0
+
+pop hl
+ld bc,(bgbchar)
+
+;a is still (bgblen)
+and a	;set z/nz to show whether any chars in string
+scf
+ret
+
+
+;exits via this if esc pressed
+bgbexit:
+call ebcuroff	;turn off cursor(s)
+ld bc,-1
+xor a	;set z and nc
+ret
+
+
+cur2on: defb 0		;non-zero if 2nd cursor is enabled
+cur2xloc: defb 0	;location of 2nd cursor
+cur2yloc: defb 0
+
+
+
+;turn off normal cursor, and 2nd cursor if enabled
+;af preserved
+ebcuroff:
+push af
+;ignore if via serial
+ld a,(serial)
+cp 1
+jr z,ebcoff1
+ld a,4
+call putbyte
+ld a,(cur2on)
+and a
+jr z,ebcoff1
+call ebcurdisp
+ebcoff1:
+pop af
+ret
+
+;turn on normal cursor, and 2nd cursor if enabled
+;af preserved
+ebcuron:
+push af
+;ignore if via serial
+ld a,(serial)
+cp 1
+jr z,ebcon1
+ld a,3
+call putbyte
+ld a,(cur2on)
+and a
+jr z,ebcon1
+call ebcurdisp
+ebcon1:
+pop af
+ret
+
+;check for a pending scroll, i.e. assume scroll will happen if
+;(xloc) is 119 (since caller is about to print a char).
+;this is only called after ebcuroff.
+ebscrollcheck:
+;only do if 2nd cursor is enabled
+ld a,(cur2on)
+and a
+ret z
+
+;check xloc
+push ix
+ld ix,(1)
+ld a,(ix-5)
+pop ix
+cp 119
+ret nz
+
+;need to move 2nd cursor up if possible, to compensate for scroll.
+ld a,(cur2yloc)
+dec a
+ret m
+ld (cur2yloc),a
+ret
+
+
+;returns c if we used up the key, so to speak
+eb_beebkeys:
+;don't do it if running via serial
+ld a,(serial)
+cp 1
+ret z	;and nc
+
+;check it's a fairly normal key
+ld hl,(bgbchar)
+ld a,h
+and a
+ret nz	;and nc
+
+;has to be a control code, too
+ld a,l
+cp 32
+ret nc	;and... oh. :-)
+
+;ok then, we have a control code of some sort.
+;first check for cursor keys (or ^E/^S/^D/^X);
+; these turn on 2nd cursor (if not on already) and move it.
+cp 'E'-040h
+jp z,eb_up
+cp 'S'-040h
+jp z,eb_left
+cp 'D'-040h
+jp z,eb_right
+cp 'X'-040h
+jp z,eb_down
+
+;`copy' (tab) copies a char if 2nd cursor is enabled; ignored otherwise.
+cp 9
+jr z,eb_copy
+
+;not one of ours, then.
+and a	;nc
+ret
+
+
+eb_copy:
+;ignore if 2nd cursor isn't enabled
+ld a,(cur2on)
+and a
+scf
+ret z	;still may as well return carry set though, as tabs are ignored
+
+;ok, copy a char.
+call ebcuroff
+call grokchar	;get char at 2nd cur, in a
+
+push af
+
+;advance 2nd cursor
+ld a,(cur2xloc)
+inc a
+cp 120
+jr nz,ebcpy1
+
+ld a,(cur2yloc)
+inc a
+cp 10
+jr nz,ebcpy2
+ld a,9		;2nd cursor just stays on the bottom line
+ebcpy2:
+ld (cur2yloc),a
+xor a
+
+ebcpy1:
+ld (cur2xloc),a
+
+call ebcuron
+pop af		;char to `type'
+
+ld h,0
+ld l,a
+ld (bgbchar),hl
+and a	;ret nc, so it inserts the char
+ret
+
+
+;enable 2nd cursor if not already on
+;only called after ebcuroff
+eb_enable:
+ld a,(cur2on)
+and a
+ret nz
+
+;get initial position from real cursor
+push ix
+ld ix,(1)
+ld a,(ix-5)
+ld (cur2xloc),a
+ld a,(ix-4)
+ld (cur2yloc),a
+pop ix
+
+ld a,1
+ld (cur2on),a
+ret
+
+
+eb_up:
+call ebcuroff
+call eb_enable	;enable 2nd cursor if needed
+ld a,(cur2yloc)
+dec a
+call m,eb_upfix
+ld (cur2yloc),a
+scf		;key used
+jp ebcuron
+eb_upfix:
+ld a,9
+ret
+
+eb_left:
+call ebcuroff
+call eb_enable	;enable 2nd cursor if needed
+ld a,(cur2xloc)
+dec a
+call m,eb_leftfix
+ld (cur2xloc),a
+scf		;key used
+jp ebcuron
+eb_leftfix:
+;also move up
+ld a,(cur2yloc)
+dec a
+call m,eb_upfix
+ld (cur2yloc),a
+ld a,119
+ret
+
+eb_right:
+call ebcuroff
+call eb_enable	;enable 2nd cursor if needed
+ld a,(cur2xloc)
+inc a
+cp 120
+call z,eb_rightfix
+ld (cur2xloc),a
+scf		;key used
+jp ebcuron
+eb_rightfix:
+;also move down
+ld a,(cur2yloc)
+inc a
+cp 10
+call z,eb_downfix
+ld (cur2yloc),a
+xor a
+ret
+
+eb_down:
+call ebcuroff
+call eb_enable	;enable 2nd cursor if needed
+ld a,(cur2yloc)
+inc a
+cp 10
+call z,eb_downfix
+ld (cur2yloc),a
+scf		;key used
+jp ebcuron
+eb_downfix:
+xor a
+ret
+
+
+;draw the xor underscore cursor
+;(only called if 2nd cursor is enabled, so we don't bother checking again)
+ebcurdisp:
+ld a,(cur2xloc)
+ld e,a
+ld a,(cur2yloc)
+ld d,a
+call loc2addr2
+ld de,64*5
+add hl,de
+
+;so de=screen addr, hl=addr of char. in font data
+ld a,(cur2xloc)
+rra		;put xloc%2 in carry
+ld c,0f0h
+jr nc,ebc_skip
+ld c,0fh	;keep low nibble
+ebc_skip:
+call zcnon
+ld a,(hl)
+xor c
+ld (hl),a
+call zcnoff
+ret
+
+
+;return char at 2nd cursor, in A. (or space if none match)
+grokchar:
+push iy
+call zcnon
+
+ld a,(cur2xloc)
+ld e,a
+ld a,(cur2yloc)
+ld d,a
+call loc2addr2
+
+ld a,(cur2xloc)
+rra
+jr c,gcright
+call grokleft
+call zcnoff
+pop iy
+ret
+
+gcright:
+call grokright
+call zcnoff
+pop iy
+ret
+
+
+grokleft:
+ld e,0f0h
+jr grokmain
+
+grokright:
+ld e,0fh
+jr grokmain
+
+
+zcnfontdata	equ 0eac0h
+
+;entry: hl=addr of char `onscreen', e=char mask
+;exit:	a=char
+;f/bc/d/hl/iy corrupt
+gmspsav: defw 0
+grokmain:
+ld (gmspsav),sp
+
+;try to match normal attr. char
+ld iy,zcnfontdata
+ld c,96
+gmlp1:
+push hl
+push iy
+ld b,6
+gmlp2:
+ld a,(iy)
+xor (hl)
+and e
+jr nz,gmskip1
+ld a,e
+ld de,64
+add hl,de
+ld e,a
+inc iy
+djnz gmlp2
+ld sp,(gmspsav)
+ld a,128
+sub c
+ret		;matches char
+gmskip1:
+pop iy
+pop hl
+ld a,e
+ld de,6
+add iy,de
+ld e,a
+dec c
+jr nz,gmlp1
+
+;doesn't match any, use a space.
+ld a,32
+ret
+
+
+
+
+
+
+;returns carry set if 32<=a<=126
+isprint:
+cp 32
+ccf
+ret nc
+cp 127
+ret
+
+
+padinitserial:
+padresetser:
+;turn on/off serial I/O - a nop
+ret
+
+
+_fclose:
+push bc
+push de
+push hl
+push ix
+ex de,hl
+call zcnon
+call fclose
+call zcnoff
+pop ix
+pop hl
+pop de
+pop bc
+ret
+
+
+_ferase:
+push bc
+push de
+push hl
+call zcnon
+ld de,080h
+call makefn83
+ld de,080h
+ld c,19		;bfdel
+call 5
+rra
+ccf
+call zcnoff
+pop hl
+pop de
+pop bc
+ret
+
+
+_finblock:
+push bc		;required
+push de
+push hl
+push ix
+ex de,hl
+call zcnon
+call fread
+call zcnoff
+pop ix
+pop hl
+pop de
+jr fobfin	;sort out hl, c/nc etc. via foutblock's end bit
+
+
+;Basic *COMPLETELY IGNORES* the flags returned by this,
+;so whatever we return in A is taken as the next char from the file.
+;happy happy joy joy. :-( The ROM returns FFh in this situation,
+;so we do the same.
+;
+;(basic ignoring the result is less worrying than it sounds -
+;IIRC, it uses ftesteof to avoid the possibility of reading
+;EOF anyway. Not *completely* sure about that though... :-))
+_finchar:
+push bc
+push de
+push hl
+push ix
+ex de,hl
+call zcnon
+call fgetc
+jr c,fgcskip
+ld a,0ffh
+fgcskip:
+call zcnoff
+pop ix
+pop hl
+pop de
+pop bc
+ret
+
+
+
+_fopenup:
+;XXX for now, behaves like openin (as it apparently did on old BBC Basics)
+;falls through
+
+_fopenin:
+push bc
+push hl
+call zcnon
+ld a,(hl)
+cp ':'
+jr z,fopenin2
+call fopenrb
+fopenin3:
+call zcnoff
+ex de,hl
+pop hl
+pop bc
+ret
+
+fopenin2:
+inc hl
+call fopenr
+jr fopenin3
+
+
+
+_fopenout:
+push bc
+push hl
+call zcnon
+ld a,(hl)
+cp ':'
+jr z,fopnout2
+call fopenwb
+fopnout3:
+call zcnoff
+ex de,hl
+pop hl
+pop bc
+ret
+
+fopnout2:
+inc hl
+call fopenw
+jr fopnout3
+
+
+_foutblock:
+push bc		;required
+push de
+push hl
+push ix
+ex de,hl
+call zcnon
+call fwrite
+call zcnoff
+pop ix
+pop hl
+pop de
+fobfin:
+add hl,bc
+ld (fobsav),hl
+;if bc!=orig_bc, indicate error
+pop hl	;orig bc
+and a
+sbc hl,bc
+scf
+jr z,fobskip
+ccf	;nc
+fobskip:
+ld hl,(fobsav)
+ret
+
+fobsav: defw 0
+
+
+_foutchar:
+push bc
+push de
+push hl
+push ix
+ex de,hl
+call zcnon
+call fputc
+call zcnoff
+pop ix
+pop hl
+pop de
+pop bc
+ret
+
+
+_frename:
+push bc
+push de
+push hl
+call zcnon
+push de
+ld de,080h
+call makefn83
+pop hl
+ld de,090h
+call makefn83
+ld de,080h
+ld c,23		;bfrename
+call 5
+rra
+ccf
+call zcnoff
+pop hl
+pop de
+pop bc
+ret
+
+
+;this can only handle 64k files because of rom limitation
+;also, doesn't handle offset-past-eof in the same way the rom one does
+_fseek:
+push bc
+push de
+push hl
+push ix
+ex de,hl
+ld d,b
+ld e,c
+ld c,0
+call zcnon
+call fseek
+call zcnoff
+pop ix
+pop hl
+pop de
+pop bc
+scf
+ret
+
+
+
+fsizfirst: defb 1
+
+_fsize:
+push bc
+push de
+push ix
+
+;the first call is regarding the `AUTO' file. we deal with that
+;specially. (or rather, call something to patch things.)
+
+push hl
+ld hl,fsizfirst
+ld a,(hl)
+ld (hl),0
+pop hl
+and a
+call nz,fsize_auto
+
+call zcnon
+ld de,080h
+call makefn83
+ld de,080h
+ld c,15		;bfopen (to check it exists)
+call 5
+inc a
+jr z,fsizfail
+ld de,080h
+ld c,35		;bfsize
+call 5
+ld hl,(080h+33)
+call hlfix
+pop ix
+pop de
+pop bc
+call zcnoff
+scf
+ret
+
+fsizfail:
+ld hl,0
+pop ix
+pop de
+pop bc
+call zcnoff
+and a	;nc
+ret
+
+
+fsize_auto:
+;before dealing with auto-run stuff, we use this opportunity to fix LISTO...
+ld a,(listodef)
+and 7
+or 030h
+ld (0a2feh),a
+
+;basic calls fsize to see if the `AUTO' file (which it auto-runs)
+;exists, and if so how big it is. However, it uses the memory
+;pointed to (containing the filename) for all subsequent OS calls
+;regarding the file. this makes substituting another file for `AUTO' a
+;doddle...
+;
+;if we don't have a file we want to auto-run, we nuke the `AUTO'
+;to make sure we don't run that.
+
+ld (hl),0		;nuke first, ask questions later :-)
+
+ld a,(usrfcbsav+1)
+cp 32
+ret z
+
+;ok, we have a file to run. patch the filename.
+
+push hl
+
+ex de,hl
+ld a,(usrfcbsav)
+and a
+jr z,fszaskip
+
+;prefix with appropriate `d:'
+add a,64
+ld (de),a
+inc de
+ld a,':'
+ld (de),a
+inc de
+
+fszaskip:
+;copy filename (pre-dot) only as far as first space, if there is one;
+;important, as fopen will read a space as end-of-filename!
+ld hl,usrfcbsav+1
+ld b,8
+fszalp:
+ld a,(hl)
+cp 32
+jr z,fsza2
+ld (de),a
+inc de
+fsza2:
+inc hl
+djnz fszalp
+
+;fopen doesn't mind a trailing dot and/or the file ending in a space,
+;though.
+ld a,'.'
+ld (de),a
+inc de
+ld c,3	;b still zero
+ldir
+xor a
+ld (de),a
+
+pop hl
+ret
+
+
+
+_fsizehandle:
+push af
+push bc
+push de
+push ix
+ex de,hl
+ld de,080h
+ld bc,33
+ldir
+call zcnon
+ld de,080h
+ld c,35		;bfsize
+call 5
+call zcnoff
+ld hl,(080h+33)
+call hlfix
+pop ix
+pop de
+pop bc
+pop af
+ret
+
+hlfix:
+ld a,h
+and 0feh
+jr z,hlfix2
+ld hl,0ffffh	;file is >=64k, but do the best we can...
+ret
+hlfix2:
+;multiply by 128. easiest is to *256 then /2.
+rr h		;get top bit
+;hl*=256
+ld h,l
+ld l,0
+;hl/=2 (preserving top bit)
+rr h
+rr l
+ret
+
+
+_ftell:
+push bc
+push de
+push ix
+ex de,hl
+call zcnon
+call ftell
+call zcnoff
+ex de,hl
+ld a,c
+pop ix
+pop de
+pop bc
+ret
+
+
+_ftesteof:
+push bc
+push de
+push hl
+push ix
+call zcnon
+ex de,hl
+ld (ftehndl),hl
+
+;see if we've read eof before.
+;note that ftesteof really tests for *not* eof...
+call ftesteof
+jr nc,fteexit		;yep, read eof already. ret nc, then.
+
+;if file is write-only, we'll never find an eof, so might as well not
+;bother looking. also, some of the following code assumes the file
+;is read-only, so we need to skip it for openout files.
+;ftesteof set ix to ftehndl...
+bit 6,(ix+sf_flags)
+scf
+jr nz,fteexit			;act as if always ok if write-only file
+
+;if not read eof yet, try now...
+ld hl,(ftehndl)
+call ftell
+ld (ftesav),de
+ld (ftesav+2),bc
+ld hl,(ftehndl)
+call fgetc
+push af
+
+;save currently-in-memory-record-number
+ld ix,(ftehndl)
+ld e,(ix+33)
+ld d,(ix+34)
+push de
+
+ld de,(ftesav)
+ld bc,(ftesav+2)
+ld hl,(ftehndl)
+call fseek
+
+;this is totally evil, but speeds it up a *LOT*.
+;we cancel out the record-is-unread if the record number matches the
+;previous one.
+;fseek will have set ix to (ftehndl)
+pop hl		;old pos
+ld e,(ix+33)
+ld d,(ix+34)
+and a
+sbc hl,de
+jr nz,fteskip
+res 0,(ix+sf_flags)	;mark as read
+
+fteskip:
+pop af
+
+fteexit:
+call zcnoff
+pop ix
+pop hl
+pop de
+pop bc
+ret
+
+ftehndl: defw 0
+ftesav: defw 0,0
+
+
+_fsetattr:
+;ignored (sets file type to basic)
+scf		;feign success :-)
+ret
+
+
+
+;based on drwchar in ZCN's term.z
+;should only be called if cursor if off
+;entry:	A=char to print (A>=128)
+;exit:	af/bc/de/hl/ix corrupt
+oldcur: defb 0
+highchar:
+sub 128
+ret c		;sanity check
+push af
+call loc2addr
+;undraw cursor if we need to
+ld a,(cursor)
+ld (oldcur),a
+and a
+call nz,curs_off	;saves regs
+pop af
+ld l,a		;a is char to draw
+ld h,0
+add hl,hl
+ld d,h
+ld e,l
+add hl,hl
+add hl,de
+;now hl=char*6
+ld de,fontdata
+add hl,de
+
+ld ix,(1)
+ld de,(charloc)
+
+;so de=screen addr, hl=addr of char. in font data
+ld b,6
+ld a,(ix-5)	;xloc
+rra		;put xloc%2 in carry
+ld c,0f0h	;keep high nibble from font byte
+jr nc,dcloop1
+
+ld c,0fh	;keep low nibble
+
+dcloop1:
+push hl
+
+ld a,(invvideo)
+and a
+ld a,(hl)
+jr z,dcskip1
+cpl
+dcskip1:
+;choose correct nibble from font byte and write byte
+ex de,hl
+
+and c
+ld d,a
+ld a,c
+cpl
+and (hl)
+or d
+ld (hl),a
+
+ld de,64
+add hl,de
+ex de,hl
+pop hl
+
+inc hl
+djnz dcloop1
+
+ld a,(ix-5)	;xloc
+inc a
+cp 120
+jr nz,dcskip3
+
+ld a,(ix-4)	;yloc
+inc a
+cp 10
+jr nz,dcskip4
+
+call scrlup	;could use ZCN, but this is a little quicker
+ld a,9
+
+dcskip4:
+ld (ix-4),a	;yloc
+xor a
+
+dcskip3:
+ld (ix-5),a	;xloc
+
+;undraw cursor again if needed
+ld a,(oldcur)
+and a
+ret z
+jp curs_on
+
+
+;lifted from ZCN's term.z
+scrlup:
+ld c,0
+ld hl,0f200h
+ld de,0f080h
+;do 0d80h worth
+ld a,0dh
+scrluplp:
+ld b,1
+ldir
+dec a
+jp nz,scrluplp
+ld c,080h
+ldir
+
+ld hl,0fe00h
+ld d,h
+ld e,l
+inc de
+ld bc,017fh
+ld (hl),0
+ldir
+ret
+
+
+
+charloc: defw 0
+
+
+loc2addr:
+ld ix,(1)
+ld e,(ix-5)
+ld d,(ix-4)
+;e=xloc, d=yloc
+loc2addr2:	;used by editbuf's 2nd cursor stuff
+ld a,d
+rlca
+ld hl,yaddrtbl
+add a,l	;this is valid - table is not split over a 256-byte boundary
+ld l,a
+ld a,(hl)
+inc l
+ld h,(hl)
+ld l,a
+
+ld d,0
+;e is still xloc, now div by 2
+;(carry flag was reset by that 'inc l')
+rr e
+add hl,de
+ld (charloc),hl
+ret
+
+
+
+padoutparl:
+;we use printer directly as CP/M (and thus ZCN) doesn't allow
+;checking if the printer is busy.
+push bc
+ld b,a
+push bc
+push de
+push hl
+ld e,a
+call pputbyte	;this rets nc if couldn't print
+pop hl
+pop de
+pop bc
+ld a,b
+pop bc
+ret
+
+
+;no serial (i.e. COM:) support, so these are all nops.
+padinserial:
+padoutserial:
+padreadyser:
+padserwaiting:
+xor a		;nc, a=0
+ret
+
+
+padreadyparl:
+;I *do* wish they wouldn't keep saying `A preserved' for
+; return-flag-only calls... :-(
+push bc
+ld b,a
+push bc
+call pcanput
+pop bc
+ld a,b
+pop bc
+ret
+
+
+mc_serial: defb 0
+
+mcsetprinter:
+ld (mc_serial),a
+ret
+
+
+mcasav: defb 0
+
+mcprintchar:
+ld (mcasav),a
+
+ld a,(mc_serial)
+and a
+jr nz,mcp1
+
+ld a,(mcasav)
+call padoutparl
+ld a,(mcasav)
+ret
+
+mcp1:
+;put byte to serial
+push bc
+push de
+push hl
+call zcnon
+
+ld a,(mcasav)
+ld e,a
+ld c,4
+call 5
+
+call zcnoff
+pop hl
+pop de
+pop bc
+ld a,(mcasav)
+scf
+ret
+
+
+;needed by bbc_io.z
+dmabuf:
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+
+
+
+;end of high mem. block 1 code
+dephase
+block1_end:

@@ -1,0 +1,5 @@
+This copy omits zmac.c to save space, but is otherwise identical
+to zmac 1.3 as released. The C is normally built from zmac.y, so
+this shouldn't cause any problems.
+
+-Rus.

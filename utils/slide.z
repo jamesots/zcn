@@ -1,0 +1,737 @@
+;slide - slide-rule emulator
+
+org 0100h
+
+jr start
+
+
+outdfile	equ 04000h	;mrf is extracted here, then copied to scrn
+middle_bmp	equ 05000h	;(480*3)x38 bitmap (with 256 bytes per line)
+				;of the middle slider - visible portion
+				;is in the middle. Takes ~10k.
+
+slider_pos:	defw 0		;slider position in pixels (0..960)
+cursor_pos:	defw 0		;cursor position in pixels (0..479)
+
+
+;the 4 is to disable the cursor
+mworking:	defb 4,'working...$'
+
+start:
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;XXX check for crt console output here
+
+call expscrn	;expand mrf in screen format (512x64) at outdfile
+
+ld hl,outdfile
+ld de,0f000h
+ld bc,4096
+ldir
+
+call middleinit	;initialise middle_bmp from outdfile
+
+ld hl,480
+ld (slider_pos),hl
+ld hl,240
+ld (cursor_pos),hl
+
+call xorcursor
+
+;now do actual slide-rule stuff :-)
+
+loop:
+;get key in a
+ld e,0ffh
+ld c,6
+call 5
+and a
+jr z,loop
+
+cp 27
+jr z,done
+
+;we jump to routines; set it up so they ret to loopend
+ld hl,loopend
+push hl
+
+cp 'S'-040h
+jp z,bytescrlleft
+cp 'D'-040h
+jp z,bytescrlright
+
+cp ','
+jp z,bytescrlleft
+cp '.'
+jp z,bytescrlright
+
+cp '<'
+jp z,scrlleft
+cp '>'
+jp z,scrlright
+
+;slider hasn't moved, so now we skip copymiddle
+pop hl
+ld hl,loop
+push hl
+
+cp 'z'
+jp z,bytecurleft
+cp 'x'
+jp z,bytecurright
+
+cp 'Z'
+jp z,curleft
+cp 'X'
+jp z,curright
+
+;no relevant key pressed, get back to loop
+ret
+
+
+loopend:
+call xorcursor
+call copymiddle
+call xorcursor
+jr loop
+
+done:
+ld e,1	;cls
+ld c,2
+call 5
+
+rst 0
+
+
+
+;expand mrf at mrfdata into 512x64 at outdfile.
+;this is customised for 512x64, and it'd be a bad idea to base other
+;mrf code on this. (A better starting point would be pbmtomrf's
+;specmrf.z, which this is a hacked version of.)
+;entry: none
+;exit:	af/bc/de/hl/ix corrupt
+expscrn:
+ld de,mworking
+ld c,9
+call 5
+
+;clear `screen'
+ld hl,outdfile
+ld de,outdfile+1
+ld bc,4095
+ld (hl),255
+ldir
+
+call bit_init
+
+;ix is used as the record pointer and is sacred to the bit reader
+;after the header is dealt with.
+
+;to save some grief, we assume it's a 512x64 mrf. :-)
+
+;skip header
+ld de,13
+add ix,de
+ld a,(ix-1)
+ld (bitbox),a
+
+;do each square in turn
+ld de,0
+expxloop:
+push de
+ld c,0
+ld b,64
+call do_square
+pop de
+
+ld hl,64
+add hl,de
+ld d,h
+ld e,l
+;nc already, as the add won't have carried
+ld bc,512
+sbc hl,bc
+jr nz,expxloop
+ret
+
+
+bitbox: defb 0
+bitsleft: defb 0
+bitmask: defb 128
+
+
+bit_init:
+ld ix,mrfdata
+
+ld a,(ix)
+ld (bitbox),a
+inc ix
+ld a,128
+ld (bitmask),a
+ld a,8
+ld (bitsleft),a
+ret
+
+;get bit from file.
+;entry: ix=file pointer
+;exit:	a=bit (in LSB), f/bc/de/hl corrupt
+bit_input:
+ld a,(bitsleft)
+and a
+jr nz,bitin1
+
+ld a,(ix)
+ld (bitbox),a
+inc ix
+ld a,128
+ld (bitmask),a
+ld a,8
+ld (bitsleft),a
+
+bitin1:
+;a still bitsleft
+dec a
+ld (bitsleft),a
+
+;get bit and return it
+ld a,(bitmask)
+ld d,a
+rrca
+ld (bitmask),a
+ld a,(bitbox)
+and d
+ret z
+ld a,1
+ret
+
+
+;do an mrf square.
+;entry:	ix=file ptr, (de,c)=(x,y) top-left of square, b=size
+;exit:	af/bc/de/hl corrupt
+do_square:
+;is it all black/white?
+ld a,b
+dec a
+jr z,dosq1
+push bc
+push de
+call bit_input
+pop de
+pop bc
+rra
+jr nc,dosq2
+
+dosq1:
+;yes, next bit says which.
+push bc
+push de
+call bit_input
+pop de
+pop bc
+rra
+ret nc	;no need to draw it if it's black
+
+;if size=1, a simple pset is sufficient.
+ld a,b
+dec a
+jr nz,dosq3
+
+jp preset	;return via preset
+
+dosq3:
+;and if size>=8, there's a byte-orientated way to do it which is
+;quicker.
+ld a,b
+and 7
+jr z,fillbytes
+
+;otherwise, resort to individually resetting each pixel.
+ld a,b
+ld (dosqop+1),a
+ld l,a
+dosqyloop:
+dosqop: ld h,0	;modified (ok to do, as this bit doesn't recurse)
+dosqxloop:
+push bc
+push de
+push hl
+;(d)e+h-1,c+l-1
+ld a,e
+add a,h
+dec a
+ld e,a
+ld a,c
+add a,l
+dec a
+ld c,a
+call preset
+pop hl
+pop de
+pop bc
+dec h
+jr nz,dosqxloop
+
+dec l
+jr nz,dosqyloop
+ret
+
+
+dosq2:
+;otherwise, not all one colour, so recurse.
+and a
+rr b	;size>>=1
+
+;top-left
+push bc
+push de
+call do_square
+pop de
+pop bc
+
+;top-right
+push bc
+push de
+ld a,e
+add a,b
+ld e,a
+call do_square
+pop de
+pop bc
+
+;bottom-left
+push bc
+push de
+ld a,c
+add a,b
+ld c,a
+call do_square
+pop de
+pop bc
+
+;bottom-right
+push bc
+push de
+ld a,e
+add a,b
+ld e,a
+ld a,c
+add a,b
+ld c,a
+call do_square
+pop de
+pop bc
+ret
+
+
+;fill byte-aligned square of pixel size b by b, at pixel pos (de,c).
+;entry: as above
+;exit:	af/bc/de/hl corrupt
+filsize: defb 0
+fillbytes:
+;find addr
+push bc
+call pos2addr
+pop bc
+
+ld a,b
+rrca
+rrca
+rrca
+and 01fh
+ld (filsizop+1),a
+
+ld c,b
+ld de,64
+fbyloop:
+
+push hl
+filsizop: ld b,0	;modified
+xor a
+fbxloop:
+ld (hl),a
+inc hl
+djnz fbxloop
+
+pop hl
+add hl,de
+
+dec c
+jr nz,fbyloop
+ret
+
+
+
+;reset pixel at (b,c) relative to outdfile
+;af/bc/de/hl corrupt
+preset:
+call pos2addr
+ld a,c
+cpl
+and (hl)
+ld (hl),a
+ret
+
+
+;convert pixel position (de=x, c=y) to hl=addr, c=mask w/pixel set at pos
+;af/b/de corrupt
+pos2addr:
+push de
+;get pixel mask byte first
+ld a,e
+and 7
+ld d,0
+ld e,a
+ld hl,masktbl
+add hl,de
+ld a,(hl)
+
+;y pos
+ld h,c
+ld l,d	;d is still 0
+rr h	;carry flag is 0 from the 'add hl,de'
+rr l
+rr h
+rr l
+
+;put mask (from a) into c
+ld c,a
+
+;x pos
+pop de
+ld a,e
+and 0f8h
+rr d	;get the only used bit in d
+rra
+rra
+rra
+or l
+ld l,a
+
+ld de,outdfile
+add hl,de
+ret
+
+
+;x pos & 7 -> mask table for pos2addr routine
+masktbl:
+defb 080h,040h,020h,010h,008h,004h,002h,001h
+
+
+
+;scroll routines
+;these scroll middle_bmp, the three-screen-wide bitmap containing the
+;slider.
+
+
+scrlright:
+ld hl,(slider_pos)
+ld de,480*2
+and a
+sbc hl,de
+ret nc		;actually, ret z would be good enough, but so what :-)
+
+ld hl,middle_bmp
+ld c,38
+scrlrylp:
+push hl
+ld b,180
+and a
+scrlrxlp:
+rr (hl)
+inc hl
+djnz scrlrxlp
+pop hl
+inc h
+dec c
+jr nz,scrlrylp
+
+ld hl,(slider_pos)
+inc hl
+ld (slider_pos),hl
+ret
+
+
+scrlleft:
+ld hl,(slider_pos)
+ld a,h
+or l
+ret z
+
+ld hl,middle_bmp+37*256+179
+ld c,38
+scrllylp:
+push hl
+ld b,180
+and a
+scrllxlp:
+rl (hl)
+dec hl
+djnz scrllxlp
+pop hl
+dec h
+dec c
+jr nz,scrllylp
+
+ld hl,(slider_pos)
+dec hl
+ld (slider_pos),hl
+ret
+
+
+bytescrlright:
+ld hl,(slider_pos)
+ld de,480*2-7
+push hl
+and a
+sbc hl,de
+pop hl
+jr c,bsrskip
+
+;if 480*2, ret
+;we do it a funny way round to get 480*2-slider_pos, which the next
+;bit will want if it's *not* 480*2...
+ex de,hl
+ld hl,480*2
+and a
+sbc hl,de
+ret z
+
+;if 480*2-7<=pos<=480*2-1, use pixel scroll to get there.
+ld b,l		;this is 480*2-slider_pos
+bsrpixlp:
+push bc
+call scrlright
+pop bc
+djnz bsrpixlp
+ret
+
+bsrskip:
+ld hl,middle_bmp+178
+ld c,38
+bscrlrylp:
+push hl
+ld d,h
+ld e,l
+inc de
+ld b,179
+bscrlrxlp:
+inc c
+ldd
+djnz bscrlrxlp
+xor a
+ld (de),a
+pop hl
+inc h
+dec c
+jr nz,bscrlrylp
+
+ld hl,(slider_pos)
+ld de,8
+add hl,de
+ld (slider_pos),hl
+ret
+
+
+bytescrlleft:
+ld hl,(slider_pos)
+ld de,8
+push hl
+and a
+sbc hl,de
+pop hl
+jr nc,bslskip
+
+;if zero, ret
+ld a,h
+or l
+ret z
+
+;if 1<=pos<=7, use pixel scroll to get there.
+ld b,l
+bslpixlp:
+push bc
+call scrlleft
+pop bc
+djnz bslpixlp
+ret
+
+bslskip:
+ld hl,middle_bmp+1
+ld c,38
+bscrllylp:
+push hl
+ld d,h
+ld e,l
+dec de
+ld b,179
+bscrllxlp:
+inc c
+ldi
+djnz bscrllxlp
+xor a
+ld (de),a
+pop hl
+inc h
+dec c
+jr nz,bscrllylp
+
+ld hl,(slider_pos)
+ld de,-8
+add hl,de
+ld (slider_pos),hl
+ret
+
+
+middleinit:
+;zero it
+ld hl,middle_bmp
+ld de,middle_bmp+1
+ld bc,256*38-1
+ld (hl),0
+ldir
+
+;copy the slider bitmap
+ld hl,13*64+outdfile
+ld de,middle_bmp+60
+ld a,38
+miylp:
+push de
+ld bc,60
+ldir
+pop de
+inc d
+inc hl
+inc hl
+inc hl
+inc hl
+dec a
+jr nz,miylp
+ret
+
+
+copymiddle:
+ld hl,middle_bmp+60
+ld de,13*64+0f000h
+ld a,38
+cmylp:
+push hl
+
+ld bc,06ffh	;i.e. put 6 in b and make c big :-)
+cmxlp:
+;ten ldi's
+ldi
+ldi
+ldi
+ldi
+ldi
+
+ldi
+ldi
+ldi
+ldi
+ldi
+djnz cmxlp
+
+pop hl
+inc h
+inc de
+inc de
+inc de
+inc de
+dec a
+jr nz,cmylp
+ret
+
+
+xorcursor:
+ld hl,(cursor_pos)
+push hl
+
+;get x pos
+ld a,l
+and 0f8h
+rr h	;get the only used bit in h
+rra
+rra
+rra
+ld l,a
+ld h,0f0h	;effectively add screen address
+
+;now get pixel mask byte
+exx
+pop de
+ld a,e
+and 7
+ld d,0
+ld e,a
+ld hl,masktbl
+add hl,de
+ld a,(hl)
+exx
+
+ld de,64
+ld b,e	;64
+ld c,a	;mask
+xorclp:
+ld a,(hl)
+xor c
+ld (hl),a
+add hl,de
+djnz xorclp
+
+ret
+
+
+bytecurleft:
+call xorcursor
+ld hl,(cursor_pos)
+ld de,8
+bclend:		;remainder also used by pixel-move version
+and a
+sbc hl,de
+jr nc,bclskip
+ld hl,0
+bclskip:
+ld (cursor_pos),hl
+call xorcursor
+ret
+
+
+bytecurright:
+call xorcursor
+ld hl,(cursor_pos)
+ld de,8
+add hl,de
+bcrend:		;remainder also used by pixel-move version
+push hl
+ld de,479
+and a
+sbc hl,de
+pop hl
+jr c,bcrskip
+ex de,hl
+bcrskip:
+ld (cursor_pos),hl
+call xorcursor
+ret
+
+
+curright:
+call xorcursor
+ld hl,(cursor_pos)
+inc hl
+jr bcrend
+
+
+curleft:
+call xorcursor
+ld hl,(cursor_pos)
+ld de,1
+jr bclend
+
+
+
+;slidebmp.mrf, catted onto the end
+mrfdata:

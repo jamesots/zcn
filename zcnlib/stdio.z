@@ -1,0 +1,885 @@
+;stdio-like functions for ZCN; requires Z80
+;public domain by Russell Marks, 1995.
+
+;should probably work on CP/M too, but haven't tried it.
+;all files must be in same usernum for now
+;a file *cannot* be opened read-write; this is unlikely to be fixed
+;max three files open at once
+; (this is very hard-coded; don't try to change it ;-))
+
+;implements fopen, fclose, fread, fwrite, fgetc, fputc, fseek, ftell,
+; fgets, fputs.
+
+;there is no feof() equivalent - watch the results of fgetc etc. to
+; determine when eof happened. (This is the way you should usually
+; use C stdio anyway, IMHO.)
+;there's also no fflush(). Files are only finally, definitely sync'ed
+; when you do an fclose. (This would be the case on CP/M anyway.)
+
+;for cpm zmac:
+;ZZglobal fopenr
+;ZZglobal fopenw
+;ZZglobal fopenrb
+;ZZglobal fopenwb
+;ZZglobal fopen
+;ZZglobal fopenfcb
+;ZZglobal fclose
+;ZZglobal fread
+;ZZglobal fwrite
+;ZZglobal fgetc
+;ZZglobal fputc
+;ZZglobal fseek
+;ZZglobal ftell
+;ZZglobal fgets
+;ZZglobal fputs
+
+
+;there are 36 bytes for random-access FCB, then 4 bytes for position etc.
+;those extra 4 bytes are:
+sf_pos128	equ 36
+; start+36	current (unread) file position in record (0-127)
+sf_flags	equ 37
+; start+37	bit 0 set if this record isn't read yet;
+;		bit 1 set if this record is 'dirty' but not written yet;
+;		bit 6 set if we're writing (0 for reading);
+;		bit 7 set if it's a binary-mode file.
+; start+38/39	address of 128-byte read/write buffer for file
+
+stdfcbs:
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0
+defw dmabuf+0
+
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0
+defw dmabuf+128
+
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0, 0,0
+defw dmabuf+256
+
+;filename-only mini-FCB used by fopen
+tmpfcb:
+defb 0, 0,0,0,0, 0,0,0,0, 0,0,0
+
+
+usedfcbs: defb 0,0,0		;each byte is 1 if relevant fcb is used
+
+;record buffers, 128 bytes for each possible open file (384 bytes total)
+;this saves us having to read/write the thing *all* the time
+;make this an equ to free bit of memory to save space in COM file if you want
+;
+;(NB: the decl must stay on one line as below, since some ZCN bits (e.g.
+;man) use sed and the like to remove this so they can use an equ
+;without needing a duplicate copy of stdio.z.)
+;
+dmabuf: defs 384
+
+
+
+;fopen{r,w,rb,wb} are the same as fopen but set a for the relevant
+; file read/write/binary action.
+fopenr:
+xor a
+jr fopen
+fopenw:
+ld a,1
+jr fopen
+fopenrb:
+ld a,2
+jr fopen
+fopenwb:
+ld a,3
+jr fopen
+
+
+;fopen - open a file
+;entry: hl=addr of filename, asciiz
+;  (NB: the filename can also end in a space if that's more convienient)
+;	a=0 ("r"), 1 ("w"), 2 ("rb"), or 3 ("wb")
+;exit:  nc if couldn't open or too many files open, c if ok
+;	if ok, hl=file handle (addr of fcb really, but don't use it)
+;af/bc/de/ix corrupt
+fopen:
+;put asciiz filename into tmpfcb
+push af
+ld de,tmpfcb
+call makefn83
+
+;now use fopenfcb
+ld hl,tmpfcb
+pop af
+jr fopenfcb
+
+
+;fopenfcb - open a file based on the filename given in an fcb
+;entry: hl=addr of fcb
+;	a=read/write/bin mode as for fopen
+;exit:	as for fopen
+;NB: the fcb pointed to by hl will *not* be used or modified, and
+; only the first twelve bytes are relevant.
+;af/bc/de/ix corrupt
+fotmpa: defb 0
+fopenfcb:
+ld (fotmpa),a
+push hl
+call allocfcb
+pop de
+ret nc
+push hl
+ex de,hl
+ld bc,12
+ldir		;copy to our new fcb
+pop ix
+ld (ix+sf_pos128),b	;zero out pos-in-record
+ld (ix+33),b
+ld (ix+34),b		;and also the rand. rec. posn
+ld (ix+35),b
+
+;set/reset 'write' and 'binary' flags and reset others
+ld a,(fotmpa)
+ld b,a
+;move bit 1/0 to bit 7/6
+rrca
+rrca
+and 0c0h
+ld (ix+sf_flags),a
+
+;put ix into de ready for bdos calls soon
+push ix
+pop de
+
+;see if we want to read, or write
+bit 6,a
+jr nz,fopen2
+
+;reading
+;want to use bdos file open. ix should stay ok
+ld c,15
+call 5
+;if a=255, it failed
+cp 255
+ret z	;also nc
+
+;otherwise, set 'haven't read record yet' flag and put ix in hl
+set 0,(ix+sf_flags)
+push ix
+pop hl
+scf
+ret
+
+
+;writing
+fopen2:
+;delete any existing file with this name
+push de
+ld c,19
+call 5
+;don't care what the result was
+pop de
+push de
+;now try to make it
+ld c,22
+call 5
+pop hl
+cp 255
+ret z	;also nc, if failed
+
+;if we got here, it opened ok. the dirty bit is *not* set as we
+;haven't actually written anything yet (so it'll remain zero-length if
+;we close it straight away).
+
+;all done, then.
+scf
+ret
+
+
+
+
+;put asciiz filename into CP/M-style uppercase 8.3
+;based on 'genfcbs' from ccp.z in ZCN
+;entry: hl=addr of asciiz filename, de=addr of FCB
+tmpde: defw 0
+makefn83:
+ld (tmpde),de
+
+xor a
+ld (de),a
+push hl
+inc de
+;blank the filenameext bytes of FCB
+ld h,d
+ld l,e
+inc de
+ld bc,10
+ld (hl),32
+ldir
+pop hl
+
+;check for drive identifier.
+inc hl
+ld a,(hl)
+dec hl
+cp ':'
+jr nz,gf1a
+
+ld a,(hl)
+call mfn_upc
+sub 64
+push hl
+ld hl,(tmpde)
+ld (hl),a
+pop hl
+inc hl
+inc hl
+
+;start copying to fcb, and keep going until we reach
+;whitespace again.
+;to deal with the problem of filename=8 chars max., we keep a count of
+;chars done so far in c.
+gf1a:
+ld c,0
+ld de,(tmpde)
+inc de	;move fcb ptr. to start of filename
+
+gflp2:
+ld a,(hl)
+cp '.'
+jr z,gfnowext
+call isblank	;i.e. tab, space, or 00h
+ret z		;finished if blank
+;if we're not past the 8 char. limit...
+ld a,c
+cp 8
+jr nc,gf2	;skip if c>=8
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+call mfn_upc
+ld (de),a
+inc de
+
+gf2:
+inc c
+inc hl
+jr gflp2
+
+gfnowext:
+;we're currently pointing at a dot.
+inc hl
+
+;do much the same for the extension.
+ld c,0
+push hl
+ld hl,(tmpde)
+ld de,9
+add hl,de
+ex de,hl
+pop hl
+;fcb ptr. now at start of extension
+
+gflp3:
+ld a,(hl)
+call isblank	;i.e. tab, space, or 00h
+ret z		;we're done if it's a blank
+;if we're not past the 3 char. limit...
+ld a,c
+cp 3
+jr nc,gf3	;skip if c>=3
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+call mfn_upc
+ld (de),a
+inc de
+
+gf3:
+inc c
+inc hl
+jr gflp3
+
+
+;returns zero flag set if 'blank' or 'whitespace', i.e. TAB or SPC or
+;NUL (yes, NUL is a curious thing to have as whitespace, but it's
+;really useful to include it, in the context this routine is used).
+isblank:
+and a
+ret z
+cp 9
+ret z
+cp 32
+ret
+
+
+;uppercase char in a.
+mfn_upc:
+cp 'a'
+ret c
+cp '{'
+ret nc
+;so a is in range 'a' to 'z'. uppercase it.
+xor 020h
+ret
+
+
+
+;allocate free fcb
+;rets nc if none free or hl=first free one (and allocates it)
+;af/de corrupt
+allocfcb:
+ld hl,usedfcbs
+xor a
+cp (hl)
+jr z,afgot
+inc hl
+cp (hl)
+jr z,afgot
+inc hl
+cp (hl)
+ret nz		;none free
+
+;got one
+afgot:
+inc a
+ld (hl),a
+ld de,usedfcbs
+and a
+sbc hl,de
+call multhl40
+ld de,stdfcbs
+add hl,de
+scf
+ret
+
+
+;free the fcb at hl
+;NB: doesn't check if the fcb is used, or the file is up to date;
+;    also doesn't report errors
+;af/de/hl corrupt
+freefcb:
+ld de,stdfcbs
+and a
+sbc hl,de
+;if <0 or >80 it's junk
+ret c
+ld a,l
+cp 81
+ret nc
+;now it's 00h, 28h, or 50h.
+;to convert those to 0,1,2 we take the top 3 bits.
+rlca
+rlca
+rlca
+and 7
+;now zero it out
+ld d,0
+ld e,a
+ld hl,usedfcbs
+add hl,de
+ld (hl),d
+ret
+
+
+;multiply hl by 40
+;nice general purpose routine dontcha think :-)
+;de corrupt
+multhl40:
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+ld d,h
+ld e,l		;save the *8 for later
+add hl,hl	;*16
+add hl,hl	;*32
+add hl,de	;*40
+ret
+
+
+;close file. call this for *all* files you read/wrote with fopen,
+; not just ones you wrote to, otherwise the file handle will still
+; remain allocated.
+;entry: hl=file handle
+;exit:	nc if file write error, else c
+;	af/bc/de/hl/ix corrupt
+fclose:
+;easiest to free it now
+push hl
+call freefcb
+pop ix
+
+;see if we're writing; if not, we can quit now
+scf
+bit 6,(ix+sf_flags)
+ret z
+
+;we are, so things are a bit more annoying.
+;if it's a text file:
+;  fputc a ^Z.
+;after that, for both text and binary files:
+;  if dirty bit set, write record.
+
+;ok, see if it's a text file.
+bit 7,(ix+sf_flags)
+jr nz,fclose2	;nope, so check dirty bit then ret
+
+;it is, so write that ^Z.
+ld a,01ah
+push ix
+push ix
+pop hl
+call fputc
+pop ix
+
+fclose2:
+;check dirty bit and write if needed
+call fwdirty
+ret nc
+
+;let CP/M close file
+push ix
+pop de
+ld c,16
+call 5
+cp 255
+ret z	;and nc
+
+;otherwise, all done!
+scf
+ret
+
+
+;internal use only
+;*only call for write-only files*
+;writes current record if dirty
+;entry: ix=file handle
+;exit:  nc if file write error, else c
+;af/bc/de/hl corrupt
+fwdirty:
+;check the dirty bit
+scf
+bit 1,(ix+sf_flags)
+ret z		;if not dirty, we're done
+
+;write the record
+call fwintbuf
+ret nc
+
+;clear dirty bit
+res 1,(ix+sf_flags)
+ret
+
+
+;internal use only
+;write a file's buffer
+;doesn't check for write-only file or check dirty bit
+;entry: ix=file handle
+;exit:	c if ok, nc if file write error
+;af/bc/de/hl corrupt
+fwintbuf:
+push ix
+;set dma
+ld e,(ix+38)
+ld d,(ix+39)
+ld c,26
+call 5
+
+pop de
+ld c,34
+call 5
+and a
+scf
+ret z	;if a=0 it wrote ok, and carry is set
+ccf	;c -> nc
+ret
+
+
+;internal use only
+;*only call for read-only files*
+;reads current record if not read yet
+;entry: ix=file handle
+;exit:  nc if file read error, else c
+;af/bc/de/hl corrupt
+frdirty:
+;check the unread bit
+scf
+bit 0,(ix+sf_flags)
+ret z		;if already read, we're done
+
+;read the record
+call frintbuf
+ret nc
+
+;clear unread bit
+res 0,(ix+sf_flags)
+ret
+
+
+;internal use only
+;read to a file's buffer
+;doesn't check for read-only file or check unread bit
+;entry: ix=file handle
+;exit:	c if ok, nc if file read error
+;af/bc/de/hl corrupt
+frintbuf:
+push ix
+;set dma
+ld e,(ix+38)
+ld d,(ix+39)
+ld c,26
+call 5
+
+pop de
+ld c,33
+call 5
+and a
+scf
+ret z	;if a=0 it wrote ok, and carry is set
+ccf	;c -> nc
+ret
+
+
+;read (up to) a certain number of bytes from a file.
+;NB: this is written in terms of fgetc, so it's no quicker than using
+; that. The 128-byte buffering should make it acceptably quick anyway.
+;entry: hl=handle
+;	de=addr to read bytes at
+;	bc=(max) number of bytes to read
+;exit:	bc=number of bytes actually read
+;af/de/hl/ix corrupt
+;(note that the carry status is not used for signalling an error here!)
+fread:
+push bc
+freadlp:
+push bc
+push de
+push hl
+call fgetc
+pop hl
+pop de
+pop bc
+jr nc,freaddun
+ld (de),a
+inc de
+dec bc
+ld a,b
+or c
+jr nz,freadlp
+
+freaddun:
+pop hl	;the old value of bc they gave
+;return how many bytes we read in bc
+and a
+sbc hl,bc
+ld b,h
+ld c,l
+ret
+
+
+;write a certain number of bytes to a file if possible.
+;NB: see NB under fread :-)
+;entry: hl=handle
+;	de=addr to write bytes from
+;	bc=number of bytes to (try to) write
+;exit:	bc=number of bytes actually written
+;af/de/hl/ix corrupt
+;(note that the carry status is not used for signalling an error here!)
+fwrite:
+push bc
+fwritelp:
+push bc
+push de
+push hl
+ld a,(de)
+call fputc
+pop hl
+pop de
+pop bc
+jr nc,fwritedun
+inc de
+dec bc
+ld a,b
+or c
+jr nz,fwritelp
+
+fwritedun:
+pop hl	;the old value of bc they gave
+;return how many bytes we wrote in bc
+and a
+sbc hl,bc
+ld b,h
+ld c,l
+ret
+
+
+;get a char from file into a
+;NB: CRs are *dropped* when reading in text mode; this gives a
+; completely C/Unix-like view of a text file.
+;entry:	hl=file handle
+;exit:	if c, ok and a=char from file, if nc, read error or eof
+;	f/bc/de/hl/ix corrupt
+fgetc:
+push hl
+pop ix
+and a	;nc
+bit 6,(ix+sf_flags)
+ret nz			;error if write-only file
+
+;first read the record if not in memory
+call frdirty
+ret nc		;stop if error
+
+;otherwise, we're ok, so get char and incr file pos
+ld a,(ix+sf_pos128)
+ld e,(ix+38)
+ld d,(ix+39)
+ld l,a
+ld h,0
+add hl,de
+ld a,(hl)
+push af
+
+;incr file pos
+ld a,(ix+sf_pos128)
+inc a
+call m,fgetc1
+ld (ix+sf_pos128),a
+
+fgetceof:
+pop af
+
+;extra eof check, but only if in text mode
+scf
+bit 7,(ix+sf_flags)
+ret nz
+
+;ret nc if it's ^Z
+cp 26
+ret z	;and nc
+
+;we're in text mode if we're here, so if it's a CR, drop it
+; by looping back to fgetc.
+push ix
+pop hl		;make sure hl is set again, just in case
+cp 13
+jr z,fgetc
+
+;ok otherwise
+scf
+ret
+
+;move to next record
+fgetc1:
+ld e,(ix+33)
+ld d,(ix+34)
+inc de
+ld (ix+33),e
+ld (ix+34),d
+;set unread flag
+set 0,(ix+sf_flags)
+;then get ready to zero pos128
+xor a
+ret
+
+
+;put char in a to file
+;NB: in text mode, when you write an LF, it's prefixed by a CR.
+; Again, this gives a completely C/Unix-like view of a text file.
+;entry:	hl=file handle
+;exit:	c if ok, nc if write error
+;	f/bc/de/hl/ix corrupt
+fputc:
+push hl
+pop ix
+and a	;nc
+bit 6,(ix+sf_flags)
+ret z			;error if read-only file handle
+
+;if in text mode...
+bit 7,(ix+sf_flags)
+jr nz,fputcbit
+
+;...then if it's an LF...
+cp 10
+jr nz,fputcbit
+
+;...put a CR first
+ld a,13
+call fputcbit
+ret nc		;stop here on error
+
+;now write the original LF
+;the handle addr in ix will still be intact
+ld a,10
+
+fputcbit:
+;put char, set dirty bit, and incr file pos
+ld b,a
+ld a,(ix+sf_pos128)
+ld e,(ix+38)
+ld d,(ix+39)
+ld l,a
+ld h,0
+add hl,de
+ld (hl),b
+
+set 1,(ix+sf_flags)
+
+;incr file pos
+ld a,(ix+sf_pos128)
+inc a
+call m,fputc1
+ld (ix+sf_pos128),a
+
+;that's it
+scf
+ret
+
+;write this record (we know it's dirty), and move to the next one
+fputc1:
+call fwintbuf
+pop hl
+ret nc
+push hl
+;clear dirty flag, as this *next* record hasn't been written to yet
+res 1,(ix+sf_flags)
+;incr pos
+ld e,(ix+33)
+ld d,(ix+34)
+inc de
+ld (ix+33),e
+ld (ix+34),d
+;then get ready to zero pos128
+xor a
+ret
+
+
+;move to a given address in the file
+;(you won't be able to tell if the file is sufficiently long until
+; you try reading from it)
+;NB: text files are pretty screwy with regard to fseek/ftell.
+; For the purposes of fseek/ftell *only*, text files are treated
+; exactly as binary files are.
+;NB2: the current position is defined as the first position not
+; read/written to; the byte that would be read/written next
+; (as in C stdio, and probably everything else :-)).
+;entry: hl=handle
+;	cde=new offset in file, in bytes (c is MSB)
+;exit:	nothing
+;af/bc/de/hl/ix corrupt
+fseek:
+push hl
+pop ix
+
+bit 6,(ix+sf_flags)
+jr z,fseekro
+
+;when writing, write buf if dirty
+bit 1,(ix+sf_flags)
+jr z,fseekdn
+push bc
+push de
+call fwintbuf
+pop de
+pop bc
+res 1,(ix+sf_flags)	;clean
+jr fseekdn
+
+fseekro:
+;when reading, mark as unread
+set 0,(ix+sf_flags)
+
+fseekdn:
+;convert byte offset to offset in records, and position within
+; the record; i.e. byteoff/128 and byteoff%128.
+ld a,e
+and 07fh
+ld (ix+sf_pos128),a
+rl e	;carry before not important; e is being trashed anyway
+rl d
+rl c
+ld (ix+33),d
+ld (ix+34),c
+ret
+
+
+;returns current position in file.
+;NB: see notes under fseek
+;entry: hl=handle
+;exit:  cde=byte offset in file
+ftell:
+;the reverse of fseek, of course :-)
+push hl
+pop ix
+xor a
+ld e,(ix+sf_pos128)
+ld d,(ix+33)
+ld c,(ix+34)
+and a
+rr c
+rr d
+rra
+or e
+ld e,a
+ret
+
+
+;fgets - read a line of text from a file into asciiz string
+;entry: hl=handle, de=addr to read line in at, bc=max. bytes to read
+;exit:  nothing (will be NUL at addr if error reading)
+;af/bc/de/hl/ix corrupt
+;NB: string includes LF, if read - you can use string's strchop to
+; remove it if needed
+fgets:
+dec bc		;allow for the terminating NUL
+fgetslp:
+push bc
+push de
+push hl
+call fgetc
+pop hl
+pop de
+pop bc
+jr nc,fgetsdun
+ld (de),a
+inc de
+cp 10
+jr z,fgetsdun
+
+dec bc
+ld a,b
+or c
+jr nz,fgetslp
+
+fgetsdun:
+xor a
+ld (de),a
+ret
+
+
+;fputs - write a line of text from an asciiz string to a file
+;entry: hl=handle, de=addr of line to write
+;exit:  c if ok, nc if error writing
+;af/bc/de/hl/ix corrupt
+;NB: this writes the string only; it doesn't add any LF.
+fputs:
+fputslp:
+push de
+push hl
+ld a,(de)
+and a
+jr z,fputsdun
+call fputc
+pop hl
+pop de
+ret nc
+inc de
+jr fputslp
+
+fputsdun:
+pop hl
+pop de
+scf
+ret

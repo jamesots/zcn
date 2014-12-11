@@ -1,0 +1,4453 @@
+;zap - ZCN associative program-launcher
+;
+;(and anyone who says that's a contrived acronym is... is...
+;absolutely right. :-))
+
+;#ifdef WARNING
+;
+;NB: if zap.com gets bigger than about 7.5k we're in trouble (see the
+;equ's below for why). It's at about 6.5k at the time of writing,
+;so *be careful*...
+;
+;#endif
+
+;XXX plenty of stuff left to do, see TODO.
+
+
+
+org 0100h
+
+jp start
+
+
+include msort.z
+include ../zcnlib/conio.z
+include ../zcnlib/string.z
+include ../zcnlib/maths.z
+
+
+subuser equ 15
+
+origuser: defb 0
+origdrv:  defb 0
+
+
+dr_tmp equ 01f80h	;128-byte tmp dmabuf used by dirblks-read routine
+drvents equ dr_tmp	;re-used afterwards for `dir entries' for drives
+			;must be on a 128-byte boundary
+;descaddr must be on a 256-byte boundary
+descaddr equ 02000h	;up to 8k (32 zaps), i.e. 2000-3fffh
+numdescs: defb 0
+numbad: defb 0
+
+dirblks equ 04000h	;all dir blocks - up to 16k
+dirblkend: defw 0	;addr of first byte past end of dirblks
+dirblksiz: defw 0	;number of entries in dirblks
+
+nameptrs equ 08000h	;array of pointers to entries in dirblks
+			;(this is what's really sorted) -
+			;up to 512 files in theory, so needs 1k.
+sorttmp equ 08400h	;temporarily used by sortlist, same size as nameptrs.
+
+;assoc_files must be on a 256-byte boundary
+assoc_files equ 08400h	;associated files - up to 127 for each desc
+			;(leaving space for list-terminating NULL),
+			;so this takes 32*128*2 = 8k (i.e. 8400h to a3ffh).
+;(NB: assoc_files re-uses sorttmp's memory, but that's ok.)
+
+descfilepos_array: defs 32*2
+;array containing 2 bytes for each desc - first is currently-selected
+;file pos, second is current `top' value for file list. Both are unused if
+;desc has no associated files (i.e. no files in list).
+
+drvfree: defb 0,0,0,0	;k free on drvs, or 0ffh if drive bad/missing
+
+
+;for left/right scrolling etc. (main display)
+scrntop: defb 0		;leftmost item on screen
+scrncur: defb 0		;currently-selected item
+oldtop: defb 0		;previous scrntop
+oldcur: defb 0		;previous scrncur
+curnumfiles: defb 0	;number of files in current item's list
+
+;drv/user defaults for prompts
+;these are origdrv and origuser unless overridden by `-#'
+pdef_drv: defb 0
+pdef_user: defb 0
+
+
+start:
+;needs ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+ld c,132	;console in/out assignments
+call 5
+ld a,l
+and a
+jr z,start2
+
+call ilprint
+defb 'zap: zap can only be run on the console (try doing "|" first)',0
+rst 0
+
+start2:
+;not reentrant
+ld a,0c9h
+ld (0100h),a
+
+;save current user
+call getuser
+ld (origuser),a
+ld (pdef_user),a	;also make it default for prompt
+;and drive
+ld c,25
+call 5
+ld (origdrv),a
+ld (pdef_drv),a		;and again
+
+;turn cursor off.
+;some ZCN-specific things (e.g. calc) leave it turned off (leaving it
+;to the ccp prompt to re-enable it), but it can look weird to only
+;have the cursor on sometimes while waiting for zap to reload, so here
+;we're just making it disappear as soon as poss to give some illusion
+;of consistency. :-)
+ld a,4
+call putchar
+
+;lose any pending input
+;(can be useful if, say, Esc was pressed to reboot and zap is running
+;from an autoexec.sub. ZCN sees Esc and treats it as a new key, and
+;without this code zap would mysteriously quit. Not good. :-))
+loseinput:
+call kbhit
+push af
+call c,getch
+pop af
+jr c,loseinput
+
+;do this early in case the arg below sets them to something else
+xor a
+ld (scrncur),a
+ld (scrntop),a
+
+;check for our machine-generated cmdline arg
+ld hl,(05dh)
+ld de,0232dh	;`-#'
+and a
+sbc hl,de
+jr nz,nomgopt
+
+;if we do, first char is old scrncur+64
+ld hl,05dh+2
+ld a,(hl)
+sub 64
+jr c,nomgopt	;ignore it all if <64
+cp 32
+jr nc,nomgopt	;or if >=96
+ld (scrncur),a
+inc hl
+
+;ditto for 2nd char, scrntop+64
+ld a,(hl)
+sub 64
+jr c,nomgopt	;ignore it all if <64
+cp 32
+jr nc,nomgopt	;or if >=96
+ld (scrntop),a
+inc hl
+
+;3rd char is default drive for prompt (A..D)
+ld a,(hl)
+sub 'A'
+and 3		;ouch :-)
+ld (pdef_drv),a
+inc hl
+
+;4th char is default user for prompt (user+64 (255 is 63)).
+ld a,(hl)
+cp 63
+jr z,optskip1	;special case for user 255
+sub 64
+jr c,nomgopt	;but otherwise, ignore it all if <64
+cp 16
+jr nc,nomgopt	;or if user is >=16
+optskip1:
+ld (pdef_user),a
+inc hl
+
+;5th (and last) char is '1' for keywait.
+ld a,(hl)
+cp '1'
+jr nz,nomgopt
+
+;prompt and wait for key.
+;this goes to the bottom line, clears it, then prints prompt in
+;italics. It then waits for the key, and clears the line afterwards.
+call ilprint
+defb 16,32+9,32,31
+defb 15,'--- Press a key to continue ---',14,0
+call getch
+call ilprint
+defb 13,31,0	;CR then clear to EOL
+
+nomgopt:
+;XXX want MUCH better `working...' type thing. Perhaps a
+;percentage bar, kind of thing - may not be too evil to do.
+call ilprint
+defb 'working...',0
+
+call loaddesc		;load a0:zapdesc.bin
+call alldir_read	;read all directory blocks and sort them
+call make_drvents	;make `dir entries' for drives at drvents
+call find_progs		;find progs for descs, and `remove' bad ones
+			;(also quits if no valid descs remain)
+call find_matching_files ;find files associated with each desc.
+call needfile_prune	;`remove' needfile ones with no matching files
+call squeeze_descs	;*really* remove ones `removed' above
+
+;from this point on it's not necessary to check the `used' field.
+
+
+;clear screen
+ld a,1
+call putchar
+
+;scrncur/scrntop were initialised earlier. However, we should check
+;the range...
+ld a,(numdescs)
+ld b,a
+ld a,(scrncur)
+cp b
+jr c,scrncurok
+
+;otherwise, set it to (numdescs)-1. As for scrntop in that case, the
+;safest thing to do is set it to the same.
+ld a,b		;(numdescs)
+dec a
+ld (scrncur),a
+ld (scrntop),a
+
+scrncurok:
+call update_curnumfiles
+
+;init cur/top bytes for descs
+ld b,32
+ld hl,descfilepos_array
+xor a
+dfpinitlp:
+ld (hl),a
+inc hl
+ld (hl),a
+inc hl
+djnz dfpinitlp
+
+call drivelist_defaults	;set selected entry in drive lists to (pdef_drv)
+			;(must come after descfilepos_array[] is set up)
+
+call draw_sidebar	;draw the info sidebar with free disk space etc.
+call showdescs
+call showicur		;display icon cursor (inverse bar at top)
+
+loop:
+ld a,(scrntop)
+ld (oldtop),a
+ld a,(scrncur)
+ld (oldcur),a
+
+call getch_time
+
+ld hl,loopend
+push hl		;ret to there
+
+cp 27
+jp z,exit
+
+cp 13
+jp z,exec
+
+cp 27+128	;symbol-esc
+jp z,scrndump
+
+cp 'S'-040h
+jp z,iconcurdec
+cp 'D'-040h
+jp z,iconcurinc
+cp 'S'+64	;sym-left
+jp z,iconpagedec
+cp 'D'+64	;sym-right
+jp z,iconpageinc
+cp 'R'-040h
+jp z,iconpagedec
+cp 'C'-040h
+jp z,iconpageinc
+cp '<'
+jp z,iconhome
+cp ','
+jp z,iconhome
+cp '>'
+jp z,iconend
+cp '.'
+jp z,iconend
+
+;if it's a letter, skip to desc starting with it (or first after it)
+call isalpha
+jp c,iconletter
+
+;the file-list stuff is only usable if current icon has a file list,
+;so check that before checking for those keys.
+ld b,a
+ld a,(curnumfiles)
+and a
+ld a,b
+jr z,loop	;ok, no valid keys pressed, then.
+
+cp 'E'-040h
+jp z,filecurdec
+cp 'X'-040h
+jp z,filecurinc
+
+;page up/down are symbol-cursor
+cp 'E'+64
+jp z,filecurpagedec
+cp 'X'+64
+jp z,filecurpageinc
+
+;home/end are symbol-</>
+cp ','+128
+jp z,filecurhome
+cp '<'+128
+jp z,filecurhome
+cp '.'+128
+jp z,filecurend
+cp '>'+128
+jp z,filecurend
+
+;if A-128 is a letter, skip to desc starting with it (or first after it)
+ld b,a
+sub 128
+call isalpha
+jp c,fileletter
+ld a,b
+
+;none pressed
+pop hl		;remove the return address pushed earlier
+jp loop
+
+loopend:
+ld a,(scrncur)
+ld b,a
+ld a,(oldcur)
+cp b
+jp z,loop
+
+call update_curnumfiles
+
+;fix `top' of screen
+topchklp1:
+ld a,(scrntop)
+ld b,a
+ld a,(scrncur)
+cp b
+jr nc,topchklp2
+ld hl,scrntop
+dec (hl)
+jr nz,topchklp1
+
+topchklp2:
+ld a,(scrntop)
+add a,6
+ld b,a
+ld a,(scrncur)
+cp b
+jr c,topchkskip1
+ld hl,scrntop
+inc (hl)
+jr topchklp2
+
+topchkskip1:
+ld a,(scrntop)
+ld b,a
+ld a,(oldtop)
+cp b
+jp z,curonly
+
+call clsicons	;clear existing stuff
+call showdescs	;redraw
+call showicur
+jp loop
+
+curonly:
+;ok, scrntop hasn't changed, but scrncur has. Move the cursor.
+call unshowicur
+call showicur
+jp loop
+
+exit:
+call ilprint
+defb 1,3,27,0	;cls, cursor on, and defeat CR/LF
+rst 0
+
+
+;actually try and run something (cor :-))
+exec:
+call drivefix	;cope with `d:' and `<new>' selections
+;if they aborted, go back (via loopend)
+ret nc
+;XXX perhaps some `please wait' message here?
+call makesubdata
+call writesub
+call ilprint
+defb 1,3,27,0	;cls, cursor on, and defeat CR/LF
+ld a,subuser
+call setuser
+rst 0		;run generated `$$$.sub'
+
+
+isalpha:
+call isupper
+ret c
+islower:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+
+
+;symbol-S gives a screen dump. This is here solely for my convenience,
+;I admit. :-) It's useful because zap uses all 64 lines, but ZCN's
+;built-in screen dump code only saves the middle 60.
+;
+;(This doesn't bother with much error checking, but that shouldn't
+;matter as it's only me who's really going to use it, I expect.)
+scrndump:
+ld de,dumpfcb
+ld c,bfmake
+call 5
+inc a
+ret z
+
+ld hl,0f000h
+dumplp:
+push hl
+ex de,hl
+ld c,bfsetdma
+call 5
+
+ld de,dumpfcb
+ld c,bfwrite
+call 5
+pop hl
+and a
+ret nz
+
+ld de,128
+add hl,de
+ld a,h
+and a
+jr nz,dumplp
+
+;beep to say we're finished, like ZCN does
+ld a,7
+call putchar
+ret
+
+dumpfcb:
+defb 0,'SCREEN  DMP'
+defs 33-12
+
+
+;make drive `dir entries'
+;these are all-spaces with drive in usual place and user 255
+;(the latter meaning "don't print user num" :-))
+make_drvents:
+;initialise to spaces
+ld hl,drvents
+ld de,drvents+1
+ld bc,128-1
+ld (hl),32
+ldir
+
+;now write the drive/user bits
+ld ix,drvents
+ld de,32
+ld c,0
+ld b,4
+mdelp:
+ld (ix),c
+ld (ix+12),255
+add ix,de
+inc c
+djnz mdelp
+ret
+
+
+
+;check number of files in current item's list
+update_curnumfiles:
+ld a,(scrncur)
+ld h,a
+ld l,0
+ld de,assoc_files
+add hl,de
+ld c,-1		;file count
+numflp:
+inc c
+ld a,(hl)
+inc hl
+or (hl)
+inc hl
+jr nz,numflp
+ld a,c
+ld (curnumfiles),a
+ret
+
+
+iconcurdec:
+ld a,(scrncur)
+and a
+ret z
+dec a
+ld (scrncur),a
+ret
+
+iconcurinc:
+ld a,(numdescs)
+ld b,a
+ld a,(scrncur)
+inc a
+cp b
+ret nc
+ld (scrncur),a
+ret
+
+iconpagedec:
+ld a,(scrncur)
+sub 5
+ld (scrncur),a
+ret nc
+xor a
+ld (scrncur),a
+ret
+
+iconpageinc:
+ld a,(numdescs)
+ld b,a
+ld a,(scrncur)
+add a,5
+cp b
+ld (scrncur),a
+ret c
+ld a,b
+dec a
+ld (scrncur),a
+ret
+
+iconhome:
+xor a
+ld (scrncur),a
+ret
+
+iconend:
+ld a,(numdescs)
+dec a
+ld (scrncur),a
+ret
+
+
+tolower:
+call isupper
+ret nc
+xor 020h
+ret
+
+
+;jump to desc starting with letter in A (known to be in A-Za-z),
+;or nearest one after it. Case is ignored.
+;
+;the desc list may very well *NOT* be in name order, so we take a
+;slightly kludgey approach. We first go through looking for the leftmost
+;exact match of the letter. If that fails, we do a more intuitive
+;`look for first >= letter' which implicitly assumes the list is
+;sorted. It's difficult to see how I can do much better than this. :-/
+;
+iconletter:
+call tolower
+ld e,a
+
+ld hl,descaddr+16
+ld a,(numdescs)
+ld b,a
+ld c,0
+iletlp2:
+ld a,(hl)
+call tolower
+cp e
+jr z,ilgot
+inc h
+inc c
+djnz iletlp2
+
+;not found an exact match, so go again with a >= test, in the
+;assumption that the list is sorted (if it isn't it'll be ok, but may
+;give unexpected results).
+
+ld hl,descaddr+16
+ld a,(numdescs)
+ld b,a
+ld c,0
+iletlp:
+ld a,(hl)
+call tolower
+cp e
+jr nc,ilgot
+inc h
+inc c
+djnz iletlp
+
+;well, we didn't find one, so just go to the last one.
+jr iconend
+
+ilgot:
+;got it
+ld a,c
+ld (scrncur),a
+ret
+
+
+
+;clear area of screen where icons/file lists are shown
+clsicons:
+ld hl,0f000h+5
+ld a,64
+clsilp:
+push hl
+ld d,h
+ld e,l
+inc de
+ld bc,60-5-1
+ld (hl),b	;zero
+ldir
+pop hl
+ld bc,64
+add hl,bc
+dec a
+jr nz,clsilp
+ret
+
+
+foldtop: defb 0
+foldcur: defb 0
+
+filecurdec:
+call filecur_getpos
+ld a,(ix)	;pos
+and a
+ret z
+dec a
+ld (ix),a
+jr filecur_changed
+
+filecurinc:
+call filecur_getpos
+ld a,(curnumfiles)
+ld b,a
+ld a,(ix)	;pos
+inc a
+cp b
+ret nc
+ld (ix),a
+jr filecur_changed
+
+
+filecurhome:
+call filecur_getpos
+ld (ix),0	;pos
+jr filecur_changed
+
+
+filecurend:
+call filecur_getpos
+ld a,(curnumfiles)
+dec a
+ld (ix),a	;pos
+jr filecur_changed
+
+
+filecurpagedec:
+call filecur_getpos
+ld a,(ix)	;pos
+sub 3
+ld (ix),a	;pos
+jr nc,filecur_changed
+ld (ix),0	;pos
+jr filecur_changed
+
+
+filecurpageinc:
+call filecur_getpos
+ld a,(curnumfiles)
+ld b,a
+ld a,(ix)	;pos
+add a,3
+cp b
+ld (ix),a	;pos
+jr c,filecur_changed
+ld a,b
+dec a
+ld (ix),a	;pos
+jr filecur_changed
+
+
+
+filecur_changed:
+;we get here if the file cursor *may* have moved (the icon cursor hasn't).
+;ix points to the current pos/top pair in descfilepos_array.
+
+;fix `top' of file list
+fctopchklp1:
+ld b,(ix+1)	;top
+ld a,(ix)	;pos
+cp b
+jr nc,fctopchklp2
+dec (ix+1)	;top
+jr nz,fctopchklp1
+
+fctopchklp2:
+ld a,(ix+1)	;top
+add a,4
+ld b,a
+ld a,(ix)	;pos
+cp b
+jr c,fctopchkskip1
+inc (ix+1)	;top
+jr fctopchklp2
+
+fctopchkskip1:
+ld b,(ix+1)	;top
+ld a,(foldtop)
+cp b
+jr z,fcuronly
+
+;redraw the list.
+;unshowicur is a bit dim with regard to file lists, so we need to give
+;it a hand...
+ld e,(ix)	;pos
+ld d,(ix+1)	;top
+push de
+ld a,(foldcur)
+ld (ix),a	;pos
+ld a,(foldtop)
+ld (ix+1),a	;top
+push ix
+call unshowicur
+pop ix
+pop de
+ld (ix),e	;pos
+ld (ix+1),d	;top
+
+ld a,(scrncur)
+ld hl,scrntop
+sub (hl)
+call clearslotfiles	;clear file list area of current icon
+ld a,(scrncur)
+call drawflist		;redraw list
+
+;also need to update scrollbar
+ld a,(scrncur)
+call drawscrlbar
+
+call showicur
+ret
+
+fcuronly:
+;just needs a cursor update.
+ld a,(ix)	;pos
+push af
+ld a,(foldcur)
+ld (ix),a	;pos
+push ix
+call unshowicur
+pop ix
+pop af
+ld (ix),a	;pos
+call showicur
+ret
+
+
+;get ix=descfilepos_array[(scrncur)], and save current pos/top in
+;(foldcur)/(foldtop).
+filecur_getpos:
+ld a,(scrncur)
+ld h,0
+ld l,a
+add hl,hl
+ld de,descfilepos_array
+add hl,de
+push hl
+pop ix
+
+ld a,(ix)	;pos
+ld (foldcur),a
+ld a,(ix+1)	;top
+ld (foldtop),a
+ret
+
+
+;jump to file starting with letter in A (known to be in A-Za-z),
+;or nearest one after it. Case is ignored. Assumes file list is sorted.
+;
+;NB: should only be called if we know file list isn't empty.
+;(the key-reading bit in the main loop deals with this; it ignores
+;file-list-related movement keys if the current icon's file list is empty.)
+;
+fileletter:
+call tolower
+ld (fletop+1),a
+
+ld a,(scrncur)
+ld h,a
+ld l,0
+ld de,assoc_files
+add hl,de
+;see if it's a drive-list one
+ld e,(hl)
+inc l
+ld d,(hl)
+dec l
+push de
+pop ix
+ld a,(ix+12)
+inc a
+jr nz,fletnorm	;skip if (ix+12)!=255
+ld a,(ix)
+inc a
+jr z,fletnorm	;skip if (ix)==255 (i.e. if it's `<new>')
+
+;ok, we have a drive list. subtract `a' from the letter, and compare
+;the result against the 0th byte in each entry. For drives though,
+;we ignore the key if it's >= `e'.
+ld a,(fletop+1)
+sub 'a'
+ld (fletop2+1),a
+cp 4
+ret nc
+ld a,(curnumfiles)
+ld b,a
+ld c,0
+fletlp2:
+ld e,(hl)
+inc l
+ld d,(hl)
+inc l
+ld a,(de)
+fletop2: cp 0	;modified
+jr nc,flgot
+inc c
+djnz fletlp2
+
+;didn't find one, so just go to the last one.
+jp filecurend
+
+
+fletnorm:
+ld a,(curnumfiles)
+ld b,a
+ld c,0
+fletlp:
+ld e,(hl)
+inc l
+ld d,(hl)
+inc l
+inc de
+ld a,(de)
+call tolower
+fletop: cp 0	;modified
+jr nc,flgot
+inc c
+djnz fletlp
+
+;didn't find one, so just go to the last one.
+jp filecurend
+
+flgot:
+;got it
+ld a,c
+push af
+call filecur_getpos
+pop af
+ld (ix),a	;pos
+jp filecur_changed
+
+
+
+
+
+
+clearslotfiles:
+rlca		;*2
+ld b,a
+rlca		;*4
+rlca		;*8
+rlca		;*16
+add a,b		;*18
+add a,12
+rra
+ld h,0
+ld l,a
+ld de,0f080h+6*6*64
+add hl,de
+ld a,4*6
+csflp:
+push hl
+ld d,h
+ld e,l
+inc de
+ld bc,7
+ld (hl),0
+ldir
+pop hl
+ld de,64
+add hl,de
+dec a
+jr nz,csflp
+ret
+
+
+
+
+
+;draw 32x24 bitmap at hl, at (b,c) (where b is in bytes, c pixels)
+;entry:	hl=bitmap, (b,c)=onscreen pos
+;exit:	af/bc/de/hl corrupt
+drawicon:
+push hl
+ld h,c
+ld l,0
+ld d,l
+ld e,b
+srl h
+rr l
+srl h
+rr l
+add hl,de
+ld de,0f000h
+add hl,de
+ex de,hl
+pop hl
+
+ld a,24
+ld bc,255
+driclp:
+ldi
+ldi
+ldi
+ldi
+ld c,60
+ex de,hl
+add hl,bc
+ex de,hl
+dec a
+jp nz,driclp
+ret
+
+
+;draw 16x12 bitmap at hl, at (b,c) (where b is in bytes, c pixels)
+;entry:	hl=bitmap, (b,c)=onscreen pos
+;exit:	af/bc/de/hl corrupt
+drawicon16:
+push hl
+ld h,c
+ld l,0
+ld d,l
+ld e,b
+srl h
+rr l
+srl h
+rr l
+add hl,de
+ld de,0f000h
+add hl,de
+ex de,hl
+pop hl
+
+ld a,12
+ld bc,255
+dri16clp:
+ldi
+ldi
+ld c,62
+ex de,hl
+add hl,bc
+ex de,hl
+dec a
+jp nz,dri16clp
+ret
+
+
+leftarrowbmp:
+defb 00000000b,00000000b
+defb 00000000b,00000000b
+defb 00000011b,00000000b
+defb 00001101b,10000000b
+defb 00110001b,11110000b
+defb 01000000b,00011000b
+defb 01000000b,00011000b
+defb 00110001b,11111000b
+defb 00011101b,11111000b
+defb 00000111b,10000000b
+defb 00000001b,10000000b
+defb 00000000b,00000000b
+
+rightarrowbmp:
+defb 00000000b,00000000b
+defb 00000000b,00000000b
+defb 00000000b,11000000b
+defb 00000000b,10110000b
+defb 00001111b,10001100b
+defb 00001000b,00000010b
+defb 00001000b,00000011b
+defb 00001111b,10001111b
+defb 00000111b,10111110b
+defb 00000000b,11111000b
+defb 00000000b,01100000b
+defb 00000000b,00000000b
+
+
+
+descfcb:
+defb 1,'ZAPDESC BIN'
+defs 33-12
+
+
+;load in a0:zapdesc.bin
+loaddesc:
+xor a
+call setuser
+
+ld de,descfcb
+ld c,15
+call 5
+inc a
+jr nz,ldesc1
+
+call ilprint
+defb 'zap: no a0:zapdesc.bin file, try "makezapd"',0
+ld a,(origuser)
+call setuser
+rst 0
+
+ldesc1:
+;read it all in (well, at most 32)
+ld hl,descaddr
+ld b,32
+ld c,0		;number we've done
+ldesclp:
+push bc
+push hl
+ex de,hl
+ld c,26		;set dma addr
+call 5
+ld de,descfcb
+ld c,20		;read sequential
+call 5
+pop hl
+ld de,128
+add hl,de
+push hl
+ex de,hl
+ld c,26		;set dma addr
+call 5
+ld de,descfcb
+ld c,20		;read sequential
+call 5
+pop hl
+pop bc
+ld de,128
+add hl,de
+and a
+jr nz,ldescdone
+inc c
+djnz ldesclp
+
+ldescdone:
+ld a,c
+ld (numdescs),a
+
+push af
+ld a,(origuser)
+call setuser
+pop af
+
+and a
+ret nz
+
+call ilprint
+defb 'zap: must be at least one .zap in desc. file',0
+rst 0
+
+
+
+
+
+
+getuser:
+push bc
+push de
+push hl
+ld e,0ffh
+ld c,32		;get/set user
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+setuser:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,32		;get/set user
+;use ZCN's set-user-255 func if 255
+cp 255
+jr nz,suskip
+ld c,143
+suskip:
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+
+curdrvpos: defw 0
+
+alldir_read:
+;read directory blocks from all drives.
+;(in practice this will probably never exceed 8 blocks (256 files)
+;but we have to be able to handle 16 blocks (512).)
+;also gets free space on each.
+
+ld de,dr_tmp
+ld c,26		;set dma addr
+call 5
+
+ld iy,dirblks	;current pos
+ld hl,drvfree
+ld (curdrvpos),hl
+ld b,4
+ld c,0
+adrlp:
+ld hl,(curdrvpos)
+ld (hl),0ffh	;in case it's an invalid/missing drive
+push bc
+ld e,c
+inc e
+ld c,135	;check drive is valid
+call 5
+jr nc,adrskip
+
+pop bc
+push bc
+call dir_read
+pop bc
+push bc
+ld a,(numdirblks)
+;multiply by 32
+;since there's a max. of 4 dir. blocks, this is good enough:
+and 7	;sanity check :-)
+rrca
+rrca
+rrca
+ld b,a
+ld de,32
+;mark each entry as being from this drive, move user number to
+;offset 12, and `delete' 
+adrlp2:
+ld a,(iy)
+cp 0e5h
+jr z,adrskip2	;skip deleted dir entries
+
+ld (iy),c	;drive
+ld h,a
+ld a,(iy+12)
+and a
+jr z,adrskip3
+ld (iy),0e5h	;non-zero extents no use to us - mark as deleted
+;(falls through - no reason not to, doesn't matter either way :-))
+adrskip3:
+ld (iy+12),h	;user
+
+adrskip2:
+add iy,de
+djnz adrlp2
+
+;get free space on drive
+;current drive still in c
+ld e,c
+ld c,46		;get free disk space
+call 5
+ld hl,(dr_tmp)
+;div by 8 (it's in records)
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ld a,l
+ld hl,(curdrvpos)
+ld (hl),a
+
+
+adrskip:
+;next drive
+ld hl,(curdrvpos)
+inc hl
+ld (curdrvpos),hl
+pop bc
+inc c
+djnz adrlp
+
+ld (dirblkend),iy
+
+
+;now, if there's more than zero entries, sort them.
+;it's difficult to see how there could realistically be zero entries,
+;but just in case...
+ld hl,0
+ld (nameptrs),hl	;will be needed if there's zero
+ld (dirblksiz),hl	;ditto
+ld hl,(dirblkend)
+ld de,dirblks
+and a
+sbc hl,de
+ret z
+
+;so it's non-zero. Better sort out dirblksiz, then - divide hl by 32.
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ld (dirblksiz),hl
+
+;ok, sort the entries.
+;the sort goes on filenames first, then drive, then user.
+;(I'm afraid this means that deleted entries aren't got rid of,
+;but we can skip past them so quickly I doubt this is a problem.)
+
+;first we need to make the pointers to the entries, which is what we
+;really sort.
+
+ld ix,nameptrs
+ld de,dirblks
+;hl is still (dirblksiz)
+ld b,h
+ld c,l
+adrlp3:
+ld (ix),e
+ld (ix+1),d
+inc ix
+inc ix
+ld hl,32
+add hl,de
+ex de,hl
+dec bc
+ld a,b
+or c
+jr nz,adrlp3
+
+;put a zero at the end to make it easier to find.
+;(I don't think I actually need this any more, but it can't hurt.)
+ld (ix),0
+ld (ix+1),0
+
+;now do the sort itself.
+ld hl,nameptrs
+ld de,(dirblksiz)
+call sortlist
+ret
+
+
+
+
+blktbl:
+defb 0		;block number (modified)
+defb 0		;record number in block (modified)
+defb 0		;drive (modified)
+defw 0		;address to read/write bytes to/from (modified)
+
+
+;this table is for reading the first 128 bytes of the drive's boot block
+initblk:
+defb 0		;drive (modified)
+defw 0		;offset from start of drive
+defw dr_tmp	;address to read bytes to
+
+numdirblks: defb 0	;used as tmp var by dir_read & alldir_read
+
+
+;entry: c=drive (0=a:), iy=addr of pos in dirblks
+dir_read:
+ld ix,blktbl
+ld a,c
+ld (ix+2),a
+ld de,initblk
+ld (de),a
+ld c,138	;read for boot/sys blocks
+call 5
+ld a,(dr_tmp+9)
+ld (numdirblks),a
+
+push iy
+pop hl
+ld c,0
+dr_blklp:
+ld (ix),c
+
+ld b,0
+dr_sectlp:
+ld (ix+1),b
+push bc
+push hl
+ex de,hl
+ld (ix+3),e
+ld (ix+4),d
+
+ld de,blktbl
+ld c,136	;read from data block
+call 5
+inc a
+jr z,dir_rderr
+
+pop hl
+ld de,128
+add hl,de
+pop bc
+inc b
+ld a,b
+cp 8
+jr nz,dr_sectlp
+
+inc c
+ld a,(numdirblks)
+cp c
+jr nz,dr_blklp
+ret
+
+
+dir_rderr:
+call ilprint
+defb 'zap: error reading dir',0
+rst 0
+
+
+;compare two nodes in list
+;de=(addr of) 1st node ptr, hl=2nd node ptr
+;returns carry set if node at de < node at hl, else carry false
+;a corrupt
+nodecmp:
+push bc
+push de
+push hl
+
+;do hl=(hl) and de=(de)
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+ex de,hl
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+ex de,hl
+
+;save addrs in case we need them later
+ld (ncmphlop+1),hl
+ld (ncmpdeop+1),de
+
+inc de
+inc hl
+
+ld b,11
+nslp:
+ld a,(de)
+cp (hl)
+jr nz,ncmpdone
+inc hl
+inc de
+djnz nslp
+
+;this is a bit inefficient, but this only gets run if we have
+;the same filename on different drive/users being compared to
+;each other, which has got to be pretty rare.
+
+ncmphlop: ld hl,0	;modified
+ncmpdeop: ld de,0	;modified
+
+;compare drives
+ld a,(de)
+cp (hl)
+jr nz,ncmpdone
+;compare user areas
+ld bc,12
+add hl,bc
+ex de,hl
+add hl,bc
+ex de,hl
+ld a,(de)
+cp (hl)
+
+ncmpdone:
+;restore regs
+pop hl
+pop de
+pop bc
+ret
+
+
+
+;find file based on name only, in any drive/user, with a binary search.
+;entry: hl=filename, 11-char FCB-like format
+;exit:	if found, hl=addr of dir entry, else hl=0
+bspos: defw 0
+bsdblkptr: defw dirblks	;needed for final bscmp
+
+bsearch:
+push hl
+
+;do hl=nameptrs+bc=[(dirblksiz)*2/2]
+ld bc,(dirblksiz)
+ld hl,nameptrs
+add hl,bc
+
+pop de
+
+;hl=pos, de=file we're searching for, bc=last decr/incr size
+
+bsloop:
+;if last decr/incr was 1, we haven't found it
+push hl
+;with 16-bit dec not affecting flags, this isn't as mad as it looks :-(
+ld hl,1
+and a
+sbc hl,bc
+pop hl
+jr z,bsfail
+
+call bscmp
+ret z		;found it
+
+;otherwise, if nc divide bc by 2 and add, else divide and subtract
+jr c,bsskip1
+
+srl b
+rr c
+add hl,bc
+jr bsloop
+
+bsskip1:
+srl b
+rr c
+and a
+sbc hl,bc
+jr bsloop
+
+bsfail:
+;search appears to have failed. however, since we start
+;at (effectively) a rounded-up halfway position, there's no way
+;we can have looked at the 0th entry yet. So check that before
+;giving up.
+
+ld hl,bsdblkptr		;addr of pointer to dirblks
+call bscmp
+ret z
+
+;ok, didn't find it
+ld hl,0
+ret
+
+
+;variant of nodecmp for bsearch. compares filenames only,
+;but one with drive=e5h (i.e. a deleted one) always counts
+;as greater-than.
+;de=(addr of) search file, hl=addr of ptr to entry being checked
+;returns carry set if node at de < node at hl, else carry false
+;also, returns z if they match, else nz
+;a corrupt
+bscmp:
+push bc
+push de
+push hl
+
+;do hl=(hl)
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+ld (bscmpop+1),hl	;save for later
+
+inc hl
+
+ld b,11
+bsnslp:
+ld a,(de)
+cp (hl)
+jr nz,bsncmpdone
+inc hl
+inc de
+djnz bsnslp
+
+;they have the same filenames. check if the drive is e5h.
+bscmpop: ld a,(0)	;modified
+cp 0e5h
+jr z,bsns1
+
+;if not, it's equal, so set z and nc.
+xor a
+jr bsncmpdone
+
+bsns1:
+;it's deleted, so greater-than, set nz and c.
+;we know a is non-zero (e5h :-)) so this is good enough:
+and a
+scf
+
+bsncmpdone:
+;restore regs
+pop hl
+pop de
+pop bc
+ret
+
+
+
+find_progs:
+xor a
+ld (numbad),a	;number of bad descs (those for which prog couldn't be found)
+
+ld a,(numdescs)
+ld b,a
+
+ld hl,descaddr
+fprglp:
+push bc
+push hl
+;at this stage, all descs are `used', so don't need to check that.
+
+inc hl
+inc hl
+inc hl
+call bsearch
+ld a,h
+or l
+jr nz,fprg1
+
+;mark as unused, since we couldn't find the prog
+ld hl,numbad
+inc (hl)
+pop hl
+push hl
+ld (hl),0
+jr fprgskip
+
+fprg1:
+;found it, fill in the drive/user for it
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+push hl
+pop ix
+pop hl
+push hl
+inc hl
+ld a,(ix+12)
+ld (hl),a
+ld a,(ix)
+inc hl
+ld (hl),a
+
+fprgskip:
+pop hl
+pop bc
+inc h
+djnz fprglp
+
+;if there are no `good' descs remaining, it's *vital* that we quit.
+ld a,(numdescs)
+ld b,a
+ld a,(numbad)
+sub b
+ret nz
+
+call ilprint
+defb 'zap: must be at least one command matching a desc',0
+rst 0
+
+
+;remove unused descs by copying others down (if needed)
+squeeze_descs:
+ld hl,descaddr	;from
+ld de,descaddr	;to
+;also need to copy down associated file pointers...
+exx
+ld hl,assoc_files	;from
+ld de,assoc_files	;to
+exx
+
+ld a,(numdescs)
+ld b,a
+
+sqzdlp:
+push bc
+
+;don't copy if `bad'.
+ld a,(hl)
+and a
+jr nz,sqzd0
+
+;decr numdescs to compensate (doesn't affect b)
+ld a,(numdescs)
+dec a
+ld (numdescs),a
+jr sqzd2	;skip moving `to' addr
+
+sqzd0:
+ld bc,256
+ldir
+;compensate for ldir moving addresses on
+dec d
+dec h
+;same for assoc_files bits
+exx
+ld bc,256
+ldir
+dec d
+dec h
+exx
+
+sqzd1:
+inc d	;move `to' addr on
+exx
+inc d	;and for files too
+exx
+
+sqzd2:
+inc h	;move `from' addr on
+exx
+inc h	;and for files too
+exx
+
+pop bc
+djnz sqzdlp
+
+ret
+
+
+;draws the sidebar, which has this format:
+;--ZCN---  |
+;--icon--  |
+;--------  |
+;          |
+; 12:34    |
+;          |
+; A:111    |
+; B:111    |
+; C:111    |
+; C:111    | (numbers right-justified, or "---" if drive missing/invalid)
+;
+draw_sidebar:
+ld bc,0
+ld hl,zcnicon
+call drawicon
+
+;time isn't drawn here - it's done by the wait-for-key routine (getch_time).
+
+;disk-space-free display
+call ilprint
+defb 16,' '+6,' '+1,'A:',0
+ld a,0
+call showdiskspace
+
+call ilprint
+defb 16,' '+7,' '+1,'B:',0
+ld a,1
+call showdiskspace
+
+call ilprint
+defb 16,' '+8,' '+1,'C:',0
+ld a,2
+call showdiskspace
+
+call ilprint
+defb 16,' '+9,' '+1,'D:',0
+ld a,3
+call showdiskspace
+ret
+
+
+showdiskspace:
+ld hl,drvfree
+ld d,0
+ld e,a
+add hl,de
+ld e,(hl)
+inc e
+jr z,sds1
+dec e
+;if less than 100, print a space
+ld a,e
+cp 100
+ld a,32
+call c,putchar
+;if less than 10, print another
+ld a,e
+cp 10
+ld a,32
+call c,putchar
+;d still 0
+jp dispdec
+
+sds1:
+call ilprint
+defb '---',0
+ret
+
+
+
+;data for the ZCN icon (just says ZCN, that's all :-))
+zcnicon:
+defb 01111111b,00001110b,00011000b,00100000b
+defb 00000001b,00110001b,10011000b,00100000b
+defb 00000010b,00100000b,10010100b,00100000b
+defb 00000100b,01000000b,00010010b,00100000b
+defb 00001100b,01000000b,00010010b,00100000b
+defb 00001000b,01000000b,00010001b,00100000b
+defb 00010000b,01000000b,00010001b,00100000b
+defb 00110000b,01000000b,00010000b,10100000b
+defb 00100000b,00100000b,10010000b,10100000b
+defb 01000000b,00110001b,10010000b,01100000b
+defb 01111111b,00001110b,00010000b,01100000b
+defs 13*4	;the rest of the 24 lines
+
+
+
+;draw a prog's name and the icon, though *not* any file list it may
+;have. doesn't clear the `slot' onscreen - assumes it's already blank.
+;entry: a=prog number in table at descaddr
+;	(position is figured out from scrncur and scrntop;
+;	if not onscreen, it's not drawn)
+;af/bc/de/hl/ix corrupt
+drawprog:
+ld h,a
+ld l,0
+ld de,descaddr
+add hl,de
+
+;draw icon
+;a is still prog number
+;subtract start of screen
+ld ix,scrntop
+sub (ix)
+ld (dprogop+1),a
+ret c		;ret if <0
+cp 6
+ret nc		;ret if >=6
+
+push hl
+ld l,128
+rlca		;*2
+ld b,a
+rlca		;*4
+rlca		;*8
+rlca		;*16
+add a,b		;*18
+add a,12
+push af		;this is the character hpos
+rra		;but for now we want the byte hpos (add wouldn't have carried)
+inc a
+inc a
+ld b,a
+ld c,9
+call drawicon
+
+;draw name
+pop af
+ld b,a
+ld hl,0f000h
+ld (yaddr),hl
+pop hl
+ld de,15
+add hl,de
+ld a,16
+sub (hl)
+rra		;sub wouldn't have carried
+add a,b
+ld (xloc),a
+inc hl
+call pixelstrprint
+
+;if it's the first on the screen and scrntop>0, print "<<"s to left of icon.
+dprogop: ld c,0		;modified earlier to be pos onscreen (0=first)
+ld a,c
+and a
+jr nz,dprog1
+ld a,(scrntop)
+and a
+jr z,dprog1
+
+;b is still horiz. pos
+ld a,b
+and a
+rra
+ld b,a
+ld c,15
+ld hl,leftarrowbmp
+call drawicon16
+ret
+
+dprog1:
+;if it's the 6th onscreen and scrntop+6<numdescs, print ">>"s to right of it.
+ld a,c
+cp 5
+ret nz
+ld a,(numdescs)
+ld c,a
+ld a,(scrntop)
+add a,6
+cp c
+ret nc
+
+;b is still horiz. pos
+ld a,b
+and a
+rra
+add a,6
+ld b,a
+ld c,15
+ld hl,rightarrowbmp
+call drawicon16
+ret
+
+pixelstrprint:
+ld a,(hl)
+and a
+ret z
+cp '_'
+jr nz,psp1
+ld a,32
+psp1:
+call pixelputchar
+inc hl
+jr pixelstrprint
+
+
+;draw icon cursor (inverse bar over program name).
+;also draws cursor for any file list.
+;entry: none
+;	position is figured out from scrncur and scrntop.
+;	not drawn if not onscreen.
+;af/bc/de/hl/ix corrupt
+showicur:
+ld a,(scrncur)
+jr showicur_main
+
+;as above but undraw old cursor pos
+unshowicur:
+ld a,(oldcur)
+;FALLS THROUGH
+
+showicur_main:
+;a is desc number
+ld b,a
+;subtract start of screen
+ld ix,scrntop
+sub (ix)
+ret c		;ret if <0
+cp 6
+ret nc		;ret if >=6
+
+push bc		;save desc number
+
+rlca		;*2
+ld b,a
+rlca		;*4
+rlca		;*8
+rlca		;*16
+add a,b		;*18
+add a,12
+rra		;get byte hpos
+ld hl,0f000h
+ld b,0
+ld c,a
+add hl,bc
+
+call scurbar
+
+pop bc		;restore desc number (to b)
+push hl
+ld h,b
+ld l,0
+ld de,assoc_files
+add hl,de
+ld a,(hl)
+inc hl
+or (hl)
+pop hl
+ret z		;don't draw file cursor if no files. :-)
+
+;ok, hl is just under the icon cursor bit.
+;find out where the file cursor is.
+push hl
+;b is still desc number
+ld h,0
+ld l,b
+add hl,hl
+ld de,descfilepos_array
+add hl,de
+ld a,(hl)	;pos
+inc hl
+sub (hl)	;top
+pop hl
+
+;file cursor is at line 6+a. hl is the addr for line 1, so add
+;(5+a)*6*64+2*64 to get the addr of the file cursor.
+add a,5
+rlca		;*2
+ld b,a
+rlca		;*4
+add a,b		;*6
+ld d,a
+ld e,0		;*6*256
+srl d
+rr e		;*6*128
+srl d
+rr e		;*6*64
+add hl,de
+ld de,2*64
+add hl,de	;*6*64+2*64
+
+call scurbar
+
+ret
+
+
+;draw cursor bar at hl.
+;exits with hl=orig_hl+64*6.
+scurbar:
+ld c,6
+scurlp:
+push hl
+
+dec l
+ld a,(hl)
+xor 3
+ld (hl),a
+inc l
+
+ld b,8
+scurlp2:
+ld a,(hl)
+cpl
+ld (hl),a
+inc hl
+djnz scurlp2
+
+pop hl
+ld de,64
+add hl,de
+dec c
+jr nz,scurlp
+ret
+
+
+
+;draw list of files, given current cur/top in descfilepos_array.
+;doesn't clear the `slot' onscreen - assumes it's already blank.
+;entry: a=desc number
+;	(position is figured out from cur/top in descfilepos_array[];
+;	if not onscreen, it's not drawn)
+;af/bc/de/hl/ix/iy corrupt
+drawflist:
+;point ix at descfilepos_array[a]
+ld h,0
+ld l,a
+add hl,hl
+ld de,descfilepos_array
+add hl,de
+push hl
+pop ix
+
+;and hl at assoc_files[a]
+ld h,a
+ld l,0
+ld de,assoc_files
+add hl,de
+
+;a is still prog number
+;subtract start of screen
+ld iy,scrntop
+sub (iy)
+ret c		;ret if <0
+cp 6
+ret nc		;ret if >=6
+
+rlca		;*2
+ld b,a
+rlca		;*4
+rlca		;*8
+rlca		;*16
+add a,b		;*18
+add a,12
+ld (dflistop+1),a
+
+;see if we have one or more files in the list. if not, quit now.
+ld a,(hl)
+inc hl
+or (hl)
+dec hl
+ret z
+
+;ok then, we have some files to list.
+;we assume the cur/top settings are sane, so we skip ahead to the
+;first file to show onscreen.
+
+ld e,(ix+1)	;top
+ld d,0
+add hl,de
+add hl,de
+
+ld c,6		;current y pos onscreen
+
+dflistlp:
+ld e,(hl)
+inc hl
+ld d,(hl)
+inc hl
+push hl
+ex de,hl
+
+;hl is addr of file entry.
+;move cursor to right place then print filename.
+ld a,16
+call putchar
+;c is ypos
+ld a,32
+add a,c
+call putchar
+dflistop: ld a,0	;modified to be hpos
+add a,32
+call putchar
+
+push bc
+call nicer_filename	;print it
+pop bc
+
+;quit if we've got to end of files list
+pop hl
+ld a,(hl)
+inc hl
+or (hl)
+dec hl
+ret z
+
+;or if we've got to the bottom of the screen
+inc c
+ld a,c
+cp 10
+ret z
+
+;otherwise, keep going.
+jr dflistlp
+
+
+;print the filename contained in dir entry pointed at by hl, folding
+;spaces. WIBBLE.DAT on A: user 0 comes out as `a0:wibble.dat'.
+;(based on pfcbname from ls.z)
+;af/bc/de/hl/ix corrupt
+nfnnoex: defb 0
+
+nicer_filename:
+push hl
+pop ix
+;if (ix+12) is 255, it's not a normal filename as such.
+ld a,(ix+12)
+cp 255
+jr z,nfn_special
+
+push hl
+xor a
+ld (nfnnoex),a
+ld de,9
+add hl,de
+call cmpspc
+jr nc,nfn0
+ld a,1
+ld (nfnnoex),a
+nfn0:
+pop hl
+
+push hl
+;do the `du:' bit.
+;drive is at offset 0, user at offset 12
+ld a,(hl)
+add a,'a'
+call putchar
+ld de,12
+add hl,de
+ld e,(hl)
+ld d,0
+inc e
+jr z,skipuser	;skip if really a drive's dir entry
+dec e
+call dispdec
+skipuser:
+ld a,':'
+call putchar
+pop hl
+
+inc hl
+ld b,8
+call plcase
+ld a,(nfnnoex)
+and a
+ld a,'.'
+jr z,nfn3
+ld a,32
+nfn3:
+call putchar
+ld b,3
+call plcase
+ret
+
+;check for blank extension (check for 3 spaces at hl). if it is, set carry.
+;saves bc/hl
+cmpspc:
+push bc
+push hl
+ld b,3
+cmplp:
+ld a,(hl)
+cp 32
+jr nz,cmpno
+inc hl
+djnz cmplp
+pop hl
+pop bc
+scf
+ret
+
+cmpno:
+pop hl
+pop bc
+and a
+ret
+
+;print num. bytes in b from hl, smashing case to all-lower and
+;skipping spaces. returns hl=orig_hl+orig_b, and b=0.
+plcase:
+ld a,(hl)
+call isupper
+jr nc,pfn1
+set 5,a
+pfn1:
+cp 32
+call nz,putchar
+inc hl
+djnz plcase
+ret
+
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+;this deals with special `files'.
+;we know (ix+12) is 255, so it's a `d:' or `<new>' one.
+;entered with hl and ix pointing to dir entry.
+nfn_special:
+ld a,(hl)
+cp 255
+jr z,nfnsp1
+
+;ok, it's a drive. The drive number is in A.
+push af
+call ilprint
+defb '   ',0
+pop af
+add a,'a'
+call putchar
+ld a,':'
+jp putchar	;ret via that
+
+nfnsp1:
+;it's `<new>'.
+call ilprint
+defb '  <new>',0
+ret
+
+
+
+
+;draw scrollbar for file list, given current cur/top in descfilepos_array.
+;also draws the box surrounding the file list.
+;entry: a=desc number
+;	(position is figured out from cur/top in descfilepos_array[];
+;	if not onscreen, it's not drawn)
+;af/bc/de/hl/ix/iy corrupt
+dscrlnumfiles: defw 0
+drawscrlbar:
+;point ix at descfilepos_array[a]
+ld h,0
+ld l,a
+add hl,hl
+ld de,descfilepos_array
+add hl,de
+push hl
+pop ix
+
+;and de at assoc_files[a]
+ld h,a
+ld l,0
+ld de,assoc_files
+add hl,de
+;but if we have zero files, stop now.
+ld b,a
+ld a,(hl)
+inc hl
+or (hl)
+dec hl
+ret z
+ld a,b
+ex de,hl
+
+;a is still prog number
+;subtract start of screen
+ld iy,scrntop
+sub (iy)
+ret c		;ret if <0
+cp 6
+ret nc		;ret if >=6
+
+rlca		;*2
+ld b,a
+rlca		;*4
+rlca		;*8
+rlca		;*16
+add a,b		;*18
+add a,12
+rra
+add a,8
+ld h,0
+ld l,a
+push de
+ld de,0f080h+6*6*64-2*64
+add hl,de
+pop de
+
+;ok then, ix=descfilepos_array[a], de=assoc_files[a], hl=addr of
+;scrollbar onscreen.
+
+;find out how many files we have.
+ex de,hl
+ld c,-1		;file count
+dscrlflp:
+inc c
+ld a,(hl)
+inc hl
+or (hl)
+inc hl
+jr nz,dscrlflp
+ld a,c
+ld (dscrlnumfiles),a
+ex de,hl
+
+push hl		;save addr of start of bar for later
+
+;first line of bar is also top of the box
+ld a,l
+sub 9
+ld l,a
+ld a,(hl)
+or 7
+ld (hl),a
+inc l
+ld b,8
+dscrllp0:
+ld (hl),255
+inc l
+djnz dscrllp0
+
+ld a,(hl)
+or 0f0h
+ld (hl),a
+ld de,64
+add hl,de
+
+ld b,26
+dscrllp:
+;the empty scrollbar
+ld a,(hl)
+and 15
+or 090h
+ld (hl),a
+
+;and the left-hand side of the box
+ld c,l
+ld a,l
+sub 9
+ld l,a
+ld a,(hl)
+and 0f0h
+or 4
+ld (hl),a
+
+ld l,c
+add hl,de
+djnz dscrllp
+
+;bottom line of bar is also bottom of the box
+ld a,l
+sub 9
+ld l,a
+ld a,(hl)
+or 7
+ld (hl),a
+inc l
+ld b,8
+dscrllp0a:
+ld (hl),255
+inc l
+djnz dscrllp0a
+
+ld a,(hl)
+or 0f0h
+ld (hl),a
+ld de,64
+add hl,de
+
+;now have 6*4+4-2 = 26 lines for the bar interior.
+
+;check if there are less than 4 files. If so, all files must be
+;onscreen, so the bar will be `full'.
+;(Getting this possibility out of the way saves some headaches later.)
+ld a,(dscrlnumfiles)
+cp 4
+ld de,26	;d=start line (0), e=number of lines (26)
+jr c,dscrl_drawbar
+
+;find out `percentage', not out of 100 but out of 26.
+;since we know there are 4 files onscreen, this is just
+;(4*26)/numfiles.
+ld hl,4*26
+ld de,(dscrlnumfiles)
+call divide
+push hl
+
+;the start pos is a little more complicated - (top*26)/numfiles.
+ld l,(ix+1)	;top
+ld h,0
+ld de,26
+call multiply
+ld de,(dscrlnumfiles)
+dec de
+call divide
+ld d,l
+pop hl
+ld e,l
+
+dscrl_drawbar:
+;so now d=start line, e=number of lines.
+
+pop hl		;restore top-of-bar addr pushed (much) earlier :-)
+
+inc d		;skip top of bar's outline box
+		;(also saves djnz grief if d is zero :-))
+
+inc e		;exaggerate scroll bar size a little
+		;(helps with long lists, and djnz again)
+
+;skip d lines
+push de
+ld b,d
+ld de,64
+dscrllp2:
+add hl,de
+djnz dscrllp2
+pop de
+
+;draw e lines
+ld b,e
+ld de,64
+dscrllp3:
+ld a,(hl)
+or 0f0h
+ld (hl),a
+add hl,de
+bit 7,h
+ret z		;make damn sure we don't wrap around to low memory!
+		;(and this can otherwise happen, due to rounding
+		;errors and the like...)
+djnz dscrllp3
+
+ret
+
+
+
+;find files associated with each desc (up to 32 descs allowed).
+fmf_ptrs:	defs 2*32	;current-pos for each desc in assoc_files[]
+
+find_matching_files:
+;initialise fmf_ptrs[] and write NULL to each desc's bit in assoc_files[].
+ld ix,fmf_ptrs
+ld de,assoc_files
+ld b,32
+xor a
+fmflp0:
+ld (ix),e
+ld (ix+1),d
+ld (de),a
+inc e
+ld (de),a
+dec e
+inc ix
+inc ix
+inc d
+djnz fmflp0
+
+;find those with initial filetype of `?', and fill in drive dir entries
+;for them.
+call fmf_fixques
+
+;for all which don't have the needfile option set, add `<new>' as the
+;first entry.
+call fmf_newfile
+
+;we work by going through the (sorted) file list, and for each
+;non-deleted filename testing the extension against every used
+;filetype in all the descs.
+
+ld ix,nameptrs
+ld bc,(dirblksiz)
+fmflp1:
+push bc
+ld e,(ix)
+ld d,(ix+1)
+ex de,hl
+
+;skip entry if it's deleted (or unused, or a non-zero extent)
+ld a,(hl)
+cp 0e5h
+jr z,fmfskip1
+
+;it's ok, so point to filetype and go through all the descs.
+ld de,9
+add hl,de
+
+ld de,descaddr
+ld iy,fmf_ptrs
+ld a,(numdescs)
+ld b,a
+fmflp2:
+push bc
+
+ld a,(de)
+and a
+jr z,fmfskip2	;skip deleted descs
+
+;filetypes are at 32..127 in the desc. The array is 256-byte-aligned,
+;so we can just fiddle e.
+;first type can start with `?' for drv menu (which means we don't care
+;about it), or `*' for any file (it which case it obviously matches :-)).
+;also, if they're there they're the last filetype for the desc.
+ld e,32
+ld a,(de)
+and a
+jr z,fmfskip2	;zero, so no associated files at all
+cp '?'
+jr z,fmfskip2	;this actually means the same (drv stuff dealt with earlier)
+cp '*'
+jr nz,fmfskip3
+
+call fmf_addmatch ;file matches, add to list
+jr fmfskip2	;then skip rest, since it must be only type
+
+fmfskip3:
+;ok, nothing special about first filetype, so just loop over them all.
+ld b,32		;max of 32
+fmflp3:
+;if (de) is zero, we're done for this desc
+ld a,(de)
+and a
+jr z,fmfskip2
+
+;otherwise, compare 3 bytes at hl to three at de
+push de
+push hl
+ld a,(de)
+cp (hl)
+jr nz,fmfskip4
+inc e
+inc hl
+ld a,(de)
+cp (hl)
+jr nz,fmfskip4
+inc e
+inc hl
+ld a,(de)
+cp (hl)
+jr nz,fmfskip4
+
+call fmf_addmatch ;file matches, add to list
+
+fmfskip4:
+pop hl
+pop de
+inc e
+inc e
+inc e
+djnz fmflp3
+
+fmfskip2:
+inc d
+ld e,0
+inc iy
+inc iy
+
+pop bc
+djnz fmflp2
+
+fmfskip1:
+inc ix
+inc ix
+pop bc
+dec bc
+ld a,b
+or c
+jr nz,fmflp1
+
+;"Surely it's not as simple as that." -- Barry Cryer
+ret
+
+
+fmf_addmatch:
+;addr of ptr to filename entry is in ix, iy is current addr in fmf_ptrs[].
+;we have to preserve bc/de/hl - easiest way is to use alternates.
+exx
+ld e,(iy)
+ld d,(iy+1)
+ex de,hl
+;if e is feh, we would be writing a 128th file - avoid doing that.
+ld a,e
+cp 0feh
+exx
+ret z
+
+exx
+ld e,(ix)
+ld d,(ix+1)
+ld (hl),e
+inc hl
+ld (hl),d
+inc hl
+;also write a NULL after it, in case this is the last one we do.
+xor a
+ld (hl),a
+inc hl
+ld (hl),a
+dec hl
+;put it back at iy
+ex de,hl
+ld (iy),e
+ld (iy+1),d
+exx
+ret
+
+
+;find those with initial filetype of `?', and fill in drive dir entries
+;for them.
+fmf_fixques:
+ld ix,fmf_ptrs
+ld hl,descaddr+32
+ld a,(numdescs)
+ld b,a
+xor a
+fmflp0b:
+ld l,0
+ld a,(hl)
+and a
+jr z,fmfskip0	;skip deleted descs
+
+ld l,32
+ld a,(hl)
+cp '?'
+jr nz,fmfskip0
+
+ld e,(ix)
+ld d,(ix+1)
+ex de,hl
+
+;put a pointer to the entry for each valid drive in.
+push bc
+ld iy,drvfree
+ld b,4
+fmflp0c:
+ld a,(iy)
+inc a
+jr z,fmfbaddrv
+;address is drvents+(4-b)*32
+ld a,4
+sub b
+;since 3*32 is less than 256, we can do it in A,
+;which in turn means we can do it with 3 right-shifts rather than
+;5 left-shifts.
+rrca		;*128
+rrca		;*64
+rrca		;*32
+or drvents mod 256	;this is ok as drvents is on a 128-byte boundary
+ld (hl),a
+inc hl
+ld (hl),drvents/256
+inc hl
+fmfbaddrv:
+inc iy
+djnz fmflp0c
+pop bc
+
+;write another NULL pointer.
+xor a
+ld (hl),a
+inc hl
+ld (hl),a
+dec hl
+;write back current-pos ptr
+ex de,hl
+ld (ix),e
+ld (ix+1),d
+
+fmfskip0:
+inc ix
+inc ix
+inc h
+djnz fmflp0b
+ret
+
+
+;for all which don't have the needfile option set, but do have at
+;least one filetype (other than the special `?' one), add `<new>' as
+;the first entry.
+fmf_newfile:
+ld ix,fmf_ptrs
+ld iy,descaddr+32	;ptr to filetype
+ld hl,descaddr+226	;ptr to needfile
+ld a,(numdescs)
+ld b,a
+fmfnewlp:
+ld l,0
+ld a,(hl)
+and a
+jr z,fmfnew1	;skip deleted descs
+
+ld l,226
+ld a,(hl)
+and a
+jr nz,fmfnew1	;skip if `needfile'
+ld a,(iy)
+and a
+jr z,fmfnew1	;skip if no filetype entries
+cp '?'
+jr z,fmfnew1	;or if it's just a `?' one
+
+push hl
+ld e,(ix)
+ld d,(ix+1)
+ex de,hl
+ld (hl),newfile_ent mod 256
+inc hl
+ld (hl),newfile_ent/256
+inc hl
+;write another NULL pointer.
+xor a
+ld (hl),a
+inc hl
+ld (hl),a
+dec hl
+;write back current-pos ptr
+ex de,hl
+ld (ix),e
+ld (ix+1),d
+pop hl
+
+fmfnew1:
+defb 0fdh
+inc h		;inc iyh
+inc ix
+inc ix
+inc h
+djnz fmfnewlp
+ret
+
+;and here's the entry we use (both 255 bytes are needed):
+newfile_ent:
+defb 255
+defb 32,32,32,32, 32,32,32,32, 32,32,32
+defb 255
+defs 32-13
+
+
+;mark any needfile descs with no matching files as deleted.
+needfile_prune:
+ld ix,assoc_files
+ld hl,descaddr
+ld a,(numdescs)
+ld b,a
+nfplp:
+ld l,0
+ld a,(hl)
+and a
+jr z,nfp1	;skip deleted descs
+
+ld l,226
+ld a,(hl)
+and a
+jr z,nfp1	;skip if not `needfile'
+
+;we only need check that there's one file entry. If there isn't, then
+;mark the desc as deleted.
+ld a,(ix)
+or (ix+1)
+jr nz,nfp1
+
+;ok then, `remove' the desc.
+ld l,0
+ld (hl),l
+
+nfp1:
+inc h
+defb 0ddh
+inc h		;inc ixh
+djnz nfplp
+
+ret
+
+
+;set current pos in each drive list to (pdef_drv).
+drivelist_defaults:
+ld hl,assoc_files
+ld de,descfilepos_array
+ld a,(numdescs)
+ld b,a
+dldlp:
+;see if it's a drive-list one
+push de
+ld e,(hl)
+inc l
+ld d,(hl)
+dec l
+push de
+pop ix
+pop de
+ld a,(ix+12)
+inc a
+jr nz,dldskip	;skip if (ix+12)!=255
+ld a,(ix)
+inc a
+jr z,dldskip	;skip if (ix)==255 (i.e. if it's `<new>')
+
+;ok, we have a drive list. set pos.
+;don't need to set `top' as pos is in range 0..3, which will always
+;fit on the screen with the current top (zero).
+ld a,(pdef_drv)
+ld (de),a
+
+dldskip:
+inc h
+inc de
+inc de
+djnz dldlp
+ret
+
+
+
+;do a full update of all the icons and file lists.
+showdescs:
+;start at scrntop, and stop when we reach numdescs,
+;or when we reach scrntop+6.
+ld a,(scrntop)
+ld b,a
+sdlp:
+;stop if we've got to scrntop+6.
+ld a,(scrntop)
+add a,6
+cp b
+jr z,sdlpdone
+
+push bc
+
+;draw name/icon
+ld a,b
+push af
+call drawprog
+pop af
+push af
+;and file list, if any...
+call drawflist
+;...and finally scrollbar if needed.
+pop af
+call drawscrlbar
+
+pop bc
+;stop if we've got to numdescs
+inc b
+ld a,(numdescs)
+cp b
+jr nz,sdlp
+
+sdlpdone:
+ret
+
+
+
+;========== time stuff, mainly ripped from zcnclock ===========
+
+;(battery checks are also done here)
+
+timebuf1: defs 6
+timebuf2: defs 6
+timebuf3: defs 6	;previous second (used by gettime)
+timebuf	equ timebuf1	;current second
+
+;timebuf3 is *really* the previous second, but timebuf4 records which
+;second was last drawn on the analogue clock, which can sometimes
+;differ (notably when power is cycled, as we then aren't
+;synchronised with the RTC's seconds).
+
+;wait for next second
+;also checks for input and deals with it (this cuts short the wait).
+ticker: defb 0
+getch_time:
+call gettime
+call disptime
+
+call battchk
+
+wslp2:
+ld hl,timebuf
+ld de,timebuf3
+ld bc,6
+ldir
+
+wslp:
+call gettime
+
+;the flash being irregular was originally a bug, but once I saw
+;how annoying it was (which is a Good Thing for a "your batteries are
+;dying" message IMHO) I decided to cover the "bug" legend with a
+;"feature" sticker. :-)
+halt
+ld a,(ticker)
+inc a
+ld (ticker),a
+and 31
+jr nz,wsskip
+ld a,(batt_doflash)
+and a
+call nz,flash_toggle
+
+wsskip:
+call kbhit
+jp c,getch	;ret via that
+
+;loop if timebuf[5]==timebuf3[5]
+;(we only really need to update every minute, but it can't hurt to
+;do it every second - not least because otherwise battery warnings
+;would only flash on and off once every two minutes. ;-))
+ld a,(timebuf+5)
+ld b,a
+ld a,(timebuf3+5)
+cp b
+jr z,wslp
+
+;next second, so show new time, check batteries, and start again
+call disptime
+call battchk
+jr wslp2
+
+
+batt_doflash: defb 0
+
+
+battchk:
+xor a
+ld (batt_doflash),a
+
+;check batteries, and if any batteries are low, give a flashing
+;message about it.
+;
+;we only give at most one warning at a time. Priority order is
+;main, then lithium, then card. (Card comes last because it basically
+;doesn't work. ;-))
+
+ld hl,mbatt_nowarn
+in a,(0a0h)
+
+;from zcn.txt:
+;> If bit 4 is *zero* then the PCMCIA card's battery is low.
+;> 	(This bit is set if not, or if no card is in the slot.)
+;> 	(Note that as mentioned in the `Battery level warnings'
+;> 	section, this particular battery-level test doesn't actually
+;> 	seem to work properly.)
+;since we don't want to give a bogus battery warning simply because
+;there's no card in the slot, we test this bit first:
+;> Bit 7 is set when there is no card in the slot.
+bit 7,a
+jr nz,bchk1
+bit 4,a
+jr nz,bchk1
+ld hl,batt_doflash
+ld (hl),1
+ld hl,mbatt_card
+bchk1:
+
+;> If bit 2 is set then the lithium backup battery is low.
+bit 2,a
+jr z,bchk2
+ld hl,batt_doflash
+ld (hl),1
+ld hl,mbatt_lith
+bchk2:
+
+;> If bit 3 is set then the main batteries are low.
+bit 3,a
+jr z,bchk3
+ld hl,batt_doflash
+ld (hl),1
+ld hl,mbatt_main
+bchk3:
+
+;remove any `flash' stuff which may have been left over from
+;previously low batteries which are now ok.
+ld a,(batt_doflash)
+and a
+push hl
+call z,flash_off
+pop hl
+
+;as with the time display, we use our own display routine to avoid
+;defeating the auto-power-off.
+xor a
+ld (xloc),a
+ld de,0f080h+3*6*64
+ld (yaddr),de
+
+bchklp:
+ld a,(hl)
+and a
+ret z
+cp 10
+jr z,bchkeol
+call pixelputchar
+inc hl
+jr bchklp
+
+bchkeol:
+xor a
+ld (xloc),a
+push hl
+ld hl,(yaddr)
+ld de,6*64
+add hl,de
+ld (yaddr),hl
+pop hl
+inc hl
+jr bchklp
+
+
+flash_toggle:
+ld hl,0f080h+3*6*64+5*64
+ld c,3
+ld de,6*64
+ftoglp:
+push hl
+ld b,4
+ftoglp2:
+ld a,(hl)
+cpl
+ld (hl),a
+inc hl
+djnz ftoglp2
+pop hl
+add hl,de
+dec c
+jr nz,ftoglp
+ret
+
+
+flash_off:
+ld hl,0f080h+3*6*64+5*64
+ld c,3
+ld de,6*64
+fofflp:		; :-)
+push hl
+ld b,4
+fofflp2:
+ld (hl),0
+inc hl
+djnz fofflp2
+pop hl
+add hl,de
+dec c
+jr nz,fofflp
+ret
+
+
+mbatt_nowarn:	defb '        ',10,'         ',10,'        ',0
+mbatt_card:	defb 'MEM CARD',10,' BATTERY ',10,'  LOW!  ',0
+mbatt_lith:	defb ' BACKUP ',10,' BATTERY ',10,'  LOW!  ',0
+mbatt_main:	defb '  MAIN  ',10,'BATTERIES',10,'  LOW!  ',0
+
+
+
+;get current time into timebuf.
+;lifted from time.z
+gettime:
+ld c,085h
+ld de,timebuf1
+call 5
+
+ld c,085h
+ld de,timebuf2
+call 5
+
+;now, if t1<t2 then t1:=t2
+
+ld ix,timebuf1
+ld b,6
+tchklp:
+ld a,(ix)
+cp (ix+6)
+jr c,uset2
+inc ix
+djnz tchklp
+
+jr tchkdone
+
+uset2:
+ld hl,timebuf2
+ld de,timebuf1
+ld bc,6
+ldir
+
+tchkdone:
+ret
+
+
+;display time
+disptime:
+;now, as it would be really unpleasant for us to do output every
+;minute, effectively disabling the auto-power-off timeout [1],
+;we use a (very) cut-down copy of ZCN's output routines from term.z
+;to display the time. Yes, ouch, but at least it works.
+;
+;[1] This is ok in {zcn,d}clock, because they're *just* clock
+;programs. If you want a full-screen clock, it's a good bet you're
+;after a constant time display, yes? :-) But in zap, it would be most
+;nasty.
+
+;put cursor in place for time
+ld a,1
+ld (xloc),a
+;yloc is preset
+
+;if year is given as 1990 (i.e. (timebuf) is zero), time isn't set.
+ld a,(timebuf)
+and a
+jr nz,dt_timeok
+
+;ok, do "--:--" instead, hopefully making it semi-clear :-) that zap
+;does a time display normally but can't at the moment.
+ld a,0bbh
+call timedispbcd
+ld a,':'
+call timeputchar
+ld a,0bbh
+call timedispbcd
+ret
+
+dt_timeok:
+ld hl,timebuf+3
+ld a,(hl)
+call timedispbcd
+inc hl
+ld a,':'
+call timeputchar
+ld a,(hl)
+call timedispbcd
+
+ret
+
+
+;display BCD in a as decimal, using timeputchar
+timedispbcd:
+push af
+rrca
+rrca
+rrca
+rrca
+and 15
+add a,48
+call timeputchar
+pop af
+and 15
+add a,48
+call timeputchar
+ret
+
+
+xloc: defb 0
+
+
+timeputchar:
+;heavily cut-down `drwchar' from term.z. This hacked version assumes
+;the cursor will never go off-screen in either direction.
+;in fact, it even overrides (yloc) it's so crude. :-)
+;also, only supports 0-9 and colon, and chars are 4 lines high.
+
+;since it's a putchar replacement, have to save af/bc/de/hl
+push af
+push bc
+push de
+push hl
+
+sub '0'
+ld l,a		;a is char to draw
+ld h,0
+add hl,hl
+add hl,hl
+;now hl=char*4
+ld de,timefont
+add hl,de
+push hl
+
+ld a,(xloc)
+ld e,a
+ld d,0
+;div by 2
+srl e
+ld hl,0f080h+2*6*64
+add hl,de
+ex de,hl
+
+pop hl
+
+;so de=screen addr, hl=addr of char. in font data
+ld b,4
+ld a,(xloc)
+rra		;put xloc%2 in carry
+ld c,0f0h	;keep high nibble from font byte
+jr nc,dcloop1
+
+ld c,0fh	;keep low nibble
+
+dcloop1:
+push hl
+
+ld a,(hl)	;get font byte
+
+;choose correct nibble from font byte and write byte
+ex de,hl
+
+and c
+ld d,a
+ld a,c
+cpl
+and (hl)
+or d
+ld (hl),a
+
+ld de,64
+add hl,de
+ex de,hl
+pop hl
+
+inc hl
+djnz dcloop1
+
+ld hl,xloc
+inc (hl)
+
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+timefont:
+defb 044h,0aah,0aah,044h	;0
+defb 044h,0cch,044h,0eeh	;1
+defb 0cch,022h,044h,0eeh	;2
+defb 0cch,066h,022h,0cch	;3
+defb 088h,0cch,0eeh,044h	;4
+defb 0eeh,0cch,022h,0cch	;5
+defb 066h,0cch,0aah,044h	;6
+defb 0eeh,022h,044h,044h	;7
+defb 0eeh,044h,0aah,0eeh	;8
+defb 044h,0aah,066h,022h	;9
+defb 000h,044h,000h,044h	;:
+defb 000h,000h,0eeh,000h	;; (used as `-')
+
+;====================== end of time stuff =====================
+
+
+yaddr: defw 0f000h
+
+pixelputchar:
+;cut-down `drwchar' from term.z. This hacked version assumes
+;the cursor will never go off-screen in either direction.
+;it uses xloc as an addition to yaddr, which specifies the address
+;which is to be considered the start of the pixel line the text should
+;go at.
+;
+;yaddr should always be set before printing.
+
+;since it's a putchar replacement, have to save af/bc/de/hl
+push af
+push bc
+push de
+push hl
+
+ld l,a		;a is char to draw
+ld h,0
+add hl,hl
+ld d,h
+ld e,l
+add hl,hl
+add hl,de
+;now hl=char*6
+ld de,0ea00h
+add hl,de
+push hl
+
+ld a,(xloc)
+ld e,a
+ld d,0
+;div by 2
+srl e
+ld hl,(yaddr)
+add hl,de
+ex de,hl
+
+pop hl
+
+;so de=screen addr, hl=addr of char. in font data
+ld b,6
+ld a,(xloc)
+rra		;put xloc%2 in carry
+ld c,0f0h	;keep high nibble from font byte
+jr nc,pdcloop1
+
+ld c,0fh	;keep low nibble
+
+pdcloop1:
+push hl
+
+ld a,(hl)	;get font byte
+
+;choose correct nibble from font byte and write byte
+ex de,hl
+
+and c
+ld d,a
+ld a,c
+cpl
+and (hl)
+or d
+ld (hl),a
+
+ld de,64
+add hl,de
+ex de,hl
+pop hl
+
+inc hl
+djnz pdcloop1
+
+ld hl,xloc
+inc (hl)
+
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+
+;data written to the SUB file. The format is this:
+;
+; d:				# "d" is at subprogdrv
+; cd 12				# "12" is at subproguser
+; crlf 0
+; get 100 progname.com		# "progname.com" is at subprogname
+; crlf 1
+; d:				# "d:" is at subfiledrv
+; cd 12				# "12" is at subfileuser
+; xxxxxxx !! filename.ext	# "filename.ext" is at subfilename,
+;				# "xxxxxxx" is at subquit and is
+;				# either 7 spaces (!noret) or "quitsub" (noret)
+; d:				# "d" is at suborigdrv
+; cd 12				# "12" is at suboriguser
+; quitsub zap
+;
+;NB: only `get' needs CR/LF disabled, as `d:' and `cd' don't output
+;them anyway.
+;
+subdata:
+subprogdrv:	defb 'd'
+		defb ':',13,10,'cd '
+subproguser:	defb '12'
+		defb 13,10,'crlf 0',13,10,'get 100 '
+subprogname:	defb 'progname.com'
+		defb 13,10,'crlf 1',13,10
+subfiledrv:	defb 'd'
+		defb ':',13,10,'cd '
+subfileuser:	defb '12'
+		defb 13,10
+subquit:	defs 7		;either 7 spaces, or "quitsub"
+		defb ' !! '
+subfilename:	defb 'filename.ext'
+		defb 13,10
+suborigdrv:	defb 'd'
+		defb ':',13,10,'cd '
+suboriguser:	defb '12'
+		defb 13,10,'quitsub zap -#'
+subscrncur:	defb '@'	;scrncur+64
+subscrntop:	defb '@'	;scrntop+64
+subpdrv:	defb '@'	;pdef_drv+'A'
+subpuser:	defb '@'	;pdef_user+64
+subkeywait:	defb '0'	;'1' if we should wait for a key on startup
+;NB: only one more flag before I need a dot :-), and then only three
+;more before I need something a bit smarter.
+		defb 13,10,26
+
+m7spc:		defb 32,32,32,32,32,32,32
+mquitsub:	defb 'quitsub'
+
+
+;make SUB file data which runs the program (and if not `noret', reruns zap)
+;uses descaddr[(scrncur)] and descfilepos_array[(scrncur)] to
+;find which program (and possibly file) to use.
+;
+;Note that this *doesn't* write the data! It just sets it up ready for
+;writing by something else.
+
+makesubdata:
+ld a,(scrncur)
+ld h,a
+ld l,0
+add a,64
+ld (subscrncur),a
+inc h		;we point to following entry initially - see below for why...
+ld de,descaddr
+add hl,de
+push hl
+pop ix
+
+ld a,(scrntop)
+add a,64
+ld (subscrntop),a
+
+;set current default drive/user for prompts
+ld a,(pdef_drv)
+add a,'A'
+ld (subpdrv),a
+ld a,(pdef_user)
+add a,64
+ld (subpuser),a
+
+;sort out keywait stuff
+ld hl,subkeywait
+ld (hl),'0'
+ld a,(ix-256+225)	;keywait
+and a
+jr z,msub_skip1
+ld (hl),'1'
+msub_skip1:
+
+;check whether to run zap again or not.
+ld hl,m7spc
+ld a,(ix-256+224)	;noret
+defb 0ddh
+dec h		;dec ixh
+and a
+jr z,msub_skip2
+ld hl,mquitsub
+msub_skip2:
+ld de,subquit
+ld bc,7
+ldir
+
+;setup original drive/user, for possible return to zap
+;(unnecessary for noret cases, but it doesn't hurt)
+ld a,(origdrv)
+ld hl,suborigdrv
+call msub_setdrv
+ld a,(origuser)
+ld hl,suboriguser
+call msub_setuser
+
+
+;setup program name's drive/user
+ld a,(ix+2)
+ld hl,subprogdrv
+call msub_setdrv
+ld a,(ix+1)
+ld hl,subproguser
+call msub_setuser
+
+;copy program name
+push ix
+pop hl
+inc hl
+inc hl
+inc hl
+ld de,subprogname
+call msub_copyname
+
+;now see if it had any associated filenames
+;(if not, it won't have a filename to use with the program)
+;drive selections count as associated files too (they work ok if
+;simply treated as files).
+ld a,(scrncur)
+ld h,a
+ld l,0
+ld de,assoc_files
+add hl,de
+ld a,(hl)
+inc hl
+or (hl)
+dec hl
+jr nz,msub_havefile
+
+;ok, no filename - use the drive/user current when zap started.
+ld a,(origdrv)
+ld hl,subfiledrv
+call msub_setdrv
+ld a,(origuser)
+ld hl,subfileuser
+call msub_setuser
+;and blank out the filename.
+ld hl,subfilename
+ld de,subfilename+1
+ld bc,11
+ld (hl),32
+ldir
+ret
+
+msub_havefile:
+;get address of filename entry
+;hl is still assoc_files[(scrncur)]
+push hl
+ld a,(scrncur)
+ld l,a
+ld h,0
+add hl,hl
+ld de,descfilepos_array
+add hl,de
+ld l,(hl)	;pos
+ld h,0
+add hl,hl
+ex de,hl
+pop hl
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+push hl
+pop ix
+
+;now ix points to file entry.
+
+;set drive/user
+ld a,(ix)
+ld hl,subfiledrv
+call msub_setdrv
+ld a,(ix+12)
+ld hl,subfileuser
+call msub_setuser
+
+;finally, copy filename
+push ix
+pop hl
+inc hl
+ld de,subfilename
+call msub_copyname
+ret
+
+
+;entry: a=drive (0=a:), hl=address to write it as text
+msub_setdrv:
+add a,'a'
+ld (hl),a
+ret
+
+
+;entry: a=user (0..15 or 255), hl=address to write it as text
+msub_setuser:
+push hl
+
+;blank it out first, as number may well only be one char long.
+ld (hl),32
+inc hl
+ld (hl),32
+
+;if it's 255, just use `*'.
+cp 255
+jr nz,mssdskip
+pop hl
+ld (hl),'*'
+ret
+
+mssdskip:
+and 15		;make certain it's <=15 no matter what
+ld e,a
+ld d,0
+call itoa	;returns addr of ascii$ version in de
+
+pop hl
+mssdlp:
+ld a,(de)
+cp '$'
+ret z
+ld (hl),a
+inc de
+inc hl
+jr mssdlp
+
+
+;write `filename.ext' at de given FCB-ish FILENAMEEXT at hl.
+;moves all spaces to the end, so "WIBBLE  DAT" becomes "wibble.dat  ".
+;also omits the `.' for files with all-spaces extension; this matters
+;mainly for drive list entries and <new>, where the entire `filename'
+;is made up of spaces - important to lose the dot there!
+msub_copyname:
+ld c,0		;number of spaces printed after
+
+ld b,8
+call msub_plcase
+
+push hl
+ld a,(hl)
+cp 32
+jr nz,msubcn1
+inc hl
+ld a,(hl)
+cp 32
+jr nz,msubcn1
+inc hl
+ld a,(hl)
+cp 32
+jr nz,msubcn1
+ld a,' '
+jr msubcn2
+msubcn1:
+ld a,'.'
+msubcn2:
+ld (de),a
+inc de
+pop hl
+ld b,3
+call msub_plcase
+
+;do spaces, but only c>0.
+ld a,c
+and a
+ret z
+ld b,c
+ld a,32
+msub_pfcblp:
+ld (de),a
+inc de
+djnz msub_pfcblp
+ret
+
+;copy to de num. bytes in b from hl, omitting spaces
+;returns de *after* last byte printed
+;c is incr'd for each space omitted
+msub_plcase:
+ld a,(hl)
+cp 32
+jr nz,msub_pfn2
+inc c
+jr msub_pfn3
+msub_pfn2:
+ld (de),a
+inc de
+msub_pfn3:
+inc hl
+djnz msub_plcase
+ret
+
+
+;fcb for $$$.SUB
+subfcb:
+defb 0,'$$$     SUB'
+defs 33-12
+
+
+
+bfclose		equ 16
+bfdel		equ 19
+bfwrite		equ 21
+bfmake		equ 22
+bfsetdma	equ 26
+
+;write record at subdata to $$$.SUB.
+;we write it to user `subuser' (15), to try and keep it out of the way of
+;your average directory listing, etc.
+writesub:
+ld a,subuser
+call setuser
+
+ld de,subfcb
+ld c,bfmake
+call 5
+inc a
+jr z,wsuberr
+
+ld de,subdata
+ld c,bfsetdma
+call 5
+
+ld de,subfcb
+ld c,bfwrite
+call 5
+push af
+ld a,(origuser)
+call setuser
+pop af
+and a
+ret z
+;FALLS THROUGH
+
+wsuberr:
+;error making file, or writing to it.
+;disk full, card missing, or card read-only.
+
+;attempt to delete the file, in case we managed to create the (0k)
+;file but not write to it (likely).
+ld de,subfcb
+ld c,bfdel
+call 5
+;don't care if it worked or not
+
+ld a,(origuser)
+call setuser
+
+;XXX eventually should give proper dialog-ish error message,
+;and return to normal zap screen
+
+;for now, just die horribly.
+call ilprint
+defb 1,'Error writing SUB file - cannot run program!',0
+rst 0
+
+
+;cope with `d:' and `<new>' selections
+drivefix:
+;get pointer to selected dir entry.
+;not at all complicated, honest guv... :-)
+ld a,(scrncur)
+ld h,a
+ld l,0
+ld de,assoc_files
+add hl,de
+
+;see if it had any associated filenames first - if not, this is
+;all irelevant.
+ld a,(hl)
+inc hl
+or (hl)
+dec hl
+scf
+ret z		;return successfully (well, they certainly didn't abort :-))
+
+push hl		;assoc_files[(scrncur)]
+ld a,(scrncur)
+ld l,a
+ld h,0
+add hl,hl
+ld de,descfilepos_array
+add hl,de
+ld l,(hl)	;pos
+ld h,0
+add hl,hl
+ex de,hl
+pop hl
+add hl,de	;hl=assoc_files[(scrncur)][pos]
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+push hl
+pop ix
+
+;now hl and ix point to file entry.
+;see if it's a special d:/<new> one.
+ld a,(ix+12)
+cp 255
+scf
+ret nz		;nope, so ret successfully
+
+;it's a d: or <new>, then. Find out which.
+ld a,(hl)
+inc a
+jr z,dfixnew
+dec a
+
+;it's a d: one. set (pdef_drv) to match the selected drive.
+ld (pdef_drv),a
+
+;but we don't yet know if we want to now pick a user or not, so...
+ld a,(scrncur)
+ld h,a
+ld l,0
+ld de,descaddr+32
+add hl,de
+ld a,(hl)
+cp '?'
+jr nz,dfixgetuser	;if not `?', get user
+			;really a `can't happen', as we need `?' to get here!
+inc hl
+ld a,(hl)
+cp 'D'		;it'll have been uppercased
+jr nz,dfixgetuser
+
+;so it's `?d' - set user to 0 and ret successfully.
+ld (ix+12),0
+scf
+ret
+
+dfixgetuser:
+push ix
+call pickuser
+pop ix
+ret nc		;musn't blast (ix+12) if they aborted...
+;...but otherwise, we do. :-)
+ld (ix+12),a
+;no scf needed
+ret
+
+dfixnew:
+;it's a <new> one, pick both drive and user.
+push ix
+call drvpick
+pop ix
+ret nc		;ret if aborted
+ld (dfnop+1),a	;save drive for later
+push ix
+call pickuser
+pop ix
+ret nc		;ret if aborted
+ld (ix+12),a
+dfnop: ld a,0	;modified
+ld (ix),a
+;no scf needed
+ret
+
+
+
+pu_cur: defb 0		;currently-selected
+pu_old: defb 0		;old selection
+
+;offset from position of onscreen `0' of each user num.
+pupostbl:
+;    0 1 2 3 4 5  6  7  8  9  10 11 12 13 14 15 16  (16=*)
+defb 0,2,4,6,8,10,12,14,16,18,20,23,26,29,32,35,38
+
+;pick user number, and return it in A
+;ret nc if Esc was pressed (and A junk), else c (and A user no.).
+pickuser:
+ld de,34*4
+ld c,2*6+2+3
+ld hl,86*4-1
+ld b,6*6+2+2
+call drawdbox
+call ilprint
+defb 16,32+3,32+52,'Which user area?',0
+call ilprint
+zeropos equ 34+7
+defb 16,32+5,32+zeropos,'0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 *',0
+
+ld a,(pdef_user)
+cp 16
+jr c,pu_skip
+ld a,16		;used for user 255
+pu_skip:
+ld (pu_cur),a
+ld (pu_old),a
+call pu_docursor
+
+pulp:
+ld a,(pu_cur)
+ld (pu_old),a
+
+call getch_time
+
+ld hl,pulpend
+push hl		;ret to there
+
+cp 27
+jr z,pu_exit
+
+cp 13
+jr z,pu_done
+
+cp 'S'-040h
+jr z,pu_curdec
+cp 'D'-040h
+jr z,pu_curinc
+cp '<'
+jr z,pu_curhome
+cp ','
+jr z,pu_curhome
+cp '>'
+jr z,pu_curend
+cp '.'
+jr z,pu_curend
+
+;if it's a digit, point to that user (but *don't* select)
+cp '0'
+jr c,pu_notdigit
+cp '9'+1
+jr c,pu_digit
+pu_notdigit:
+
+;if `*', point to `*' :-)
+cp '*'
+jr z,pu_curend	;this does the trick
+
+;none of the above, so just ret to pulpend.
+ret
+
+pulpend:
+ld a,(pu_old)
+ld b,a
+ld a,(pu_cur)
+cp b
+jr z,pulp
+call pu_docursor
+jr pulp
+
+pu_exit:
+pop hl	;lose faked ret address
+;they aborted. redraw normal zap screen and ret nc.
+call clsicons	;clear existing stuff
+call showdescs	;redraw
+call showicur
+and a	;nc
+ret
+
+pu_done:
+pop hl	;lose faked ret address
+;successful selection - update (pdef_user), and ret (pu_cur) in a.
+;but fix value to 255 if it's user `16'.
+ld a,(pu_cur)
+cp 16
+jr nz,pu_done2
+ld a,255
+pu_done2:
+ld (pdef_user),a
+scf
+ret
+
+
+pu_curdec:
+ld a,(pu_cur)
+and a
+ret z
+dec a
+ld (pu_cur),a
+ret
+
+pu_curinc:
+ld a,(pu_cur)
+inc a
+cp 17
+ret z
+ld (pu_cur),a
+ret
+
+pu_curhome:
+xor a
+ld (pu_cur),a
+ret
+
+pu_curend:
+ld a,16
+ld (pu_cur),a
+ret
+
+pu_digit:
+;entered with ASCII for digit still in A
+sub 48
+ld (pu_cur),a
+ret
+
+
+
+;remove old cursor and show new one.
+pu_docursor:
+ld a,(pu_old)
+call pu_showa
+ld a,25		;inverse
+call putchar
+ld a,(pu_cur)
+call pu_showa
+ld a,24		;normal
+call putchar
+ret
+
+;draw cursor text (space, user area, space) at right pos.
+pu_showa:
+ld d,0
+ld e,a
+push de
+ld hl,pupostbl
+add hl,de
+ld a,(hl)
+add a,32+zeropos-1
+ld (pscxpos),a
+call ilprint
+defb 16,32+5
+pscxpos: defb 0		;modified
+defb 32
+defb 0
+pop de
+;now print the user number, then another space
+ld a,e
+cp 16
+jr nz,pscskip
+;if 16 (representing user 255), print `*' instead.
+call ilprint
+defb '*',32,0
+ret
+
+pscskip:
+call dispdec
+ld a,32
+call putchar
+ret
+
+
+
+;draw the box used for drive/user dialogs.
+;entry: (de,c) = top-left, (hl,b) = bottom-right (not including shadow).
+;	must be horizontally byte-aligned to work properly.
+;exit:	af/de/bc/hl corrupt
+drawdbox:
+push bc
+push de
+push hl
+;get addr of top-left
+call pos2addr
+ld (ddbhlop+1),hl
+pop hl
+pop de
+pop bc
+push bc
+push de
+push hl
+
+;work out width in bytes
+inc hl
+srl d
+rr e	;/2
+srl h
+rr l	;/2
+;only one bit could have been in d and h, so it's 8-bit from here on.
+srl e	;/4
+srl l	;/4
+srl e	;/8
+srl l	;/8
+ld a,l
+sub e
+ld (ddbxop+1),a	;width in bytes
+ld e,a
+ld a,64
+sub e
+ld e,a
+ld d,0
+;now de=64-width
+
+;work out height (bc still intact)
+ld a,b
+sub c
+ld c,a
+ddbhlop: ld hl,0	;modified (screen addr of top-left)
+ddboxylp:
+ddbxop: ld b,0		;modified
+ddboxxlp:
+ld (hl),0
+inc hl
+djnz ddboxxlp
+add hl,de
+dec c
+jr nz,ddboxylp
+
+pop hl
+pop de
+pop bc
+
+;(remainder lifted from zcnclock's `shadowrect')
+;draw rectangle at (de,c)-(hl,b) with shadow.
+
+push bc
+push de
+push hl
+call rect
+pop hl
+pop de
+pop bc
+push bc
+push de
+push hl
+
+;draw rectangles from:
+; (de+2,b+1)-(hl+2,b+2)  and
+; (hl+1,c+2)-(hl+2,b+2)
+;...to get the shadow.
+
+inc de
+inc de
+inc b
+ld c,b
+inc b
+inc hl
+inc hl
+call rect
+
+pop hl
+pop de
+pop bc
+inc hl
+ld d,h
+ld e,l
+inc hl
+inc c
+inc c
+inc b
+inc b
+call rect
+ret
+
+
+
+;and now, a similar thing to prompt for a drive to use.
+;case and paste? me? surely you jest ;-)
+
+
+drv_cur: defb 0		;currently-selected
+drv_old: defb 0		;old selection
+
+;offset from position of onscreen `A:' of each drive.
+drvpostbl:
+;    a b c d
+defb 0,3,6,9
+
+;pick drive, and return it in A
+;ret nc if Esc was pressed (and A junk), else c (and A user no.).
+drvpick:
+ld de,46*4
+ld c,2*6+2+3
+ld hl,74*4-1
+ld b,6*6+2+2
+call drawdbox
+call ilprint
+defb 16,32+3,32+54,'Which drive?',0
+call ilprint
+dzeropos equ 54
+defb 16,32+5,32+dzeropos,0
+
+;only show each drive letter if it existed when we last checked.
+;if not, we give `--' instead of `D:'.
+ld ix,drvfree
+ld b,4
+ld c,'a'
+drvlp2:
+push bc
+ld a,(ix)
+cp 255
+jr z,drvskip1
+ld a,c
+call putchar
+ld a,':'
+call putchar
+jr drvskip2
+drvskip1:
+;not a valid drive
+ld a,'-'
+call putchar
+call putchar
+drvskip2:
+ld a,32
+call putchar
+pop bc
+inc ix
+inc c
+djnz drvlp2
+
+ld a,(pdef_drv)
+ld (drv_cur),a
+ld (drv_old),a
+call drv_docursor
+
+drvlp:
+ld a,(drv_cur)
+ld (drv_old),a
+
+call getch_time
+
+ld hl,drvlpend
+push hl		;ret to there
+
+cp 27
+jr z,drv_exit
+
+cp 13
+jr z,drv_done
+
+cp 'S'-040h
+jr z,drv_curdec
+cp 'D'-040h
+jr z,drv_curinc
+cp '<'
+jr z,drv_curhome
+cp ','
+jr z,drv_curhome
+cp '>'
+jr z,drv_curend
+cp '.'
+jr z,drv_curend
+
+;if it's a..d, point to that user (but *don't* select)
+cp 'a'
+jr c,drv_notdigit
+cp 'd'+1
+jr c,drv_digit
+drv_notdigit:
+
+;none of the above, so just ret to drvlpend.
+ret
+
+drvlpend:
+ld a,(drv_old)
+ld b,a
+ld a,(drv_cur)
+cp b
+jr z,drvlp
+call drv_docursor
+jr drvlp
+
+drv_exit:
+pop hl	;lose faked ret address
+;they aborted. redraw normal zap screen and ret nc.
+call clsicons	;clear existing stuff
+call showdescs	;redraw
+call showicur
+and a	;nc
+ret
+
+drv_done:
+;has to be a valid drive to allow it to be selected.
+ld a,(drv_cur)
+ld e,a
+ld d,0
+ld hl,drvfree
+add hl,de
+ld a,(hl)
+inc a
+ret z		;ret to drvlpend if bogus
+
+pop hl	;otherwise, lose faked ret address
+
+;successful selection - update (pdef_drv), and ret (drv_cur) in a.
+ld a,(drv_cur)
+ld (pdef_drv),a
+scf
+ret
+
+
+drv_curdec:
+ld a,(drv_cur)
+and a
+ret z
+dec a
+ld (drv_cur),a
+ret
+
+drv_curinc:
+ld a,(drv_cur)
+inc a
+cp 4
+ret z
+ld (drv_cur),a
+ret
+
+drv_curhome:
+xor a
+ld (drv_cur),a
+ret
+
+drv_curend:
+ld a,3
+ld (drv_cur),a
+ret
+
+drv_digit:
+;entered with lowercase ASCII for drive still in A
+sub 'a'
+ld (drv_cur),a
+ret
+
+
+
+;remove old cursor and show new one.
+drv_docursor:
+ld a,(drv_old)
+call drv_showa
+ld a,25		;inverse
+call putchar
+ld a,(drv_cur)
+call drv_showa
+ld a,24		;normal
+call putchar
+ret
+
+;draw cursor text (space, d:, space) at right pos.
+drv_showa:
+ld d,0
+ld e,a
+push de
+ld hl,drvpostbl
+add hl,de
+ld a,(hl)
+add a,32+dzeropos-1
+ld (dscxpos),a
+call ilprint
+defb 16,32+5
+dscxpos: defb 0		;modified
+defb 32
+defb 0
+pop de
+ld hl,drvfree
+add hl,de
+;now print d:, then another space
+;(unless drive isn't valid, in which case it's `--' again.)
+ld a,(hl)
+inc a
+jr z,dscskip
+ld a,e
+add a,'a'
+call putchar
+call ilprint
+defb ':',32,0
+ret
+
+dscskip:
+call ilprint
+defb '-- ',0
+ret
+
+
+
+
+
+
+;minimum stuff needed from graph_zc.z for drawdbox (slightly hacked)
+;(basically all the code needed for `rect' to work)
+
+;x pos & 7 -> mask table for pos2addr routine
+masktbl:
+defb 080h,040h,020h,010h,008h,004h,002h,001h
+
+
+;convert pixel position (de=x, c=y) to hl=addr, c=mask w/pixel set at pos
+;af/b/de corrupt
+;this is primarily intended for internal use, but feel free to use it
+;directly.
+pos2addr:
+push de
+;get pixel mask byte first
+ld a,e
+and 7
+ld d,0
+ld e,a
+ld hl,masktbl
+add hl,de
+ld a,(hl)
+
+;y pos
+ld h,c
+ld l,d	;d is still 0
+rr h	;carry flag is 0 from the 'add hl,de'
+rr l
+rr h
+rr l
+
+;put mask (from a) into c
+ld c,a
+
+;x pos
+pop de
+ld a,e
+and 0f8h
+rr d	;get the only used bit in d
+rra
+rra
+rra
+or l
+ld l,a
+
+;effectively add 0f000h to hl
+ld a,0f0h
+or h
+ld h,a
+ret
+
+
+;set pixel at (de,c)
+;use 'fastpset' to avoid clipping
+;af/bc/de/hl corrupt
+pset:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+fastpset:
+call pos2addr
+ld a,(hl)
+or c
+ld (hl),a
+ret
+
+
+
+;hline - draw a horizontal line from (de,c) to (hl,c)
+;entry: as indicated above
+;exit:	nothing
+;af/bc/de/hl corrupt
+hline:
+;make sure de is the lesser of de,hl
+and a
+push hl
+sbc hl,de
+pop hl
+;while we're at it, it's quite easy if only one pixel long!
+jp z,pset
+jr nc,hlinelp
+;if hl<de, swap them
+ex de,hl
+hlinelp:
+;now draw from de to hl inclusive
+push bc
+push de
+push hl
+call pset
+pop hl
+pop de
+pop bc
+and a
+push hl
+sbc hl,de
+pop hl
+inc de
+jp nz,hlinelp
+ret
+
+
+;vline - draw a vertical line from (de,c) to (de,b)
+;entry: as indicated above
+;exit:	nothing
+;af/bc/de/hl corrupt
+vline:
+;make sure c is the lesser of c,b
+ld a,b
+cp c
+jr nc,vline1
+;if b<c, swap them
+;a still = b
+ld b,c
+ld c,a
+vline1:
+;now draw from c to b inclusive
+dec c
+vlinelp:
+inc c
+push bc
+push de
+call pset
+pop de
+pop bc
+ld a,c
+cp b
+jp nz,vlinelp
+ret
+
+
+;rect - draw (outline) rectangle from (de,c) to (hl,b)
+;entry: as above
+;exit:  nothing
+;af/bc/de/hl corrupt
+rect:
+ld (intrbc),bc
+ld (intrde),de
+ld (intrhl),hl
+
+;'left' line
+call vline
+
+;'right' line
+ld bc,(intrbc)
+ld de,(intrhl)
+call vline
+
+;'top' line
+ld bc,(intrbc)
+ld de,(intrde)
+ld hl,(intrhl)
+call hline
+
+;'bottom' line
+ld bc,(intrbc)
+ld de,(intrde)
+ld hl,(intrhl)
+ld c,b
+call hline
+ret
+
+intrbc: defw 0
+intrde: defw 0
+intrhl: defw 0

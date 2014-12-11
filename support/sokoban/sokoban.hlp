@@ -1,0 +1,39 @@
+
+                           S O K O B A N
+
+  The problem is to push packets to saving positions by moving around
+  and pushing only one packet at a time if possible.
+
+
+  Available Commands are:
+
+  h:  move/push left       H:  run/push left     ^H:  run left to object
+  l:  move/push right      L:  run/push right    ^L:  run right to object
+  j:  move/push down       J:  run/push down     ^J:  run down to object
+  k:  move/push up         K:  run/push up       ^K:  run up to object
+
+  u:  undo last move/push  U:  undo all          
+ 
+  c:  temporary save      ^U:  reset to temporary save
+ 
+ ^R: Refresh screen
+
+  q:  quit                 s:  save the game      ?:  this help screen
++= (DO NOT CHANGE OR DELETE THIS LINE)
+
+  Characters on screen are:
+
+     @@  player                          ++      player on saving position
+     ..  saving position for packet      $$      packets
+     **  saved packet                    ##      wall
+
+
+  As you could see you can make a temporary save. This is useful if you think
+  that all the moves/pushes you have made are correct, but you don't know how
+  to go on. In this case you can temporary save (using the c command). If you
+  then get stucked you need not undo all (using U), you can reset to you
+  temporary save.
+
+  If you have restored a saved game, a temporary save is automatically made
+  at the start.
+== (DO NOT CHANGE THIS LINE)

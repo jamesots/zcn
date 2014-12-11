@@ -1,0 +1,9 @@
+NAME
+	format - format a logical drive
+
+SYNOPSIS
+	format d:
+
+DESCRIPTION
+	Formats the specified drive (if it exists on the card),
+	deleting any data which may previously have been on it.

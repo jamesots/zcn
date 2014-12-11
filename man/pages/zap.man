@@ -1,0 +1,42 @@
+NAME
+	zap - graphical program-launcher
+
+SYNOPSIS
+	zap
+
+DESCRIPTION
+	Zap is a simple graphical front-end for ZCN. It shows a list
+	of programs you can run, and for each program, a list of files
+	you can run it on.
+
+	Zap requires a file a0:zapdesc.bin in order to work. You can
+	generate this with makezapd, or use the pre-generated one in
+	the ZCN distribution's `bin' dir.
+
+KEYS
+	Esc		Exit zap
+	Enter		Run program on any selected file
+	Cursors	or
+	  ^E/^S/^D/^X	Move icon or file cursor
+	Sym-Cursor left
+	  or ^R		Page left
+	Sym-Cursor right
+	  or ^C		Page right
+	< or ,		Start of icon list
+	> or .		End of icon list
+	<letter>	Move to program starting with <letter>
+	Sym-Cursor up	Page up
+	Sym-Cursor down	Page down
+	Sym-< or Sym-,	Start of file list
+	Sym-> or Sym-.	End of file list
+	Sym-<letter>	Move to file starting with <letter>
+
+FILES
+	a0:zapdesc.bin - contains program descriptions and icons.
+
+BUGS
+	A few, but nothing too serious (I hope :-)). See zcn.txt for
+	details.
+
+SEE ALSO
+	makezapd

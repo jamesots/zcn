@@ -1,0 +1,1904 @@
+;zdbe - ZCN Disk Block Editor/viewer
+
+;modes: navigate/edit hex/ascii dump, and navigate blocks
+;r/o option, simply disallows any writing of changes (on by default)
+;prompts before loading another block or quitting if current block
+; is 'dirty'
+
+;keys:
+;esc - quit
+;up/down/left/right (^E/^X/^S/^D) - move cursor
+;tab - switch between hex dump and block map
+;space/del - page forward/back through whole drive 128 bytes at a time
+;^C/^V - page forward in hex dump
+;^R/^U - page back in hex dump
+;</, - move to top
+;>/. - move to bottom
+;^L - login new disk (a-d)
+
+;E - edit hex (like bpe)
+;e - edit ascii (like bpe)
+
+org 0100h
+
+jp start
+
+;equs
+zfversion	equ 128		;ZCN version number
+zftight		equ 129		;set whether interrupts 'tight' or not
+zfrawmap	equ 130		;return address of kybd rawmap
+zfstrobe	equ 131		;return address of 1/100 strobe
+zfgetcon	equ 132		;return console in/out assignments
+zfgtime		equ 133		;get time (see definition for details)
+zfstime		equ 134		;set time (see definition for details)
+zfchkdrv	equ 135		;check drive is valid etc.
+zfrdrcd		equ 136		;read 128 bytes from data block
+zfwrrcd		equ 137		;write 128 bytes to data block
+zfrdsys		equ 138		;read 128 bytes from boot/system block
+zfwrsys		equ 139		;write 128 bytes to boot/system block
+zfblkmap	equ 140		;get bytemap of blocks used/unused
+
+;normal funcs
+bretdsk		equ 25		;return current disk
+
+bdos		equ 5
+
+
+;buffer positions
+
+;copy of the first 128 bytes of the boot block
+bootblk		equ 08000h
+
+;interesting things in the above
+cf1jump1	equ bootblk	;18h if bootable, otherwise C9h
+cf1size		equ bootblk+6	;word containing total size of card in K
+cf1sysb		equ bootblk+8	;number of system blocks
+cf1dirb		equ bootblk+9	;number of directory blocks
+
+;copy of the blocks used/unused, as altered to *include* the
+;boot block and any system blocks
+;don't put anything after this before 8300h
+bytemap		equ 08100h
+
+;copy (possibly altered) of block currently being viewed/edited
+blockdat	equ 08400h
+
+;vars
+;table to read in first 128 bytes of boot block
+btrdtbl:
+curdrive:	defb 0		;current drive, 0=A:
+		defw 0		;offset
+		defw bootblk	;addr to read bytes to
+
+ttlblks:	defw 0		;total num. blocks on drive
+curblk:		defb 0		;current block being viewed/edited
+curtop:		defw 0		;offset of block record onscreen
+curaddr:	defw 0		;offset in block of cursor
+dirty:		defb 0		;1 if in-memory block has been altered
+mode:		defb 1		;0=hexdump, 1=blockmap
+readonly:	defb 1		;1 if read-only, 0 if read-write
+edmode:		defb 0		;0=not editing, 1=hex edit, 2=ascii edit
+quit:		defb 0		;want to quit if 1
+serial:		defb 0		;1 if serial console
+
+;msgs
+mneedzcn:	defb 'This program requires ZCN.$'
+mbmap:		defb '[ Drive block map ]$'
+endmbmap:
+mhexd:		defb '[ Current block hex dump ]$'
+endmhexd:
+mhexedit:	defb '[ EDITING block hex dump ]$'
+mdrive:		defb 'Drive:$'
+mblocks:	defb 'Block:$'
+moffset:	defb 'Offset:$'
+mspaces:	defb '    $'
+mdashes:	defb '----$'
+mwrite1:	defb 'Block changed;$'
+mwrite2:	defb 'Write? (y/n) $'
+mwrclr:		defb '              $'
+mroyes:		defb ' (read-only)  $'
+mrono:		defb '>>READ/WRITE<<$'
+
+;this help goes from 0-71 (max) on the bottom line
+mhlp1:
+defb 'Esc=quit ^E^S^D^X/hjkl=move ^R/^C=page Spc/Del=allpg E=hex/e=ASCII-edit$'
+
+;this help goes from 73-118 (max) on the bottom line
+mhlp2:
+defb '<=top >=end ^L=drv <-tab-> ^-BtSysDir#data   $'
+
+;variant help for hex edit mode
+med1hlp1:
+defb 'Esc=quit ^E^S^D^X/hjkl=move 0-9,a-f=enter hex Del=backspace ^Q=end edit$'
+med1hlp2:
+defb '> After edit, "w" explicitly writes changes <$'
+
+;variant help for ascii edit mode
+med2hlp1:
+defb 'Esc=quit ^E^S^D^X=move ASCIIchars=enter ASCII Del=backspace ^Q=end edit$'
+med2hlp2	equ med1hlp2	;same
+
+mvtclr:		defb 27,'[H',27,'[J$'		;vt100 cls
+
+mcrlf:		defb 13,10,'$'
+
+;disp msg at de and exit
+die:
+ld c,9
+call bdos
+jp 0
+
+;put char in a, saving all regs
+putchar:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call bdos
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+
+
+start:
+ld de,mneedzcn
+ld a,(066h)
+cp 0f7h
+jr nz,die
+
+;check if serial console or not
+ld c,zfgetcon
+call bdos
+ld a,l
+and 1		;treat as normal if also outputting to parallel
+ld (serial),a
+
+;get current drive
+ld c,bretdsk
+call bdos
+ld (curdrive),a
+
+;init drive and block
+call newdrive
+call newblock
+
+xor a
+ld (quit),a
+ld (edmode),a
+ld (dirty),a
+inc a
+ld (readonly),a
+
+mainloop:
+call getkey	;returns keypress in A
+call dokey	;do action for key
+call cursblk	;make sure real cursor remains in blockmap
+ld a,(quit)
+and a
+jr z,mainloop
+
+ld b,80
+ld c,9
+call movexy
+
+;finish
+rst 0
+
+
+;caller must call writeyn first if needed
+initdrv:
+;check drive is valid
+ld c,zfchkdrv
+ld a,(curdrive)
+inc a
+ld e,a
+call bdos
+;quitting if drive fails is bogus, but can only happen on startup,
+;not for a ^L (which checks separately) - so I guess it's tolerable.
+jp nc,0
+
+;read in first 128 bytes of boot block
+ld de,btrdtbl
+ld c,zfrdsys
+call bdos
+
+;get data block used/unused bytemap
+ld a,(curdrive)
+ld d,a
+ld c,zfblkmap
+call bdos
+
+;construct our bytemap, which includes the boot block and system
+; blocks (obviously, these are marked as used)
+;we also use 1=used and 0=unused, the opposite of the sys. bytemap
+; since we're interested in used blocks rather than unused ones
+;addr of zcn's bytemap still in hl
+
+push hl
+
+;zero the area out
+ld hl,bytemap
+ld de,bytemap+1
+ld bc,255
+ld (hl),0
+ldir
+
+;copy the sys. bytemap into the right place
+ld a,(cf1sysb)
+inc a		;add on boot block
+ld hl,bytemap
+ld d,0
+ld e,a
+add hl,de
+ex de,hl
+pop hl
+ld bc,255
+ldir
+
+;now invert the bytemap, which magically marks the boot and sys blocks
+; as used :-)
+ld hl,bytemap
+ld b,0
+marklp:
+ld a,(hl)
+xor 1
+ld (hl),a
+inc hl
+djnz marklp
+
+;zero position
+ld hl,0
+ld (curtop),hl
+ld (curaddr),hl
+xor a
+ld (curblk),a
+ret
+
+
+;draw the map
+dispbmap:
+ld b,94
+ld c,0
+call movexy
+ld de,mbmap
+ld c,9
+call bdos
+
+ld hl,bytemap
+ld b,8
+ld c,0		;block num
+dbmlp:
+push bc
+;move to appropriate posn on screen
+ld d,c
+ld a,9
+sub b
+ld c,a
+ld b,88
+call movexy	;saves regs
+ld c,d
+call dbm32
+ld d,c
+pop bc
+ld c,d
+djnz dbmlp
+ret
+
+dbm32:
+ld b,32
+dbm3lp:
+ld e,'.'
+bit 0,(hl)
+jr z,dbm3skip
+
+;could be either boot blk (B), sys (S), dir (D) or data (#)
+ld e,'B'
+ld a,c
+and a
+jr z,dbm3skip
+
+ld e,'S'
+ld a,(cf1sysb)
+inc a
+ld d,a
+ld a,c
+cp d
+jr c,dbm3skip
+
+ld e,'D'
+ld a,(cf1dirb)
+add a,d
+ld d,a
+ld a,c
+cp d
+jr c,dbm3skip
+
+ld e,'#'
+
+dbm3skip:
+push hl
+push bc
+ld c,2
+call bdos
+pop bc
+pop hl
+inc hl
+inc c
+djnz dbm3lp
+ret
+
+
+;clear screen
+clrscrn:
+ld a,(serial)
+and a
+jr nz,csvt
+ld a,1
+call putchar
+ret
+csvt:
+ld de,mvtclr
+ld c,9
+jp bdos
+
+
+;move cursor
+;entry: b=x pos, c=y pos
+;saves bc/de/hl
+movexy:
+;see if we're on serial console
+ld a,(serial)
+and a
+jr nz,mxyvt100
+
+ld a,'P'-040h
+call putchar
+ld a,32
+add a,c
+call putchar
+ld a,32
+add a,b
+call putchar
+ret
+
+mxyvt100:
+;serial console, assume vt100-compatible with 80x24 screen
+;if col >= 72, col-=72-10 and row+=12.
+push bc
+push de
+push hl
+ld a,b
+cp 72
+jr c,mxyv1
+
+sub 72-10
+ld b,a
+ld a,c
+add a,12
+ld c,a
+
+mxyv1:
+;vt100 cursor move goes like this:
+; ESC [ row+1 ; col+1 H
+;the numbers must be in ASCII.
+ld a,27
+call putchar
+ld a,'['
+call putchar
+
+push bc
+;add one to c, encode and print
+inc c
+ld e,c
+ld d,0
+call dispdec
+
+ld a,';'
+call putchar
+
+pop bc
+;same for b
+inc b
+ld e,b
+ld d,0
+call dispdec
+
+ld a,'H'
+call putchar
+pop hl
+pop de
+pop bc
+ret
+
+
+
+;read absolute block
+;this reads an entire 1k block from a drive, with the block
+;number being a strict offset from the beginning of the drive -
+;i.e. block 0 is the boot block.
+;entry: b=absolute block number (drive is always (curdrive))
+;exit:  nothing
+rdabsblk:
+;if the block number is >=16, use the data block read.
+;XXX might want to change this to >=(sysblks+1) eventually
+; (though there's not much point, really)
+ld a,b
+cp 16
+jr nc,rabdata
+
+;use system block read
+
+;work out offset in bytes, i.e. b*1024
+ld c,0
+rlc b	;(effectively) *512
+rlc b	;*1024
+ld (abtbl+1),bc
+
+;drive
+ld a,(curdrive)
+ld (abtbl),a
+
+;load addr
+ld hl,blockdat
+ld (abtbl+3),hl
+
+ld b,8			;no. of records
+rabslp:
+push bc
+ld de,abtbl
+ld c,zfrdsys
+call bdos
+pop bc
+ld de,128
+ld hl,(abtbl+1)
+add hl,de		;incr offset
+ld (abtbl+1),hl
+ld hl,(abtbl+3)
+add hl,de		;incr load addr
+ld (abtbl+3),hl
+djnz rabslp
+ret
+
+rabdata:
+;b=abs block number
+;work out what the data block number is
+ld a,(cf1sysb)
+inc a
+ld c,a
+ld a,b
+sub c
+ld (abtbl),a
+
+;drive
+ld a,(curdrive)
+ld (abtbl+2),a
+
+;load addr
+ld hl,blockdat
+ld (abtbl+3),hl
+
+;now read it in
+ld b,8		;no. of records
+ld c,0		;record number
+rabdlp:
+push bc
+ld a,c
+ld (abtbl+1),a
+ld de,abtbl
+ld c,zfrdrcd
+call bdos
+pop bc
+ld hl,(abtbl+3)
+ld de,128
+add hl,de		;incr load addr
+ld (abtbl+3),hl
+inc c
+djnz rabdlp
+ret
+
+abtbl:
+defb 0,0,0
+defw 0
+
+
+;write absolute block
+;based on rdabsblk, does exactly the same but writes.
+;entry: b=absolute block number (drive is always (curdrive))
+;exit:  nothing
+wrabsblk:
+;if the block number is >=16, use the data block write.
+;XXX might want to change this to >=(sysblks+1) eventually
+; (though there's not much point, really)
+ld a,b
+cp 16
+jr nc,wabdata
+
+;use system block write
+
+;work out offset in bytes, i.e. b*1024
+ld c,0
+rlc b	;(effectively) *512
+rlc b	;*1024
+ld (abtbl+1),bc
+
+;drive
+ld a,(curdrive)
+ld (abtbl),a
+
+;save addr
+ld hl,blockdat
+ld (abtbl+3),hl
+
+ld b,8			;no. of records
+wabslp:
+push bc
+ld de,abtbl
+ld c,zfwrsys
+call bdos
+pop bc
+ld de,128
+ld hl,(abtbl+1)
+add hl,de		;incr offset
+ld (abtbl+1),hl
+ld hl,(abtbl+3)
+add hl,de		;incr load addr
+ld (abtbl+3),hl
+djnz wabslp
+ret
+
+wabdata:
+;b=abs block number
+;work out what the data block number is
+ld a,(cf1sysb)
+inc a
+ld c,a
+ld a,b
+sub c
+ld (abtbl),a
+
+;drive
+ld a,(curdrive)
+ld (abtbl+2),a
+
+;load addr
+ld hl,blockdat
+ld (abtbl+3),hl
+
+;now write it
+ld b,8		;no. of records
+ld c,0		;record number
+wabdlp:
+push bc
+ld a,c
+ld (abtbl+1),a
+ld de,abtbl
+ld c,zfwrrcd
+call bdos
+pop bc
+ld hl,(abtbl+3)
+ld de,128
+add hl,de		;incr load addr
+ld (abtbl+3),hl
+inc c
+djnz wabdlp
+ret
+
+
+
+;print byte in a as hex
+;saves hl/de/bc
+hexbyte:
+push hl
+push de
+push bc
+push af
+and 0f0h
+rrca
+rrca
+rrca
+rrca
+call hexit
+call putchar
+pop af
+and 15
+call hexit
+call putchar
+pop bc
+pop de
+pop hl
+ret
+
+hexit:
+add a,48
+cp 58
+ret c
+add a,7
+ret
+
+
+;display number in hl as hex
+disphex:
+ld a,h
+call hexbyte
+ld a,l
+call hexbyte
+ret
+
+
+;hexdump 128 bytes from hl.
+hexdump:
+ld bc,1
+call movexy
+
+ld c,8		;num lines.
+rpy:
+push hl
+ld de,blockdat
+and a
+sbc hl,de
+call disphex
+pop hl
+ld a,':'
+call putchar
+ld a,32
+call putchar
+
+ld b,16		;num cols.
+rpx1:
+ld a,(hl)
+call hexbyte
+ld a,32
+call putchar
+inc hl
+djnz rpx1
+
+ld a,32
+call putchar
+
+;now as ASCII
+ld de,16
+and a
+sbc hl,de
+ld b,16
+rpx2:
+ld a,(hl)
+and 07fh
+call isprint
+jr c,rpskip1
+ld a,'.'
+rpskip1:
+call putchar
+inc hl
+djnz rpx2
+
+push bc
+push hl
+ld de,mcrlf
+ld c,9
+call bdos
+pop hl
+pop bc
+
+dec c
+jr nz,rpy
+
+;wahay!
+ret
+
+
+;returns carry set if 32<=a<=126
+isprint:
+cp 32
+ccf
+ret nc
+cp 127
+ret
+
+
+;put cursor on current block in block map
+;puts it in ascii part of hexdump if (mode)=0
+cursblk:
+ld a,(mode)
+and a
+jr z,hdblk
+
+ld a,(curblk)
+ld c,a
+and 31
+add a,88
+ld b,a
+ld a,c
+rlca
+rlca
+rlca
+and 7
+inc a
+ld c,a
+call movexy
+ret
+
+hdblk:
+ld hl,(curaddr)
+;get x pos
+ld a,l
+and 15
+add a,55
+ld b,a		;b=x pos
+;get y pos
+ld a,l
+and 070h
+rrca
+rrca
+rrca
+rrca
+inc a
+ld c,a		;c=y pos
+call movexy
+ret
+
+
+
+;draw various headers that we don't bother redrawing each time
+headers:
+;the hexdump header line
+ld b,24
+ld c,0
+call movexy
+ld de,mhexd
+ld a,(edmode)
+and a
+jr z,hdrned
+ld de,mhexedit
+hdrned:
+ld c,9
+call bdos
+
+;the `drive', `blocks' and `offset' text
+ld b,73
+ld c,2
+call movexy
+ld de,mdrive
+ld c,9
+call bdos
+ld b,73
+ld c,3
+call movexy
+ld de,mblocks
+ld c,9
+call bdos
+ld b,73
+ld c,4
+call movexy
+ld de,moffset
+ld c,9
+call bdos
+
+
+ld a,(edmode)
+and a
+jr nz,edmode1
+
+;the normal (i.e. non-edit-mode) help texts
+ld de,mhlp1
+ld hl,mhlp2
+jr edmodesk
+
+edmode1:
+cp 1
+jr nz,edmode2
+
+;help for hex edit mode
+ld de,med1hlp1
+ld hl,med1hlp2
+jr edmodesk
+
+edmode2:
+;help for ascii edit mode
+ld de,med2hlp1
+ld hl,med2hlp2
+
+edmodesk:
+push hl
+ld b,0
+ld c,9
+call movexy	;saves de
+ld c,9
+call bdos
+ld b,73
+ld c,9
+call movexy
+pop de
+ld c,9
+call bdos
+
+
+;alternate entry point, to redraw mode only
+drawmode:
+
+;finally, the mode, read-only or read/write
+ld b,73
+ld c,0
+call movexy
+ld de,mroyes
+ld a,(readonly)
+and a
+jr nz,hdrisro
+ld de,mrono
+hdrisro:
+ld c,9
+call bdos
+ret
+
+
+;redraw `blocks' and `offset' numbers, as well as the drive name
+updnums:
+ld b,73+8
+ld c,2
+call movexy
+ld a,(curdrive)
+add a,'A'
+call putchar
+ld a,':'
+call putchar
+
+ld b,73+8
+ld c,3
+call movexy
+push bc
+ld de,mspaces	;undraw old number
+ld c,9
+call bdos
+pop bc
+call movexy
+ld a,(curblk)
+ld e,a
+ld d,0
+call dispdec
+
+ld b,73+8
+ld c,4
+call movexy
+push bc
+ld de,mspaces	;undraw old number
+ld c,9
+call bdos
+pop bc
+call movexy
+ld de,(curaddr)
+call dispdec
+ret
+
+
+
+numtmp: defb '0000000000000000$'	;16 zeroes and '$'
+
+
+;the big hairy nasty one
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+push ix
+ld ix,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+add ix,ix
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+sbc hl,de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+;this is like OR IX,1 - there is a *really* hairy way to do this which
+;goes like push ix/dec sp/pop af/or 1/push af/inc sp/pop ix, but it's
+;4 clock cycles slower. Pity. :-)
+
+push ix
+pop hl
+ld a,1
+or l
+ld l,a
+push hl
+pop ix
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+push ix
+pop hl
+pop ix
+;exit: hl=result, de=remainder
+ret
+
+
+;numtmp is in main.z
+
+;display number in de in decimal
+dispdec:
+ld b,10
+;FALLS THROUGH
+
+;display number in de, in given base (unsigned)
+;entry: de=number to display, b=base (from 2 to 36)
+;exit: af/bc/de/hl corrupt
+dispnum:
+ld hl,numtmp+16
+ld a,'$'
+ld (hl),a
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ld c,9
+jp bdos
+
+
+
+;shows which mode you're in (hexdump or blockmap)
+;does this by putting '----' either side of the header
+showmode:
+ld ix,mode
+
+;hexdump
+ld b,20
+ld c,0
+call movexy
+ld de,mspaces
+bit 0,(ix)
+jr nz,sm1
+ld de,mdashes
+sm1:
+ld c,9
+call bdos
+ld b,20+endmhexd-mhexd+3
+ld c,0
+call movexy
+ld de,mspaces
+bit 0,(ix)
+jr nz,sm2
+ld de,mdashes
+sm2:
+ld c,9
+call bdos
+
+;blockmap
+ld b,90
+ld c,0
+call movexy
+ld de,mspaces
+bit 0,(ix)
+jr z,sm3
+ld de,mdashes
+sm3:
+ld c,9
+call bdos
+ld b,90+endmbmap-mbmap+3
+ld c,0
+call movexy
+ld de,mspaces
+bit 0,(ix)
+jr z,sm4
+ld de,mdashes
+sm4:
+ld c,9
+call bdos
+ret
+
+
+
+;call this when a new drive is chosen
+newdrive:
+call clrscrn
+call initdrv	;init for (curdrive)
+call dispbmap	;display bytemap
+call headers	;draw various drawn-once-only headers
+jp showmode	;show current panel
+
+
+;call this when a new block is to be loaded
+newblock:
+ld a,(curblk)
+ld b,a
+call rdabsblk	;load block
+call updnums	;show block number and offset within block
+
+ld hl,blockdat
+ld de,(curtop)
+add hl,de
+call hexdump	;do hex dump of record in block
+call hdcdrw	;draw hex dump cursor
+
+call cursblk	;plonk cursor on the appropriate char in the block map
+
+xor a
+ld (dirty),a
+ret
+
+
+;get key into A, without echo
+getkey:
+ld e,0ffh
+ld c,6		;bdconio
+call bdos
+and a
+jr z,getkey
+ret
+
+
+oldaddr: defw 0
+oldtop: defw 0
+oldblk: defb 0
+
+
+;act on key in A
+dokey:
+ld hl,(curaddr)
+ld (oldaddr),hl
+ld hl,(curtop)
+ld (oldtop),hl
+
+ld b,a
+ld a,(mode)
+and a
+ld a,b
+jp nz,dokeyblk
+
+;keys in hexdump mode
+ld hl,hexcheck
+push hl
+
+;check for edit mode
+ld b,a
+ld a,(edmode)
+and a
+ld a,b
+call nz,editstuff	;check edit keys first
+
+cp 27		;esc
+jp z,dok_esc
+cp 'g'		;g
+jp z,dokhg
+cp 'b'		;b
+jp z,dokhb
+cp 'd'		;d
+jp z,dok_d
+cp 'E'-040h	;^E (and cursor up)
+jp z,dokhctle
+cp 'S'-040h	;^S (and cursor left)
+jp z,dokhctls
+cp 'D'-040h	;^D (and cursor right)
+jp z,dokhctld
+cp 'X'-040h	;^X (and cursor down)
+jp z,dokhctlx
+cp 'k'		;k
+jp z,dokhctle
+cp 'h'		;h
+jp z,dokhctls
+cp 'l'		;l
+jp z,dokhctld
+cp 'j'		;j
+jp z,dokhctlx
+cp 9		;tab
+jp z,dok_tab
+cp 32		;space
+jp z,dok_spc
+cp 127		;del
+jp z,dok_del
+cp 'C'-040h	;^C
+jp z,dokhctlc
+cp 'V'-040h	;^V
+jp z,dokhctlc
+cp 'R'-040h	;^R
+jp z,dokhctlr
+cp 'U'-040h	;^U
+jp z,dokhctlr
+cp '<'		;<
+jp z,dokhlt
+cp ','		;,
+jp z,dokhlt
+cp '>'		;>
+jp z,dokhgt
+cp '.'		;.
+jp z,dokhgt
+cp 'M'		;M
+jp z,dok_mode
+cp 'L'-040h	;^L
+jp z,dok_ndrv
+cp 'w'		;w
+jp z,writeyn
+
+;now checks for entering edit mode (e/E). These are only allowed
+;if (readonly) is 0.
+;(no need to check for already being in an edit mode - the e/E keys
+;would have been treated as ascii/hex before reaching this)
+ld b,a
+ld a,(readonly)
+and a
+ld a,b
+jr nz,roskip
+
+cp 'E'		;E
+jp z,dok_edhex
+cp 'e'		;e
+jp z,dok_edasc
+
+roskip:
+;none of the above - ignore it
+pop hl
+ret
+
+
+dok_edhex:
+ld a,1
+exmdchng:
+ld (edmode),a
+jp headers
+
+dok_edasc:
+ld a,2
+jr exmdchng
+
+dok_edex:
+xor a
+jr exmdchng
+
+
+
+;keys specific to edit mode
+editstuff:
+;have to be careful to only ret if we want to check against normal
+;keys, so keep ret addr in iy.
+pop iy
+
+;three common to both.
+;^Q to exit edit mode:
+cp 'Q'-040h	;^Q
+jp z,dok_edex
+;del moves left:
+cp 127
+jp z,dokhctls
+;and tab and ^L are absorbed to avoid problems.
+cp 9		;tab
+ret z
+cp 'L'-040h	;^L
+ret z
+
+;for the others, we need to check which edit mode we're in.
+ld b,a
+ld a,(edmode)
+cp 1
+ld a,b
+jr z,edithex
+
+;keys in ascii editing mode
+;pretty simple; keys 32-126 self-insert, and 127 acts like cursor left.
+push iy		;ret addr, so we check for other keys
+cp 128
+ret nc		;ret for >=128
+cp 32
+ret c		;ret for <32
+pop iy
+
+editwrt:
+;it's ascii, then. insert at blockdat+(curaddr), print as ascii/hex,
+;and advance cursor etc.
+ld hl,blockdat
+ld de,(curaddr)
+add hl,de
+ld (hl),a
+
+;cursor is on ascii char right now, so do that:
+;(we allow for non-ascii cases here as the hex edit rets via editwrt)
+push af
+and 07fh
+call isprint
+jr c,easkip1
+ld a,'.'
+easkip1:
+call putchar
+;now do hex:
+ex de,hl	;hl=(curaddr)
+call hdcgpos	;get (b,c) pos of hex
+inc b
+call movexy
+pop af
+call hexbyte
+
+ld a,1
+ld (dirty),a
+
+;move position on one
+call dokhctld
+
+;return via hexcheck which will update cursor location etc.
+ret
+
+
+edithex:
+;keys in hex editing mode
+;obviously, we only look for hexits in this mode.
+;well, ok, absorb any `w' first, as you might leave it in edit mode
+;by accident otherwise.
+;also `M', since we don't check for readonly when in edit mode
+;(the check was made *on entering* edit mode!).
+;and space, `g', `b', and `d', because it'd be confusing to move to
+;another block in mid-edit.
+cp 'w'
+ret z
+cp 'M'
+ret z
+cp ' '
+ret z
+cp 'g'
+ret z
+cp 'b'
+ret z
+cp 'd'
+ret z
+
+push iy		;push old ret addr so ret will check other keys
+call isxdigit
+ret nc
+pop iy
+
+;ok, it's hex. display that followed by a space at hex cursor,
+;leaving cursor on the space.
+call toupper
+push af
+ld hl,(curaddr)
+call hdcgpos	;get (b,c) pos of hex
+inc b
+call movexy
+pop af
+call putchar
+push af
+ld a,32
+call putchar
+ld a,8
+call putchar
+
+;now we wait for a second hexit. nothing else is accepted, not even esc.
+hexitlp:
+call getkey
+call isxdigit
+jr nc,hexitlp
+
+call toupper
+call hexit2bin
+ld b,a
+pop af		;first hexit
+call hexit2bin
+rlca
+rlca
+rlca
+rlca
+or b
+;ok, got the byte
+push af
+
+;put cursor in right place for ascii
+call cursblk
+
+;now do the stuff the ascii edit does when a char is entered.
+pop af
+jp editwrt
+
+
+;convert ascii hexit to 0..15 in A.
+;on entry A must be an ascii hexit.
+hexit2bin:
+sub '0'
+cp 'A'-'0'
+ret c
+sub 7
+ret
+
+
+;various bits from zcnlib's ctype.z
+toupper:
+call islower
+ret nc
+xor 020h
+ret
+
+isxdigit:
+call isdigit
+ret c
+call isxdlowr
+ret c
+cp 'A'
+ccf
+ret nc
+cp 'G'
+ret
+isxdlowr:
+cp 'a'
+ccf
+ret nc
+cp 'g'
+ret
+
+islower:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+
+isdigit:
+cp '0'
+ccf
+ret nc
+cp ':'
+ret
+
+
+;keys in blockmap mode
+dokeyblk:
+push af
+ld a,(curblk)
+ld (oldblk),a
+pop af
+ld hl,blkcheck
+push hl
+ld hl,curblk	;important, do not remove
+
+cp 27		;esc
+jp z,dok_esc
+cp 9		;tab
+jp z,dok_tab
+cp 32		;space
+jp z,dok_spc
+cp 127		;del
+jp z,dok_del
+cp 'd'		;d
+jp z,dok_d
+cp 'E'-040h	;^E (and cursor up)
+jp z,dokbctle
+cp 'S'-040h	;^S (and cursor left)
+jp z,dokbctls
+cp 'D'-040h	;^D (and cursor right)
+jp z,dokbctld
+cp 'X'-040h	;^X (and cursor down)
+jp z,dokbctlx
+cp 'k'		;k
+jp z,dokbctle
+cp 'h'		;h
+jp z,dokbctls
+cp 'l'		;l
+jp z,dokbctld
+cp 'j'		;j
+jp z,dokbctlx
+cp '<'		;<
+jp z,dokblt
+cp ','		;,
+jp z,dokblt
+cp '>'		;>
+jp z,dokbgt
+cp '.'		;.
+jp z,dokbgt
+cp 'M'		;M
+jp z,dok_mode
+cp 'L'-040h	;^L
+jp z,dok_ndrv
+cp 'w'		;w
+jp z,writeyn
+
+;nothing
+ret
+
+
+dok_esc:	;quit
+call writeyn
+ld a,1
+ld (quit),a
+ret
+
+dok_tab:	;switch panels
+ld a,(mode)
+xor 1
+ld (mode),a
+call showmode
+ret
+
+dok_spc:	;global page down
+pop hl
+ld hl,(curaddr)
+ld de,128
+add hl,de
+bit 2,h
+jr nz,dkspc1
+ld (curaddr),hl
+jp hexcheck
+dkspc1:
+call writeyn
+ld a,(curblk)
+ld (oldblk),a
+inc a
+ld (curblk),a
+ld hl,0
+ld (curtop),hl
+ld (curaddr),hl
+jp newblock
+
+dok_del:	;global page up
+pop hl
+ld hl,(curaddr)
+ld a,l
+and 080h
+or h
+jr z,ddel1
+ld de,128
+and a
+sbc hl,de
+ld (curaddr),hl
+jp hexcheck
+ddel1:
+call writeyn
+ld a,(curblk)
+ld (oldblk),a
+dec a
+ld (curblk),a
+ld hl,896	;top of last 128 bytes of block
+ld (curtop),hl
+ld (curaddr),hl
+jp newblock
+
+
+;hexdump-specific stuff
+dokhctle:	;up
+ld hl,(curaddr)
+ld a,l
+and 0f0h
+or h
+ret z
+ld de,16
+and a
+sbc hl,de
+ld (curaddr),hl
+ret
+
+dokhctls:	;left
+ld hl,(curaddr)
+ld a,h
+or l
+ret z
+dec hl
+ld (curaddr),hl
+ret
+
+dokhctld:	;right
+ld hl,(curaddr)
+inc hl
+bit 2,h
+ret nz
+ld (curaddr),hl
+ret
+
+dokhctlx:	;down
+ld hl,(curaddr)
+ld de,16
+add hl,de
+bit 2,h
+ret nz
+ld (curaddr),hl
+ret
+
+dokhctlc:	;block page down
+ld hl,(curaddr)
+ld de,128
+add hl,de
+bit 2,h
+ret nz
+ld (curaddr),hl
+ret
+
+dokhctlr:	;block page up
+ld hl,(curaddr)
+ld a,l
+and 080h
+or h
+ret z
+ld de,128
+and a
+sbc hl,de
+ld (curaddr),hl
+ret
+
+dokhlt:		;top
+ld hl,0
+ld (curaddr),hl
+ret
+
+dokhgt:		;bot
+ld hl,1023
+ld (curaddr),hl
+ret
+
+dokhg:		;goto data block number at current byte
+pop hl		;don't return to hexcheck
+call writeyn
+ld a,(curblk)
+ld (oldblk),a
+ld hl,(curaddr)
+ld de,blockdat
+add hl,de
+ld a,(cf1sysb)
+inc a
+add a,(hl)
+ld (curblk),a
+jp blkcload	;make sure block is loaded etc.
+
+dokhb:		;go back to prev. block
+pop hl		;don't return to hexcheck
+call writeyn
+;swap (curblk) and (oldblk)
+ld a,(curblk)
+ld b,a
+ld a,(oldblk)
+ld (curblk),a
+ld a,b
+ld (oldblk),a
+jp blkcload	;load block
+
+dok_d:		;go to 1st dir block
+pop hl		;don't return to hexcheck
+call writeyn
+ld a,(curblk)
+ld (oldblk),a
+ld a,(cf1sysb)
+inc a
+ld (curblk),a
+jp blkcload	;load block
+
+
+dok_mode:
+ld a,(readonly)
+xor 1
+ld (readonly),a
+jp drawmode
+
+
+dok_ndrv:
+pop hl		;don't return to hexcheck or blkcheck
+call writeyn
+
+ld b,73+8
+ld c,2
+push bc
+call movexy
+ld a,' '
+call putchar
+call putchar
+pop bc
+call movexy
+ld a,'?'
+call putchar
+
+getdrvlp:
+call getkey
+cp 'a'
+jr c,getdrvlp
+cp 'e'
+jr nc,getdrvlp
+
+sub 'a'
+push af
+ld c,zfchkdrv
+inc a
+ld e,a
+call bdos
+jr c,drvok
+
+;just redraw drive name and ret
+pop af
+jp updnums
+
+drvok:
+pop af
+ld (curdrive),a
+call newdrive
+jp newblock
+
+
+
+;update hexdump as necessary
+hexcheck:
+xor a
+ld (retop),a
+
+;calc new top
+ld hl,(curaddr)
+ld a,l
+and 080h
+ld l,a
+ld (curtop),hl
+
+;see if current addr has changed
+ld hl,(curaddr)
+ld de,(oldaddr)
+and a
+sbc hl,de
+jr z,hch1
+
+;undraw old 'cursor' and draw new one
+ld hl,(oldaddr)
+call hdcundrw
+ld hl,(curaddr)
+call hdcdrw
+
+call updnums	;update offset onscreen
+;this is a bit messy...
+ld a,0c9h	;ret
+ld (retop),a
+
+hch1:
+;see if current top has changed
+ld hl,(curtop)
+ld de,(oldtop)
+and a
+sbc hl,de
+ret z
+
+;hexdump, draw cursor and update offset if so
+ld hl,blockdat
+ld de,(curtop)
+add hl,de
+call hexdump
+ld hl,(curaddr)
+call hdcdrw
+retop: nop	;changed to ret if already did updnums
+call updnums	;update offset onscreen
+ret
+
+
+;undraw hexdump cursor, given addr=hl
+hdcundrw:
+call hdcgpos
+call movexy
+ld a,32
+call putchar
+inc b
+inc b
+inc b
+call movexy
+ld a,32
+call putchar
+ret
+
+
+;draw hexdump cursor, given addr=hl
+hdcdrw:
+call hdcgpos
+call movexy
+ld a,'>'
+call putchar
+inc b
+inc b
+inc b
+call movexy
+ld a,'<'
+call putchar
+ret
+
+
+;entry hl=addr exit bc=xy pos
+hdcgpos:
+;get x pos
+ld a,l
+and 15
+;mult. by 3
+ld b,a
+add a,a
+add a,b
+;add 5
+add a,5
+ld b,a		;b=x pos
+
+;get y pos
+ld a,l
+and 070h
+rrca
+rrca
+rrca
+rrca
+inc a
+ld c,a		;c=y pos
+ret
+
+
+
+;blockmap-specific stuff
+;for all, hl points to curblk
+dokbctle:	;up
+ld a,(hl)
+cp 32
+ret c
+call writeyn
+sub 32
+ld (hl),a
+ret
+
+dokbctls:	;left
+ld a,(hl)
+and a
+ret z
+call writeyn
+dec a
+ld (hl),a
+ret
+
+dokbctld:	;right
+ld a,(hl)
+cp 255
+ret z
+call writeyn
+inc a
+ld (hl),a
+ret
+
+dokbctlx:	;down
+ld a,(hl)
+cp 256-32
+ret nc
+call writeyn
+add a,32
+ld (hl),a
+ret
+
+dokblt:		;top
+call writeyn
+xor a
+ld (hl),a
+ret
+
+dokbgt:		;bot
+call writeyn
+ld a,(cf1size)
+dec a		;a is now max block on drive in all cases
+ld (hl),a
+ret
+
+;load new block if required
+;must call writeyn before this; before curblk is changed, in fact.
+blkcheck:
+ld a,(curblk)
+ld b,a
+ld a,(oldblk)
+cp b
+ret z
+
+blkcload:
+;reset offset/top
+ld hl,0
+ld (curtop),hl
+ld (curaddr),hl
+jp newblock
+
+
+;prompt to write if current block is dirty - saves af/hl
+writeyn:
+push af
+push hl
+ld a,(dirty)
+and a
+jr z,writeend	;skip if unmodified
+
+;we *DON'T* test for readonly mode here. if you made changes, forgot
+;about them, and went back to readonly mode (and that's the only way
+;you could have a modified block in readonly mode), you wouldn't
+;necessarily want to just silently have the changes thrown away!
+
+;prompt to see if we should save it or not.
+ld b,72
+ld c,6
+call movexy
+ld de,mwrite1
+ld c,9
+call bdos
+ld b,72
+ld c,7
+call movexy
+ld de,mwrite2
+ld c,9
+call bdos
+
+wkeylp:
+call getkey
+cp 'n'
+jr z,writenot
+cp 'y'
+jr nz,wkeylp
+
+;ok, write it.
+ld a,(curblk)
+ld b,a
+call wrabsblk
+
+xor a
+ld (dirty),a
+
+writenot:
+;clear the prompt text, either way...
+ld b,72
+ld c,6
+call movexy
+ld de,mwrclr
+ld c,9
+call bdos
+ld b,72
+ld c,7
+call movexy
+ld de,mwrclr
+ld c,9
+call bdos
+
+writeend:
+pop hl
+pop af
+ret

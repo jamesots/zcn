@@ -1,0 +1,953 @@
+;makezapd - make an a0:zapdesc.bin file from *.zap in current drive/user
+
+org 0100h
+
+jp start
+
+
+include mz_args.z
+include ../zcnlib/ctype.z
+include ../zcnlib/stdio.z
+
+
+zapsfcb:
+defb 0,'????????ZAP'
+defs 33-12
+
+outfile: defb 'a:zapdesc.bin',0
+outhndl: defw 0
+
+listpos: defw 0
+flcount: defw 0
+
+filelist equ 01000h
+zapdesc  equ 08000h
+
+origuser: defb 0
+
+
+start:
+call getuser
+ld (origuser),a
+
+;get all the *.zap filenames into memory first.
+call getnames
+
+;sort them, otherwise the left-right order in zap is unpredictable!
+call sortlist
+
+xor a
+call setuser
+;open output file
+ld hl,outfile
+call fopenwb
+ld (outhndl),hl
+jr c,skip1
+call ilprint
+defb 'makezapd: error opening a0:zapdesc.bin',0
+ld a,(origuser)
+call setuser
+rst 0
+
+skip1:
+ld a,(origuser)
+call setuser
+
+;go through files, writing to output file for each in turn
+ld hl,filelist
+ld a,(flcount)
+ld b,a
+loop:
+push bc
+push hl
+ld a,'.'
+call putchar
+ex de,hl
+ld hl,zapdesc
+call zapload
+xor a
+call setuser
+ld hl,(outhndl)
+ld de,zapdesc
+ld bc,256
+call fwrite
+;make sure we wrote all 256
+ld hl,256
+and a
+sbc hl,bc
+jr z,skip2
+call ilprint
+defb 13,'makezapd: error writing to a0:zapdesc.bin - disk full?',0
+ld a,(origuser)
+call setuser
+rst 0
+
+skip2:
+ld a,(origuser)
+call setuser
+pop hl
+pop bc
+ld de,12
+add hl,de
+djnz loop
+
+call ilprint
+defb 13,'makezapd: a0:zapdesc.bin written ok.',0
+
+rst 0
+
+
+
+;get *.zap filenames
+getnames:
+ld hl,filelist
+ld (listpos),hl
+ld hl,0
+ld (flcount),hl
+
+ld de,zapsfcb
+call bsfirst
+cp 255
+jr nz,idirlp
+call ilprint
+defb 13,'makezapd: no .zap files found',0
+rst 0
+
+idirlp:
+inc a
+ret z		;all done
+
+;add filename, from fcb created at DMA, to list
+ld hl,080h
+ld de,(listpos)
+ld bc,12
+ldir
+ex de,hl
+ld (listpos),hl
+ld (listend),hl	;needed for sortlist
+
+ld hl,(flcount)
+inc hl
+ld (flcount),hl
+
+;look for more
+ld de,zapsfcb
+call bsnext
+jr idirlp
+
+
+;sort the list of files (exchange sort)
+tmpc:	defw 0
+listend: defw 0
+sortlist:
+ld hl,filelist
+ld (listpos),hl
+
+sortlp:
+ld hl,(listpos)
+ld (tmpc),hl
+ex de,hl
+
+sortlp2:
+ld hl,(tmpc)
+call nodecmp
+jr nc,sort1
+ld (tmpc),de
+
+sort1:
+;move de to next node.
+ld hl,12
+add hl,de
+
+;see if we're at end of list yet.
+push hl
+ld de,(listend)
+and a
+sbc hl,de
+pop de
+jr nz,sortlp2
+
+;ok, (tmpc) is the node to swap. won't matter if it's the same one.
+ld hl,(tmpc)
+ld de,(listpos)
+call nodeswap
+
+;next node.
+ld hl,(listpos)
+ld de,12
+add hl,de
+ld (listpos),hl
+
+ld de,(listend)
+and a
+sbc hl,de
+jr nz,sortlp
+
+;done.
+ret
+
+
+;compare two nodes in list
+;de=(addr of) 1st node, hl=2nd node
+;returns carry set if node at de < node at hl, else carry false
+;a corrupt
+nodecmp:
+push hl
+push de
+push bc
+
+ld b,12
+nslp:
+ld a,(de)
+cp (hl)
+jr nz,ncmpdone
+inc hl
+inc de
+djnz nslp
+
+and a	;completely equal, so not less than.
+
+ncmpdone:
+;restore regs
+pop bc
+pop de
+pop hl
+ret
+
+
+;swap nodes in hl and de
+;flags corrupt, other preserved
+swapbuf: defs 12
+nodeswap:
+push hl
+push de
+push bc
+
+push de
+push hl
+push de
+ld de,swapbuf
+ld bc,12
+ldir
+pop hl
+pop de
+ld bc,12
+ldir
+ld hl,swapbuf
+pop de
+ld bc,12
+ldir
+
+pop bc
+pop de
+pop hl
+ret
+
+
+
+
+
+;program entry details:
+;(an entry takes 256 bytes)
+;0	used		byte, 1 if entry used else 0
+;1	user		user area file is in
+;2	drive		drive file is on (0=a:)
+;3	progfile	prog. filename in FCB-like format (all caps, 8 then 3)
+;14	unused		(but set by zap to pos. in list - 0=leftmost, etc.)
+;15	pn_len		length of program name (as a convenience)
+;16	progname	displayed program name (15 chars max., asciiz)
+;32-127	up to 32 extensions to associate with it
+;	(each is 3 bytes long, uppercase, padded with spaces)
+;	(0th byte is zero if unused, and first unused extension
+;	ends the list)
+;	(also, 0th byte of first one can instead be `?' for du: menu,
+;	`*' for any file. both these obviously mean that there are no
+;	further extensions.)
+;128	32x24 (96-byte) bitmap for icon
+;224	non-zero if noret (don't return to zap after running)
+;225	non-zero if keywait (prompt for key before returning)
+;226	non-zero if needfile (program must be run on a file)
+;227	currently unused (29 bytes)
+
+prog_user	equ 1
+prog_drive	equ 2
+prog_fn		equ 3
+prog_nlen	equ 15
+prog_name	equ 16
+prog_specs	equ 32
+prog_bmp	equ 128
+prog_noret	equ 224
+prog_keywait	equ 225
+prog_needfile	equ 226
+
+
+;these are used by zapload
+mprogname:	defb 'progname',0
+mprogfile:	defb 'progfile',0
+mfiletype:	defb 'filetype',0
+mbmphex:	defb 'bmphex',0
+mbmpbin:	defb 'bmpbin',0
+mopt:		defb 'opt',0
+mnoret:		defb 'noret',0
+mkeywait:	defb 'keywait',0
+mneedfile:	defb 'needfile',0
+
+
+;entry: de=FCB with filename/drive of .zap file
+;	hl=address to load details (see above for format)
+;exit:  af/bc/de/hl/ix corrupt
+;
+;note that this does *not* fill in the drive/user fields for the
+;com/sub itself, since the program location could change before zap
+;is run.
+;
+zlfcb: defw 0
+zladdr: defw 0
+zlhndl: defw 0
+zlfsaddr: defw 0	;addr for next filetype
+zlfsleft: defb 0	;no. of filetypes left
+zlbmpaddr: defw 0	;addr for next bmp line
+zlbmpleft: defb 0	;no. of bmp lines left
+zlfstmp: defs 33	;tmp fcb used for filetype stuff
+
+zapload:
+ld (zladdr),hl
+ld (zlfcb),de
+
+;mark entry as used
+ld (hl),1
+
+;setup filetype stuff
+push hl
+ld de,prog_specs
+add hl,de
+ld (zlfsaddr),hl
+ld a,32
+ld (zlfsleft),a
+
+;setup bmp stuff
+pop hl		;(zladdr)
+ld de,prog_bmp
+add hl,de
+ld (zlbmpaddr),hl
+ld a,24
+ld (zlbmpleft),a
+
+ld hl,(zlfcb)
+xor a		;read text
+call fopenfcb
+jp nc,zlfail
+ld (zlhndl),hl
+
+;zero name/specs/bmp/opts
+ld hl,(zladdr)
+ld de,prog_name
+add hl,de
+ld d,h
+ld e,l
+inc de
+ld bc,256-16-1
+ld (hl),0
+ldir
+
+;read the file in, line by line
+zllp:
+ld hl,(zlhndl)
+ld de,081h
+ld bc,127
+call fgets
+ld hl,081h
+call strchop
+ld a,(081h)
+and a
+jp z,zldone
+
+;skip if first char is a `#'
+cp '#'
+jp z,zllp
+
+;abuse makeargv to split it :-)
+ld hl,081h
+call strlen
+ld a,c
+ld (080h),a
+call makeargv
+
+ld a,(argc)
+dec a
+jp z,zllp	;ignore blank lines
+
+;should be exactly two tokens, then
+;(this will need changing if I ever add a command with more (or less)
+;than one arg :-))
+cp 2
+jp nz,zlerror
+
+ld a,1
+call getargv
+ld de,mprogname
+push hl
+call strcmp
+pop hl
+jp nc,zlskip1
+
+;copy program name (the one displayed onscreen)
+ld a,2
+call getargv
+push hl
+ld de,15
+add hl,de
+ld (hl),0
+ld hl,(zladdr)
+;de is still 15
+inc e
+add hl,de
+pop de
+push hl
+call strcpy
+
+pop hl		;(zladdr)+16
+push hl
+call strlen
+pop hl
+dec hl
+ld (hl),c
+jp zllp
+
+
+zlskip1:
+ld de,mprogfile
+push hl
+call strcmp
+pop hl
+jr nc,zlskip2
+
+;copy program filename
+;doesn't fill in drive/user, because we don't check where it is
+;(or even if it exists) and so can't possibly know about those.
+ld a,2
+call getargv
+ld de,(zladdr)
+inc de
+inc de
+;two not three, to compensate for `drive' in fcb
+;(ok, so it *does* fill in drive, but with junk :-))
+call makefcb
+jp zllp
+
+
+zlskip2:
+ld de,mfiletype
+push hl
+call strcmp
+pop hl
+jr nc,zlskip3
+
+;get filetype
+;first, check we have room for another
+ld a,(zlfsleft)
+and a
+jr nz,zlskip2a
+
+call ilprint
+defb 13,'makezapd: too many filetypes in .zap',0
+rst 0
+
+zlskip2a:
+ld a,2
+call getargv
+ld de,zlfstmp
+call makefcb	;cheap way to capitalise and pad the chars :-)
+ld hl,zlfstmp+1
+ld de,(zlfsaddr)
+ld bc,3
+ldir
+ld (zlfsaddr),de
+ld hl,zlfsleft
+dec (hl)
+jp zllp
+
+
+zlskip3:
+ld de,mbmphex
+push hl
+call strcmp
+pop hl
+jp nc,zlskip4
+
+;get bitmap line in hex
+;first, check we have room for another
+ld a,(zlbmpleft)
+and a
+jr nz,zlskip3a
+
+toomanybmp:
+call ilprint
+defb 13,'makezapd: too many "bmp" lines in .zap',0
+rst 0
+
+zlskip3a:
+ld a,2
+call getargv
+;must be exactly 8 bytes long
+push hl
+call strlen
+ld a,c
+pop hl
+cp 8
+jr z,zlskip3b
+
+call ilprint
+defb 13,'makezapd: "bmphex" arg must be exactly 8 chars',0
+rst 0
+
+zlskip3b:
+ld de,(zlbmpaddr)
+ld b,4
+zlhexlp:
+ld a,(hl)
+call unhexit
+jp nc,zlbadhex
+rlca
+rlca
+rlca
+rlca
+push af
+inc hl
+ld a,(hl)
+call unhexit
+jp nc,zlbadhex
+ld c,a
+pop af
+or c
+ld (de),a
+inc hl
+inc de
+djnz zlhexlp
+
+ld (zlbmpaddr),de
+ld hl,zlbmpleft
+dec (hl)
+jp zllp
+
+
+zlskip4:
+ld de,mbmpbin
+push hl
+call strcmp
+pop hl
+jp nc,zlskip5
+
+;get bitmap line in binary
+;first, check we have room for another
+ld a,(zlbmpleft)
+and a
+jp z,toomanybmp
+
+ld a,2
+call getargv
+;must be exactly 32 bytes long
+push hl
+call strlen
+ld a,c
+pop hl
+cp 32
+jr z,zlskip4b
+
+call ilprint
+defb 13,'makezapd: "bmpbin" arg must be exactly 32 chars',0
+rst 0
+
+zlskip4b:
+push hl
+pop ix
+ld b,32
+;bitmap line is built up in lhed (in that order!)
+;(initial contents don't matter, of course)
+zlbinlp:
+ld a,(ix)
+sub '0'
+jp c,zlbadbit
+cp 2
+jp nc,zlbadbit
+rra
+rl d
+rl e
+rl h
+rl l
+inc ix
+djnz zlbinlp
+
+ld ix,(zlbmpaddr)
+ld (ix+0),l
+ld (ix+1),h
+ld (ix+2),e
+ld (ix+3),d
+ld de,4
+add ix,de
+ld (zlbmpaddr),ix
+ld hl,zlbmpleft
+dec (hl)
+jp zllp
+
+
+zlskip5:
+ld de,mopt
+push hl
+call strcmp
+pop hl
+jp nc,zlerror
+
+ld a,2
+call getargv
+ld de,mnoret
+push hl
+call strcmp
+pop hl
+jr c,do_noret
+
+ld de,mkeywait
+push hl
+call strcmp
+pop hl
+jr c,do_keywait
+
+ld de,mneedfile
+call strcmp
+jr c,do_needfile
+
+;otherwise, error
+jr zlerror
+
+
+do_noret:
+ld de,prog_noret
+jr do_optend
+
+do_keywait:
+ld de,prog_keywait
+jr do_optend
+
+do_needfile:
+ld de,prog_needfile
+do_optend:
+ld hl,(zladdr)
+add hl,de
+ld (hl),1
+jp zllp
+
+
+
+zldone:
+;XXX if no bitmap was specified, should supply a standard no-bitmap
+;one :-) (currently it'll just be blank)
+
+;XXX should also check for progname, perhaps?
+
+ld hl,(zlhndl)
+call fclose
+ret
+
+
+zlerror:
+call ilprint
+defb 13,'makezapd: bad line in .zap',0
+rst 0
+
+zlbadhex:
+call ilprint
+defb 13,'makezapd: bad hex in "bmphex"',0
+rst 0
+
+zlbadbit:
+call ilprint
+defb 13,'makezapd: bad binary in "bmpbin"',0
+rst 0
+
+
+zlfail:
+;file open for .zap file failed - can't happen!
+;XXX should give error message
+
+rst 0
+
+
+
+unhexit:
+call toupper
+sub '0'
+ccf
+ret nc		;fail if <'0'
+cp 10
+ret c		;ok if <10
+sub 7		;fix A..F
+cp 10		;fail if <10 now
+ccf
+ret nc
+cp 16		;and fail if >=16
+ret
+
+
+
+getuser:
+push bc
+push de
+push hl
+ld e,0ffh
+ld c,32		;get/set user
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+setuser:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,32		;get/set user
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;from zcnlib and hacked:
+
+;make fcb-like name (*not* full fcb) at de from filename at hl
+;doesn't expand `*' to `?', and doesn't do drives
+;entry: hl=asciiz rom filename
+;based on 'genfcbs' from ccp.z in ZCN
+ztmpde: defw 0
+makefcb:
+ld (ztmpde),de
+
+xor a
+ld (de),a
+push hl
+inc de
+;blank the filenameext bytes of FCB
+ld h,d
+ld l,e
+inc de
+ld bc,10
+ld (hl),32
+ldir
+pop hl
+
+;start copying to fcb, and keep going until we reach
+;whitespace again.
+;to deal with the problem of filename=8 chars max., we keep a count of
+;chars done so far in c.
+ld c,0
+ld de,(ztmpde)
+inc de	;move fcb ptr. to start of filename
+
+zgflp2:
+ld a,(hl)
+cp '.'
+jr z,zgfnowext
+and a
+ret z		;finished if NUL
+;if we're not past the 8 char. limit...
+ld a,c
+cp 8
+jr nc,zgf2	;skip if c>=8
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+call toupper
+ld (de),a
+inc de
+
+zgf2:
+inc c
+inc hl
+jr zgflp2
+
+zgfnowext:
+;we're currently pointing at a dot.
+inc hl
+
+;do much the same for the extension.
+ld c,0
+push hl
+ld hl,(ztmpde)
+ld de,9
+add hl,de
+ex de,hl
+pop hl
+;fcb ptr. now at start of extension
+
+zgflp3:
+ld a,(hl)
+and a
+ret z		;we're done if it's a NUL
+;if we're not past the 3 char. limit...
+ld a,c
+cp 3
+jr nc,zgf3	;skip if c>=3
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+call toupper
+ld (de),a
+inc de
+
+zgf3:
+inc c
+inc hl
+jr zgflp3
+
+
+;search first
+bsfirst:
+ld c,17
+jp 5
+
+;search next
+bsnext:
+ld c,18
+jp 5
+
+
+
+
+;from zcnlib:
+
+
+;get len of asciiz string at hl, and retn len in bc
+;entry: hl=addr of string
+;exit:	bc=length of string, excluding the trailing NUL
+;	hl=addr of trailing NUL
+;af corrupt
+strlen:
+ld bc,0
+strlnlp:
+ld a,(hl)
+and a
+ret z
+inc hl
+inc bc
+jr strlnlp
+
+
+;compare strings at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2
+;exit:	c if they match, nc otherwise
+;af/de/hl corrupt
+strcmp:
+ld a,(de)
+cp (hl)
+jr nz,strcmp2
+and a
+jr z,strcmp1
+inc hl
+inc de
+jr strcmp
+
+strcmp1:
+;they matched ok
+scf
+ret
+
+strcmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+;strcpy(hl,de)
+;entry:	hl=dest, de=src
+;exit:	hl and de both point to the NUL in each copy
+;af corrupt
+strcpy:
+ld a,(de)
+ld (hl),a
+and a
+ret z
+inc hl
+inc de
+jr strcpy
+
+
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+call putchar
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)
+
+
+;chop any trailing LF off a string;
+; this is like the Perl `chop' command.
+;entry: hl=string
+;exit:  none (but string `chopped')
+;af/bc/hl corrupt
+strchop:
+call strlen
+ld a,b
+or c
+ret z	;if zero-len, abort
+
+dec hl	;point to last char
+ld a,(hl)
+cp 10
+ret nz
+
+ld (hl),0
+ret
+
+
+
+
+;putchar - put char in a
+;puts CR before any LF output
+;f corrupt, others preserved
+putchar:
+cp 10
+jr nz,putbyte
+ld a,13
+call putbyte
+ld a,10
+;FALLS THROUGH
+
+;putbyte - put char in a without translation
+;preserves all regs
+putbyte:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret

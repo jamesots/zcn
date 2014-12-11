@@ -1,0 +1,9 @@
+NAME
+	ver - report ZCN and ROM version numbers
+
+SYNOPSIS
+	ver
+
+DESCRIPTION
+	Report ZCN version and build date, and (if it can be
+	determined) ROM version number.

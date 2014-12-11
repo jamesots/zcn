@@ -1,0 +1,372 @@
+;optdir
+;optimise directory entries so largest comes first - this means the
+; files will be read faster.
+;assumes exactly 2 dir. blocks used
+;XXX should *check* that there are exactly 2 dir. blocks :-)
+
+
+org 0100h
+
+
+jp start
+
+musage:
+defb 'usage: optdir [-q] d:',13,10
+defb ' optdir sorts directory entries so the largest files go first,',13,10
+defb ' and are therefore read more quickly.$'
+
+;bdos functions
+conout		equ 2
+
+bdos		equ 5
+userfcb1	equ 05ch
+userfcb2	equ 06ch
+dmapos		equ 080h
+
+
+;vars
+srcdir		equ 01000h	;original (then sorted) dir. entries
+listpos: defw 0
+listend equ srcdir+2048		;dir must be 2 blocks
+tmpc:    defw 0
+
+;32-byte tmp. buf used in sorting
+swapbuf		equ 02000h
+
+verbose:	defb 1
+
+
+start:
+;check for ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;see if they did '-q'
+ld hl,(userfcb1+1)
+and a
+ld de,0512dh	;'-q' as a little-endian hex word
+sbc hl,de
+jr nz,start3
+
+xor a
+ld (verbose),a
+
+;copy 2nd fcb over first
+ld hl,userfcb2
+ld de,userfcb1
+ld bc,16
+ldir
+
+start3:
+ld a,(userfcb1)
+and a		;if no drive given...
+jr nz,idir1
+
+;give usage and quit
+ld de,musage
+jp bdprint
+
+idir1:
+call readdir
+call sortdir
+call showdir	;show them the sorted order if verbose
+call writedir
+ret
+
+
+showdir:
+ld a,(verbose)
+and a
+ret z
+
+ld hl,srcdir
+
+sdloop:
+push hl
+
+ld a,(hl)
+cp 0e5h
+jr z,sdskip
+
+inc hl
+
+ld b,11
+sdloop2:
+push bc
+push hl
+ld e,(hl)
+ld c,2
+call bdos
+pop hl
+pop bc
+inc hl
+djnz sdloop2
+
+push hl
+ld e,' '
+ld c,2
+call bdos
+pop hl
+ld a,(hl)
+add a,'0'
+ld e,a
+ld c,2
+call bdos
+
+;now some spacing
+ld e,9		;tab
+ld c,2
+call bdos
+ld e,9		;tab
+ld c,2
+call bdos
+
+sdskip:
+pop hl
+
+;move to next one
+ld de,32
+add hl,de
+
+;see if we're at end yet.
+push hl
+ld de,listend
+and a
+sbc hl,de
+pop hl
+jr nz,sdloop
+
+ret
+
+
+
+;table used for transfers
+xfertbl:
+defb 0,0,0,0,0
+
+
+;read dir. blocks in at srcdir
+readdir:
+ld ix,xfertbl
+
+ld a,(userfcb1)	;drive where 1=A:
+dec a
+ld (ix+2),a
+
+ld b,16		;2k, 16 rcds
+ld c,0
+ld hl,srcdir
+
+rdloop:
+push bc
+push hl
+
+ld a,c
+and 7
+ld (xfertbl+1),a	;rcd number
+ld a,c
+rrca
+rrca
+rrca
+and 1
+ld (xfertbl+0),a	;block number
+
+ld (xfertbl+3),hl	;transfer addr
+
+ld c,136
+ld de,xfertbl
+call bdos
+
+pop hl
+pop bc
+
+ld de,128
+add hl,de
+inc c
+djnz rdloop
+ret
+
+
+;write dir. blocks from srcdir
+writedir:
+ld ix,xfertbl
+
+ld a,(userfcb1)	;drive where 1=A:
+dec a
+ld (ix+2),a
+
+ld b,16		;2k, 16 rcds
+ld c,0
+ld hl,srcdir
+
+wrloop:
+push bc
+push hl
+
+ld a,c
+and 7
+ld (xfertbl+1),a	;rcd number
+ld a,c
+rrca
+rrca
+rrca
+and 1
+ld (xfertbl+0),a	;block number
+
+ld (xfertbl+3),hl	;transfer addr
+
+ld c,137
+ld de,xfertbl
+call bdos
+
+pop hl
+pop bc
+
+ld de,128
+add hl,de
+inc c
+djnz wrloop
+ret
+
+
+
+;sort the list of files (exchange sort)
+sortdir:
+ld hl,srcdir
+ld (listpos),hl
+
+sortlp:
+ld hl,(listpos)
+ld (tmpc),hl
+ex de,hl
+
+sortlp2:
+ld hl,(tmpc)
+call nodecmp
+jr nc,sort1
+ld (tmpc),de
+
+sort1:
+;move de to next node.
+ld hl,32
+add hl,de
+
+;see if we're at end of list yet.
+push hl
+ld de,listend
+and a
+sbc hl,de
+pop de
+jr nz,sortlp2
+
+;ok, (tmpc) is the node to swap. won't matter if it's the same one.
+ld hl,(tmpc)
+ld de,(listpos)
+call nodeswap
+
+;next node.
+ld hl,(listpos)
+ld de,32
+add hl,de
+ld (listpos),hl
+
+ld de,listend
+and a
+sbc hl,de
+jr nz,sortlp
+
+;done.
+ret
+
+
+;compare two nodes in list
+;de=(addr of) 1st node, hl=2nd node
+;returns carry set if node at de < node at hl, else carry false
+;a corrupt
+nodecmp:
+;if one of them is erased, that one comes later, no matter what
+ld a,(de)
+cp 0e5h
+ret z		;also nc, de>hl
+ld a,(hl)
+cp 0e5h
+ccf
+ret z		;also c, de<hl
+
+;otherwise, we test the 'length of extent' byte.
+
+push hl
+push de
+push bc
+
+ld bc,15
+add hl,bc
+ex de,hl
+add hl,bc
+
+ld a,(de)
+cp (hl)
+jr nz,ncmpdone
+
+;if the extent-length matches, sort alphabetically.
+
+pop bc
+pop de
+pop hl
+push hl
+push de
+push bc
+
+inc hl
+inc de	;move to filenameext bit
+
+ld b,11
+nslp:
+ld a,(de)
+cp (hl)
+jr nz,ncmpdone
+inc hl
+inc de
+djnz nslp
+and a	;completely equal, so not less than.
+
+ncmpdone:
+pop bc
+pop de
+pop hl
+ret
+
+
+;swap nodes in hl and de
+;flags corrupt, other preserved
+nodeswap:
+push hl
+push de
+push bc
+
+push de
+push hl
+push de
+ld de,swapbuf
+ld bc,32
+ldir
+pop hl
+pop de
+ld bc,32
+ldir
+ld hl,swapbuf
+pop de
+ld bc,32
+ldir
+
+pop bc
+pop de
+pop hl
+ret
+
+
+;print $-term'd string, addr in de
+bdprint:
+ld c,9
+jp bdos

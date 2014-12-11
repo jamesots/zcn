@@ -1,0 +1,183 @@
+;tone-dial the number given on the cmdline
+
+org 0100h
+
+jp start
+
+
+tonewait equ 30		;length of tone in 1/100ths
+tweenwait equ 10	;wait after tone in 1/100ths
+
+
+;data=1000000/(freq*2*1.6276)
+; freq    data
+hz697  equ 441
+hz770  equ 399
+hz852  equ 361
+hz941  equ 326
+hz1209 equ 254
+hz1336 equ 230
+hz1477 equ 208
+hz1633 equ 188
+
+;(above freqs taken from uk.telecom FAQ)
+
+;table of codes
+codetbl: defb '123A456B789C*0#D'
+
+;table of data words for the two freqs for each code
+;index into above table is used as index into this one
+;left-hand-side (low) freq given first,
+;then RHS (high) freq
+datatbl:
+defw hz697,hz1209	;1
+defw hz697,hz1336	;2
+defw hz697,hz1477	;3
+defw hz697,hz1633	;A
+defw hz770,hz1209	;4
+defw hz770,hz1336	;5
+defw hz770,hz1477	;6
+defw hz770,hz1633	;B
+defw hz852,hz1209	;7
+defw hz852,hz1336	;8
+defw hz852,hz1477	;9
+defw hz852,hz1633	;C
+defw hz941,hz1209	;*
+defw hz941,hz1336	;0
+defw hz941,hz1477	;#
+defw hz941,hz1633	;D
+
+
+mneedzcn:	defb 'Needs ZCN.$'
+musage:
+defb 'usage: dial phone_number',13,10
+defb '  digits can be any of 0123456789*#ABCD$'
+
+
+zfstrobe equ 131	;get 1/100th strobe addr
+bdos	equ 5
+
+
+;disp msg at de and exit
+die:
+ld c,9
+call bdos
+jp 0
+
+;put char in a, saving all regs
+putchar:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call bdos
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+
+start:
+ld de,mneedzcn
+ld a,(066h)
+cp 0f7h
+jr nz,die
+
+;get addr of 1/100th strobe
+ld c,zfstrobe
+call bdos
+push hl
+pop ix
+
+;check there's something on the cmdline
+ld de,musage
+ld a,(080h)
+and a
+jr z,die
+dec a
+jr z,die
+
+ld b,a		;b=num. of chars in number
+ld hl,082h	;start of number
+loop:
+push bc
+push hl
+ld a,(hl)
+ld bc,16
+ld hl,codetbl
+cpir
+jr nz,endloop	;not a digit
+
+;show digit
+call putchar
+
+;hl-codetbl-1=offset
+ld de,codetbl
+scf
+sbc hl,de
+and a
+rl l
+rl h
+rl l
+rl h
+ld de,datatbl
+add hl,de
+;hl points to codes for this digit in table
+
+;start tone
+ld a,(hl)
+out (050h),a
+inc l
+ld a,(hl)
+out (051h),a
+inc l
+ld a,(hl)
+out (052h),a
+inc l
+ld a,(hl)
+out (053h),a
+
+;wait for a bit
+ld b,tonewait
+loop2:
+;wait for next interrupt
+ld a,(ix)	;ix=strobe addr
+stloop:
+ei		;make sure interrupts are on!
+cp (ix)
+jr z,stloop
+djnz loop2
+
+;stop tone
+ld a,080h
+out (051h),a
+out (053h),a
+
+;wait for a bit
+ld b,tweenwait
+loop3:
+;wait for next interrupt
+ld a,(ix)	;ix=strobe addr
+stloop2:
+ei		;make sure interrupts are on!
+cp (ix)
+jr z,stloop2
+djnz loop3
+
+endloop:
+pop hl
+pop bc
+inc hl
+djnz loop
+
+;stop tone
+ld a,080h
+out (051h),a
+out (053h),a
+
+;exit
+rst 0

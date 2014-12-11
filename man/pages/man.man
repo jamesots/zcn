@@ -1,0 +1,76 @@
+NAME
+	man - a help system a little like Unix's `man'
+
+NOTE
+	For those who haven't used (this) man before, here's briefly
+	how to move around: space moves forward a page, `b' moves back
+	a page, `q' quits. (Press space to move on.)
+
+SYNOPSIS
+	man [man_page]
+
+DESCRIPTION
+	Man is ZCN's online help program. Doing `man command' should
+	give you help for most commands - each help file is called a
+	manual page, or more usually a "man page". The man pages are
+	usually on the brief side to keep the size down, since there
+	won't normally be a huge amount of disk space free on an
+	average ZCN box, but they should be sufficiently complete to
+	be useful.
+
+	Man works by searching for a file in a0:manpages.pma with the
+	same filename as that specified on the command-line (any
+	extension is ignored).
+
+THE VIEWER
+	Man uses a built-in viewer which is a little like ZCN's
+	`more', but more like a heavily cut-down version of the popular
+	(though unfortunately not available for CP/M) `less' program. It
+	lets you move forward and backward through the man page as you
+	wish. The keys used to navigate etc. are:
+
+	Q or Esc	quit.
+	Space		move down a screenful.
+	B		move up a screenful.
+	<		go to start.
+	>		go to end.
+	^N, ^X or Enter	move down one line.
+	^P or ^E	move up one line.
+
+TERMS USED
+	The following terms are used in the man pages:
+
+	filespec	A filename or wildcard.
+
+	wildcard	A filename specification, with one or more `*'
+			or `?' characters in. `?' matches any
+			character; `*' matches any chars up to the end
+			of the `field' (i.e. up to the dot, or up to
+			the end of the filename, whichever comes
+			first).
+
+	drivespec (or d:)
+			A drive letter followed by a colon, e.g. `a:'.
+			Often the illustrative notation `d:' is used
+			as a shorthand for `drivespec'.
+
+FILES
+	a0:manpages.pma - the archive which contains the man pages.
+
+BUGS
+	There are *many* differences from Unix man, e.g. the man pages
+	are plain text files rather than troff source.
+
+	Do `man undoc' to see which programs are currently known to
+	not have man pages.
+
+AUTHORS
+	The main program was written by me :-), Russell Marks, but the
+	PMA reading code is by Yoshihiko Mino. My `man' code is PD to
+	avoid copyright problems, so YM holds the copyright to `man'.
+
+	In other man pages, `AUTHOR' sections are usually only given
+	when the author was someone other than myself.
+
+SEE ALSO
+	zcn, pmarc, pmext

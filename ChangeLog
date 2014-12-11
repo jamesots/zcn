@@ -1,0 +1,1866 @@
+2001-06-07  Russell Marks  <russell.marks@ntlworld.com>
+
+	* Version 1.3.
+
+	* Ok, I've put this off long enough already; let's just hope I
+	don't need a bugfix zip for *this* version. :-)
+
+	* doc/zcn.txt: ok, oakland's CP/M archive seems to have gone, but
+	wuarchive still have a copy. Mentioned that.
+
+2001-05-25  Russell Marks  <russell.marks@ntlworld.com>
+
+	* doc/zcn.txt: added mention of DNA's death (sigh) to the Infocom
+	games section (since it mentions HHGTTG).
+
+2001-05-24  Russell Marks  <russell.marks@ntlworld.com>
+
+	* doc/zcn.txt: added section on getting a memory card (and how to
+	try (ZCN) before you buy one :-)), and a mention of the new GNU
+	GPL FAQ.
+
+2001-05-20  Russell Marks  <russell.marks@ntlworld.com>
+
+	* doc/zcn.txt: added "Why do the batteries run down more quickly
+	on ZCN?" bit to Q&A section, covering serial line driver/backlight
+	issues.
+
+2001-05-03  Russell Marks  <russell.marks@ntlworld.com>
+
+	* src/serial.z (linedrvop): now filters out serial interrupts if
+	we've done a `serial 0' (i.e. running with line driver off) - this
+	should stop the junk ints you previously got after doing that.
+
+	* utils/lfconv.z (done): don't need to close files on ZCN, sure,
+	but I'm not using ZCN as such, I'm using stdio.z. So it previously
+	lost the last record on almost all files. Whoops. :-) Fixed now.
+
+2001-04-20  Russell Marks  <russell.marks@ntlworld.com>
+
+	* src/bdos.z (mfdone): my checking for dr being `?' when writing
+	match FCB was broken. It looks like it's *always* been broken, so
+	this probably doesn't affect too much... :-)
+	(matchfcb): various optimisations. Mostly for speed, though I
+	don't know if it's really sped anything up much.
+
+	* src/card.z (cread128): saved two bytes on `ld bc,128's. :-)
+
+2001-04-19  Russell Marks  <russell.marks@ntlworld.com>
+
+	* utils/rrxfer.z: now mostly-working on NC200. The only remaining
+	problem is that it screws up for files more than 56k into upper
+	memory, so, don't do that. :-)
+
+	* utils/runrom.z: now works on NC200.
+
+2001-04-18  Russell Marks  <russell.marks@ntlworld.com>
+
+	* src/misc.z (scrnwlp): screen-dumping now works on NC200.
+
+	* src/term.z (visbell): screen-flashing `bell' wasn't working on
+	NC200; fixed that.
+
+	* src/inthndl.z (intrrupt): wahay! Finally got NC200 poweroff
+	working - it uses a normal interrupt, not NMI. Of course, this can
+	only work if interrupts are enabled (not my fault :-)), but they
+	usually will be.
+
+2001-04-16  Russell Marks  <russell.marks@ntlworld.com>
+
+	* utils/bigv.z: now works on NC200.
+
+	* utils/spell.z (start): now works on NC200.
+
+	* utils/spellwd.z (start): previously would crash when run without
+	args, when spellwd wasn't the last command you'd run.
+	(lowerdun): now works on NC200.
+
+	* doc/nc200.txt: an attempt to cover all the NC200 stuff in one
+	place.
+
+	* utils/lfconv.z: ok, I finally got annoyed enough at forgetting
+	to convert an LF-only file before transferring it that I've
+	written a line-endings converter. :-) It converts LF-only files to
+	CR/LF, i.e. converts Unix format to CP/M (and MS-DOS) format.
+
+	* utils/Makefile (utils): a few of the more obscure utils are now
+	moved to the `bin/extra' dir, to keep it so that *.{com,pma} in
+	the `bin' dir can fit on a single bootable ZCN drive (it was still
+	just about ok before, but I doubt it'd have lasted much longer).
+
+2001-04-14  Russell Marks  <russell.marks@ntlworld.com>
+
+	* Now has backlight support on the NC200. By analogy with the way
+	the serial line driver is handled, this is on by default; you can
+	disable it with `light 0' (and re-enable with `light 1').
+
+	* utils/keyb.z: `keyb', sets keyboard map. Currently only
+	supports UK (the usual built-in keymap), and Dvorak on a UK
+	layout. Thanks to Ian Miller for suggesting Dvorak support,
+	which I generalised to this; if anyone wants other keymaps
+	supported, contact me. Obviously I'd like to support the
+	non-UK maps, but I need to know what they're like first...
+
+	* src/zcnfunc.z (zfkeymaps): added keymap-addr-returning function.
+	It should be possible to add a utility to change keymaps using
+	this.
+
+	* man/view.z: `man' now uses 21 lines on NC200.
+
+	* src/internal.z: `more' command now uses 21 lines in zcn200.bin.
+
+2001-04-02  Russell Marks  <russell.marks@ntlworld.com>
+
+	* doc/zcn.txt: clarified "Tight Interrupts" section slightly.
+
+2001-03-16  Russell Marks  <russell.marks@ntlworld.com>
+
+	* src/init.z (bootsys): now clears any pending interrupts on
+	startup. Seems to be needed on the NC200 when rebooting from any
+	of my ported speccy games :-), and is probably a good idea anyway.
+
+	* src/internal.z (isyswrt): actually, it was just as well I did
+	that (see below), in a way - `sys' previously didn't clear the
+	`cf1zero' part of the boot block, such that if that area got
+	corrupted at all, ZCN wouldn't boot and you could never fix it
+	with `sys'. Ordinarly, of course, you'd never notice this... but
+	it does things properly now.
+
+	* src/init.z (bootsys): whoops, screwed up booting-from-card with
+	recent NC200 stuff. :-) Fixed that.
+
+2001-03-10  Russell Marks  <russell.marks@ntlworld.com>
+
+	* NC200 now has 21-line display. I've done this by using one of
+	the `extra' RAM pages for the top 16k of RAM ordinarily, freeing
+	up what would otherwise be the top RAM page for use as the screen.
+	This breaks *all* ZCN programs with graphics, but since most of
+	those will have been written by me :-), this should be fixable in
+	time. But for now, it makes the NC200 nicely usable for your
+	average CP/M-ish program, which I'm sure is preferable overall.
+	Note that in time I may be able to make the TPA 4k bigger on the
+	'200 - I'm not going to risk it for ZCN 1.3 though.
+
+	* doc/zcnprog.txt: documented new function.
+
+	* src/zcnfunc.z: added machine type function. Well, really kernel
+	type (zcn.bin or zcn200.bin), but it's effectively the machine
+	type.
+
+2001-03-09  Russell Marks  <russell.marks@ntlworld.com>
+
+	* src/init.z (bootsys): prevent any possible NMI interference
+	while booting. Unlikely to have been a problem until now, but I'm
+	shortly going to add something which'll slow down the NC200 boot,
+	so...
+
+	* src/ccp.z (battchk): fixed NC200 battery warnings.
+
+	* Fixed serial I/O on the NC200.
+
+	* src/inthndl.z (krdplp): major NC200 fix - zcn200.bin didn't work
+	on a real NC200 before this! (It turns out that the '200 needs
+	keyboard interrupts explicitly acknowledged, unlike the '100.)
+	Thanks to Ian Miller for doing the masses of testing needed to
+	figure this one out.
+
+2001-02-23  Russell Marks  <russell.marks@ntlworld.com>
+
+	* support/README: a couple of minor fixes.
+
+	* doc/zcn.txt (Copying and Modifying ZCN): simplified a bit.
+
+2000-12-14  Russell Marks  <russell.marks@ntlworld.com>
+
+	* zcnpaint/zcnpaint.z (ieraser): previously the eraser would draw
+	vertical or (worse) horizontal lines when used right at the
+	top/left of the screen - of (theoretically) 255 or 65535 pixels
+	height/width respectively. Oops. :-) Fixed that.
+
+	* doc/zcn.txt: made spacing between commands more consistent in
+	internal/external command docs.
+
+	* utils/bigv.z (viewlp): added DEL as an alternative way to page
+	backwards.
+
+	* Bundled copy of zmac is now version 1.3. I'm not sure if this is
+	the latest version, but it's the latest version I've thoroughly
+	tested so I think it's best to stick with that for now.
+	(Admittedly the MS-DOS zmac.exe is still of version 1.1, but that
+	should still work.)
+
+	* doc/zcn.txt: updated metalab URLs to point to ibiblio.
+
+	* support/README: updated metalab (now ibiblio) URLs.
+
+	* doc/zcn.txt: changed lists (N items preceded by `-') to all be
+	consistently indented 2 spaces. Previously some were and some
+	weren't (sometimes even in the same section).
+
+2000-10-11  Russell Marks  <russell.marks@ntlworld.com>
+
+	* Added `serial' command, which allows you to disable/re-enable
+	the serial line driver. It's enabled by default (just as in
+	previous versions of ZCN), but disabling it should prolong battery
+	life. The implementation is a bit rough-and-ready, so don't be too
+	surprised if serial I/O acts strangely after you do a `serial 0'.
+	:-) Thanks to Emmanuel Roussin for bringing this up.
+
+2000-10-01  Russell Marks  <russell.marks@ntlworld.com>
+
+	* NEWS: changed to my usual format.
+
+2000-09-19  Russell Marks  <russell.marks@ntlworld.com>
+
+	* doc/zcn.txt: documented the minimal NC200 support and
+	`zcn200.bin'.
+
+	* Updated contact address everywhere I found an outdated one.
+
+2000-09-04  Russell Marks  <russell.marks@ntlworld.com>
+
+	* doc/zcn.txt: in Emacs Meta key bit, (getenv "TERM") should be
+	compared to "zcn", not "nc100"... :-)
+	(User Numbers) toned down bit which says how ZCN doesn't handle
+	user areas that well - it's not *that* bad, and it's better than
+	CP/M, it's just not as good as some other systems.
+
+2000-06-17  Russell Marks  <russell.marks@ntlworld.com>
+
+	* ZCN now assembles into two versions - the original zcn.bin for
+	NC100s, and a new zcn200.bin for NC200s. I was originally going to
+	attempt some minimal kind of NC200 support in even the NC100
+	version, but there are just too many things to deal with for that
+	to make sense. Currently, the NC200 version supports the different
+	keyboard -> I/O port bitmap mapping and different context-save
+	addresses; this gets it basically working, but (so far) no more.
+
+2000-06-16  Russell Marks  <russell.marks@ntlworld.com>
+
+	* doc/zcn.txt: added links to R. T. Russell's website,
+	mentioning the now-free (well, as in free beer) CP/M BBC
+	Basic, and the online BBC Basic manual.
+
+	* src/bdos.z: now returns A=L and H=0 in all cases except for
+	ZCN-specific funcs (which are in zcnfunc.z anyway). This gets the
+	slightly pedantic CP/M BBC Basic working :-), and is slightly more
+	`correct' than the previous behaviour.
+
+2000-02-22  Russell Marks  <russell.marks@dtn.ntl.com>
+
+	* utils/bigv.z: Added ^G (Del->) alias for next-page; can be
+	useful when holding NC in certain weird ways (e.g. holding in air
+	w/both hands, sometimes handy when lying down).
+
+1999-12-11  Russell Marks  <rus@cartman>
+
+	* utils/bigv.z: now supports `-<line number>' arg (e.g. `-42') to
+	specify line number to start on.
+
+1999-11-29  Russell Marks  <rus@cartman>
+
+	* doc/zcn.txt: added section on running Wordstar 4, and mention of
+	`deltasoft' site. Also added support/ws4patch (WS4 patch for ZCN).
+
+1999-11-05  Russell Marks  <rus@cartman>
+
+	* zcnlib/mouse.z: now supports reading mouse position `directly'
+	under nc100em.
+
+1999-11-02  Russell Marks  <rus@cartman>
+
+	* src/powrhndl.z: two `how did I not notice that' bugs fixed. :-/
+	In the context-restore routine, the stack pointer was pointing at
+	the TPA at a Bad Time when restoring things, meaning that memory
+	in the B1F8h-B1FDh range (6 bytes) got blasted. Not the sort of
+	bug you'd usually notice easily, but it happened to break wade.
+	And when I made the `recent' change to permanently using IM2, I
+	inadvertently made the context-restore rewrite 0038h-003Ah despite
+	not needing to, which could probably have broken wade in some
+	(relatively unusual) circumstances.
+
+1999-09-30  Russell Marks  <rus@cartman>
+
+	* doc/zcn.txt: entry for `cd' was out of date. Changed it to match
+	that for `user'.
+
+1999-09-26  Russell Marks  <rus@cartman>
+
+	* man/man.z: noooo! man was *totally broken*, and had been for six
+	months! But incredibly, I'd managed to forget to transfer the new
+	man.com onto my NC *or* onto my nc100em setup, so I only noticed
+	by accident just now while I was fiddling about with that. (I'm
+	usually really scrupulous about keeping everything up-to-date, I
+	use `cmp' on a regular basis to try and guard against missing new
+	versions like this.) ARRRGGGHHH! FWIW, it seems to have been a
+	stupid thinko when shuffling things around rearranging the
+	directory structure. This bug is nasty enough (not least because
+	it's in `man', the online help of all things!) that I really have
+	to release a new version pretty much immediately. [I actually
+	ended up releasing zcn12fix.zip instead.]
+
+	* src/serial.z: commented setup stuff a bit more.
+
+	* src/zcnfunc.z: the leap year digit calculation when setting time
+	worked for 1992 and 1996, but wouldn't have worked for 2000
+	onwards, so that e.g. 2000 didn't have a 29th February. No, not a
+	conventional Y2K bug - year 00 is 1990, and I'd used the BCD year
+	number as decimal. Whoops... :-) Also commented the get/set time
+	stuff more fully.
+
+	* support/nciohw.txt: updated Cliff's email address.
+
+1999-09-25  Russell Marks  <rus@cartman>
+
+	* doc/zcn.txt: added URL for oakland, and removed reference to
+	nswp I'd missed.
+
+1999-08-12  Russell Marks  <rus@cartman>
+
+	* Removed nswp. I'd come to think it wasn't worth including a
+	non-commercial-only program I don't even use, and hey, it saves me
+	writing a man page, right? :-)
+
+	* VDE has replaced ZDE as the text editor included with ZCN,
+	involving various changes to docs as well as the replacement
+	itself. The main reason is that VDE comes with *much* better
+	documentation than ZDE 1.6 did; it's true that it's missing a
+	couple of features relative to ZDE, but then it also has a couple
+	of features ZDE doesn't, so that's not a clear-cut matter in any
+	case. Alas, VDE has just as restrictive a license as ZDE, so it
+	doesn't help on that front. :-(
+
+1999-07-30  Russell Marks  <rus@cartman>
+
+	* doc/zcnprog.txt: updated contact details, which were really
+	dated.
+
+1999-07-04  Russell Marks  <rus@cartman>
+
+	* utils/bigv.z: a text file viewer designed for reading
+	`etexts' (online books and the like), based on the viewer used
+	by `man', but using a nice big proportional font. It may only
+	fit 5 lines onscreen, but it's *so* much more readable. :-)
+	Thanks to Steven Flintham for the inspiration behind this.
+
+1999-06-19  Russell Marks  <rus@cartman>
+
+	* doc/zcn.txt: updated "Battery level warnings" to mention that
+	zap checks them as well as the CCP.
+
+1999-04-26  Russell Marks  <rus@lifeson>
+
+	* support/lar.c: made minimal changes so it would compile
+	(it had bogus prototypes for sprintf and sys_errlist, which I
+	think caused glibc problems where it didn't with the older libc).
+
+1999-04-22  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: documented the fact that rrxfer can only transfer
+	files to/from the current drive/user as a known bug. The lack of
+	user support isn't a big deal, but the current-drive-only stuff
+	sucks. But it's semi-complicated to fix as it currently uses the
+	same turn-asciiz-into-FCB routine to parse ROM filenames (for get)
+	and ZCN filenames (for put). Now, I *could* keep using the same
+	for both, and fix it in the obvious way, but then any ZCN file
+	`foo' specified with a drive is written to runrom.ram as `d:foo',
+	and any ROM file with `:' as the 2nd char is written to the drive
+	referred to by the first char (or more likely, fails, because it's
+	not in the range a..d). So basically, this is `interesting' to
+	fix, and documenting it as a known bug is about as much as I can
+	be bothered with given that I haven't used rrxfer seriously
+	since... well, since I wrote it, pretty much. ;-)
+
+	* utils/rrxfer.z: previously, if you asked for a list of the ROM
+	files and there were none, it crashed (ouch!).
+
+1999-04-15  Russell Marks  <rus@lifeson>
+
+	* Version 1.2.
+
+	* man/man.z: wasn't too scrupulous about putting a ret at 100h on
+	exit (to avoid being re-run with `!!' and the like) - fixed.
+
+1999-04-11  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: documented COUNT in bbcbas section.
+
+1999-04-09  Russell Marks  <rus@lifeson>
+
+	* utils/du.z: removed unused mtotal string.
+
+1999-04-08  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (ioff): added `off' internal command. Just turns
+	the machine off like pressing the on/off button. I freely admit
+	this is mainly for convenience when using tnc100em. :-)
+
+	* ZCN now works in IM2 at all times. This takes up a bit more
+	memory than using IM1 did, but about half as much additional
+	memory as using IM2 used to.
+
+	* src/ccp.z (ccpsub): saved two bytes using `ret z' instead of the
+	previous stupidity of `jr nz,ccpsub2 / ret / ccpsub2:'.
+
+1999-03-31  Russell Marks  <rus@lifeson>
+
+	* src/ccp.z (runint): fixed the breaking of `|s' and the like (I
+	broke it when I made the `a:dir' change :-( ).
+
+	* utils/bbc_cat.z (dozcndir): if no files were on the drive, *CAT
+	used to say "No files253k free on drive". :-) Fixed that.
+
+	* zap/zap.z (fmfbaddrv): fixed bug where NULL pointer wasn't
+	always being written at end of `filetype ?' drive list - this
+	meant that four-drive lists had an extra (junk) entry.
+
+1999-03-30  Russell Marks  <rus@lifeson>
+
+	* support/README: made into an outline, and made ftp site
+	references into URLs (I also updated a couple of them while I was
+	at it).
+
+1999-03-28  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: made `Installation epilogue' a bit less
+	impenetrable. Also mentioned zap.
+
+	* Added `zap', a graphical front-end for ZCN (it just runs
+	programs on files, but is reasonably spiffy :-)), and `makezapd',
+	a related utility. I've been working on these for a while, but
+	only just got around to putting them in the ZCN distribution.
+
+	* zcnlib/Makefile: fixed to make zcnlibh.{z,asm} much more
+	sensibly.
+
+	* Rearranged directory structure and Makefiles so that the ZCN
+	distribution reflects the way I've always worked on it. The main
+	upshot of this is that there's now a top-level Makefile, and a
+	file `config.mk' which lets you set a couple of options related to
+	building ZCN.
+
+1999-03-21  Russell Marks  <rus@lifeson>
+
+	* Building ZCN on MS-DOG works again, due to a `mkasmver' util
+	which does the grep/awk/date stuff required by the Makefile.
+
+	* zmac is now bundled with ZCN, in the `zmac' dir.
+
+1999-03-03  Russell Marks  <rus@lifeson>
+
+	* src/ccp.z: fixed two .sub-related bugs. First, if a $$$.sub
+	didn't contain a ^Z it wasn't deleted after ZCN finished running
+	it. Second, it assumed $$$.sub remained in the current user, which
+	isn't always the case. (It always *starts off* there, but we keep
+	track of where the file is so that changing user in the .sub is
+	ok. So the code which deletes $$$.sub has to be clueful about
+	that.)
+
+	* Reinstated startup banner - effectively just `ver' output.
+
+	* Changed `ver' date/time to be more readable, at the cost of
+	three extra bytes.
+
+	* src/zcnfunc.z: added function 143, to go to user area 255.
+
+1999-02-20  Russell Marks  <rus@lifeson>
+
+	* man/man.z: more of man's time is spent searching manpages.pma
+	than on decompressing the man page, so it now prints the `please
+	wait' message earlier on. This is a bit bogus in the case when it
+	then comes back and says "No manual page for...", but I think
+	overall it's ok.
+
+	* src/internal.z (icrlf): new `crlf' internal command, lets you
+	disable/enable the usual CP/M-ish CR/LF after each command
+	finishes. Mainly intended for use in SUB files.
+	(ivdu): new `vdu' internal command, lets you print up to two
+	characters by giving their ASCII values (e.g. `vdu 1' clears the
+	screen, `vdu 65 66' prints "AB").
+
+	* src/ccp.z (runint): fixed so things like `a:dir' (internal
+	commands with drive specs) don't just run the internal command.
+	Now it'll try and run `dir.com' (or `dir.sub') on drive A:.
+
+1999-02-18  Russell Marks  <rus@lifeson>
+
+	* doc/zcnprog.txt: updated to include BDOS function 142 (the new
+	change-font-address thing).
+
+1999-02-17  Russell Marks  <rus@lifeson>
+
+	* utils/bmp.z: created. A way of printing UDGs (and bitmaps
+	generally) from SUB files.
+
+	* cpmtris/cpmtris.z: now uses a modified font for the UDGs, which
+	is a lot less hairy than the horrible kludge it used before. :-)
+
+	* src/term.z: Esc as a prefix to a CR/LF will cause ZCN to ignore
+	it. This turned out to be the easiest way to remove the now
+	spurious initial CR/LF on cold-boot, but may also be useful for
+	user programs.
+
+	* You can now change the address of the font used by ZCN. This
+	lets ZCN-aware programs effectively use UDGs and the like.
+
+	* src/init.z (mhello): removed the banner (copyright message)
+	displayed when you boot ZCN. It may be a traditional CP/M thing to
+	have, but frankly even *I* found it slightly irksome. If you
+	really want a banner, you could always put `ver' in your
+	autoexec.sub. ;-)
+
+1999-02-14  Russell Marks  <rus@lifeson>
+
+	* utils/slide.z: a slide-rule emulator. :-) It's rather more
+	inaccurate than even a pocket slide-rule, given the limitations of
+	the NC100's screen resolution, but it's just a silly hack anyway
+	so that shouldn't matter much.
+
+1999-02-11  Russell Marks  <rus@lifeson>
+
+	* utils/bbcmin.z: created. A cut-down version of bbcbas (with a
+	much smaller executable - 3k rather than 8k), mainly intended for
+	people who just want to run Basic rather than develop it.
+
+	* bbcbas now supports entry of `£' (pound sign) in buffered input,
+	i.e. when typing program or `INPUT' lines.
+
+	* utils/bbcbas.z (pputbyte): implemented the "printing char
+	disabled serial line driver" bugfix made to ZCN itself some months
+	back. (bbcbas has its own copy of the code for this to avoid
+	considerable overhead for a trivial operation.)
+
+1999-02-02  Russell Marks  <rus@lifeson>
+
+	* src/internal.z: new internal command `note', lets you type text
+	into a file. It's crude, but hey, it's always there. :-)
+
+	* Semi-rewrite of zcnclock, it now looks a lot nicer and does
+	world time. It's pretty UK-centric but other than that works well
+	enough. Also added `dclock', a cut-down version which (just) fits
+	in 1k, but is still fairly nice really. :-)
+
+1999-01-21  Russell Marks  <rus@lifeson>
+
+	* utils/ruler.z: displays a ruler onscreen.
+
+1999-01-18  Russell Marks  <rus@lifeson>
+
+	* utils/runrom.z: removed unused code (well, actually just an
+	unused label :-)).
+
+1999-01-13  Russell Marks  <rus@lifeson>
+
+	* src/ccp.z: the code which checks for internal commands is now
+	considerably faster, as it gives up on non-matches as soon as
+	possible (previously it went through the entire list byte-by-byte
+	no matter what). This isn't terribly noticeable, to be honest (the
+	old BFI approach was actually pretty quick), but I thought I'd
+	speed it up anyway. :-)
+
+	* doc/zcn.txt: added (to Q&A) mention of ROM v1.00's curious
+	obsession with having the time set.
+
+	* src/internal.z (icboot): added `cboot' internal command to
+	reboot off memory card.
+
+1999-01-11  Russell Marks  <rus@lifeson>
+
+	* New man pages index, zcn (a sort of meta-man-page), path (how
+	.com's are found), and usernums (brief explanation of user
+	numbers).
+
+	* Added man page for capsctrl, which I forgot previously.
+
+	* Added man pages for pause and screendump, describing how to
+	pause text output and get a screen dump.
+
+1998-12-28  Russell Marks  <rus@lifeson>
+
+	* utils/calc.z: previously had some rather nasty ROM-specific code
+	to deal with the border around the screen, which worked on ROM
+	v1.06 but not on v1.00. Replaced that with nicer code which works
+	on both, and also managed to reduce size of program so it's not
+	quite such a tight fit into 1k.
+
+1998-12-24  Russell Marks  <rus@lifeson>
+
+	* src/eof.z: added note about why no guard against the ROM OS's ^Z
+	stripping is needed for ZCN itself. (And it's not relevant to
+	anything else either, as these two things are the only ones you'd
+	ever transfer using the ROM OS.)
+
+	* utils/rrinit.z: now combats ROM OS's stupid XMODEM ^Z stripping.
+
+1998-12-15  Russell Marks  <rus@lifeson>
+
+	* In src, renamed main.z to start.z, and created a new main.z
+	which `include's all the other files which make up ZCN. (This is
+	rather nicer than using cat, at least. :-))
+
+1998-12-06  Russell Marks  <rus@lifeson>
+
+	* utils/expr.z: sort-of-clone of Unix `expr' (an expression
+	evaluator), a Z80 port of a PD C program by Erik Baalbergen, using
+	zcnlib's 32-bit integer routines. Apart from one known bug (see
+	man page) it's ok.
+
+1998-12-05  Russell Marks  <rus@lifeson>
+
+	* zcnlib/int32.z: added atoi/itoa-ish routines.
+
+	* doc/zcnprog.txt: documented some bits from int32.z which I
+	missed.
+
+1998-11-29  Russell Marks  <rus@lifeson>
+
+	* Couple of minor man page bugs fixed.
+
+1998-11-12  Russell Marks  <rus@lifeson>
+
+	* Changed qterm, z8e, and zde to use 20h+y too. (Bs, rogue, and
+	sokoban didn't actually need changing as they use their own 80x24
+	emulation code rather than ZCN's.) Also added cursor on/off to zde
+	config.
+
+	* Changed bbcbas, calc, codes, cpmtris, invaders, zcnclock,
+	zcnpaint, zdbe, and zselx to use 20h+y for cursor movement code.
+
+	* src/term.z: cursor movement control code now uses 20h+y rather
+	than 46h+y, for consistency with virtually every other terminal
+	which uses this kind of movement command. :-) The old 46h+y is
+	still supported, but support for it may be removed in future.
+
+	* Added `capsctrl' command, swaps functions of caps lock and
+	control keys if you do `capsctrl 1'. (Function acts like a control
+	key either way, though.)
+
+1998-10-10  Russell Marks  <rus@lifeson>
+
+	* utils/bbcbas.z: added configurable LISTO setting.
+
+1998-10-09  Russell Marks  <rus@lifeson>
+
+	* doc/NEWS: added. Describes changes since last release (currently
+	this means since v1.1).
+
+	* man/pages/cal.man: man page for cal.
+
+	* utils/cal.z: calendar program, like Unix `cal' - a Z80 m/c port
+	of the public domain `calend' C program by Martin Minow. It's
+	quite a good one, it even gets september 1752 right. :-)
+
+	* zcnlib/args.z: made argline and argv decls fit on one line, so
+	they can be removed via sed to save memory in .com file.
+
+1998-10-08  Russell Marks  <rus@lifeson>
+
+	* src/keyread.z: fixes to the keyboard handler. It now copes with
+	every problem with the keyboard hardware I've been able to find,
+	and should now be unreservedly better than the ROM in this regard.
+	(Also took out a call to kclrmap which shouldn't have been there,
+	and was slowing things down.)
+
+1998-09-27  Russell Marks  <rus@lifeson>
+
+	* Many man pages written.
+
+	* man/man.z: made change described below to fit man in 4k.
+
+	* zcnlib/stdio.z: made dmabuf decl fit on one line, so it can be
+	removed via sed to save memory in .com file. This means I can make
+	man.com 4k rather than 5k, for example.
+
+1998-09-26  Russell Marks  <rus@lifeson>
+
+	* Removed `help.com'. `man' is hugely better, and it's more
+	sensible to have just the one help system - or at least, it's more
+	sensible than having a rather good one yet keeping a really crap
+	one around. ;-)
+
+	* doc/zcn.txt: added docs for spell, and replaced confusing and
+	rather pointless `d:filename.ext' notation with `filename' for
+	every case I found.
+
+	* utils/spell.z: created. A proper interface to the ROM
+	spellchecker, which lets you interactively correct the spelling of
+	text files. It works pretty much like the spellchecker does in the
+	ROM wp, but with a more ispell-like interface, and it optionally
+	lets you automatically lookup suggested alternatives to every
+	unrecognised word. Also, it doesn't have any support for a user
+	dictionary yet, and it has problems with some types of punctuation
+	- the main example being that "foobar(s)" isn't grokked correctly.
+
+1998-09-23  Russell Marks  <rus@lifeson>
+
+	* Renamed .com files under `support' dir with funny names (e.g.
+	pipe17.com, sokzcn.com) to have more normal names (e.g. pipe.com,
+	sokoban.com) to avoid unnecessary confusion and make names of man
+	pages more obvious. :-)
+
+	* Added a `man' program, and many `man pages' (really just text
+	files using a man-page-like layout) for it.
+
+1998-09-21  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (istty): finally written proper version of
+	setbaud (called `stty') to set baud rate by you specifying (gasp)
+	the actual baud rate. :-) `setbaud' has been removed; however,
+	there's a new `setbaud.sub' which emulates it pretty closely.
+
+	* Added build date/time, reported by `ver'.
+
+	* src/serial.z (pputbyte): previously printing a char disabled the
+	line driver, so serial I/O wouldn't have worked until you turned
+	off/on or did a `setbaud'. Also removed old stuff which was
+	intended to remove the spurious serial int when turning on - that
+	never worked anyway, so might as well drop it. And made some minor
+	optimisations like making sgetbyte simply an alias for sgetchar.
+
+1998-09-19  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (idir): made `dir' produce output more like CP/M,
+	and saved 3 bytes in the process. :-) Also fiddled around with
+	other internal commands saving 93 further bytes. Changed "ARGS!"
+	message to the less postmodern but more reasonable "Args?".
+
+	* utils/help.dat: got it up-to-date (I think :-)).
+
+	* doc/zcn.txt: corrected all processor-speed-related bits.
+	Originally I thought the NC100's Z80 ran at about 4.5MHz. Then
+	someone said to me that Amstrad claimed it to be 6MHz, I tested
+	it, and guess what - it did seem to be roughly that. Recently I
+	tested it again to get a more exact figure, and I can only assume
+	my previous test was wrong - in a triple-checked test program
+	running for 5 minutes with start/stop times measured on my Linux
+	box based on two bytes sent via serial by the program (you can
+	send a byte with a single OUT instruction on the NC100, so this
+	measurement was really rather accurate), the speed came out at
+	4.6061MHz.
+
+1998-09-18  Russell Marks  <rus@lifeson>
+
+	* src/{inthndl,keyread}.z: made no-key-pressed interrupts run
+	about three times as fast by directly checking bytes read from the
+	ports. Also saved several bytes rearranging things to use
+	fall-through, etc.
+
+	* src/bdos.z: saved a few bytes by using fall-through at the end
+	of bauxout2/blstout2, and separating out common code in
+	chk255/chk255a.
+
+	* doc/zcn.txt: fixed bug in mentioned-in-passing desc of serial
+	requirements. (ZCN can't *quite* make do with a minimal lead if
+	you want to be able to send - it needs CTS, though that can just
+	be soldered to RTS.)
+
+1998-09-13  Russell Marks  <rus@lifeson>
+
+	* support/README: fixed a couple of net-related things (e.g.
+	/pub/cpm/filcpy for nswp on oakland, not /pub/filcpy :-)).
+
+1998-09-10  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (rexec): it's now realistic to use it without a
+	card in memory - previously it took *ages* while it blindly wrote
+	the file to a non-existent card, now it just says "no file" (but
+	the file is still safely in memory). Also, removed calls to
+	`bfclose', which aren't needed on ZCN.
+
+Fri Sep  4 12:19:26 1998  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (iuser): new `user -' command, goes to previous
+	user number. Note that only `user' knows about this mechanism; if
+	a program changes user no., that won't affect the `previous user'
+	the command changes to.
+
+Sat Aug 29 19:37:16 1998  Russell Marks  <rus@lifeson>
+
+	* cpmtris/cpmtris.z: made ZCN `UDGs' a little nicer.
+
+Thu Jul 16 14:07:29 1998  Russell Marks  <rus@lifeson>
+
+	* Version 1.1.
+
+	* src/internal.z: made sertest quit after ^\ q (or ^\ ^C), rather
+ 	than ^\ alone, and made ^\ ^\ send a literal ^\. This makes a
+	remote kermit usable, if nothing else. :-)
+
+Thu Jun  4 22:31:02 1998  Russell Marks  <rus@lifeson>
+
+	* src/doc/zcn.txt: some BBC-Basic-related changes based on notes
+	by Steven F.
+
+	* utils/bbcbas.z: made OPENUP act like OPENIN.
+
+Tue May 26 17:33:36 1998  Russell Marks  <rus@lifeson>
+
+	* bin/README: created. A simple readme saying what's what.
+
+	* utils/README: moved details for invaders to zcn.txt, and made
+ 	this a simple `this dir contains source to external commands'
+ 	readme.
+
+Mon May 18 20:29:21 1998  Russell Marks  <rus@lifeson>
+
+	* utils/bbcbas.z: many changes to get PAGE down considerably.
+	(Mainly by making extensive use of available memory in the
+	A000h-B7FFh range.) It now has a lower PAGE than the ROM ever
+	does - if only by 768 bytes... :-)
+
+Sat May 16 04:43:41 1998  Russell Marks  <rus@lifeson>
+
+	* utils/bbcbas.z: fixed a couple of bugs - INKEY(0) missed most
+ 	chars before (had to make it wait for next int to fix that :-/),
+ 	and PRINT TAB(x,y) for x>96 printed a high-half char.
+
+	* utils/bbcbas.z (_fseek): PTR#= (seek) didn't work before, and
+	does now. :-}
+
+	* src/internal.z (itimeout): removed pointless "N mins is new
+ 	timeout" message, which didn't tell us anything we didn't already
+ 	know, and replaced slightly bonehead use of cmdline to grok number
+ 	with use of userfcb1, and saved 36 bytes.
+
+	* src/internal.z (chktail): made this (and thus commands using it,
+ 	like ren and memdump) give at least a minimal error message to
+ 	show that nothing happened (because there were no args). With no
+ 	hint of an FT influence at all, the error message is "ARGS!". :-)
+
+	* src/internal.z (irexec): now checks for a filename arg. It was
+	meant to before, but the `call chktail' was misplaced such that it
+	was never reached...!
+
+	* src/internal.z: finally added `type' as synonym for `cat'.
+
+Fri May 15 00:08:10 1998  Russell Marks  <rus@lifeson>
+
+	* zcnlib/stdio.z (makefn83): incredibly, this didn't work if a
+ 	drive was specified in lowercase. Fixed, and fixed the modified
+ 	utils/bbc_io.z too.
+
+	* src/card.z (iszcn1): make sanity checks a bit more sensible -
+	i.e. now requires <=15 sys blocks instead of 24, and <=4 dir
+	blocks instead of 8.
+
+Wed May 13 23:46:23 1998  Russell Marks  <rus@lifeson>
+
+	* src/internal.z: `save' now aborts with the error "Disk full" if
+ 	it can't write to the file. Previously it just carried on
+ 	regardless and didn't bother saying anything about it.
+
+Tue May 12 01:21:35 1998  Russell Marks  <rus@lifeson>
+
+	* src/internal.z: new `quitsub' command, aborts any SUB file
+ 	currently running (whether run with `submit' or not), optionally
+	running a specified command afterwards.
+
+	* Added internal command `ifnpeek' - if byte at given address is
+	not equal, etc. (as `ifpeek'). This is usually better for Hitech C
+	programs, as it lets you (with `ifnpeek 3 0') check if a command
+	failed. Together with the `ifpeek' change etc., this took up 118
+	bytes from the recent optimisation, leaving only 81 free. (sigh)
+
+	* src/ccp.z: now copies byte at 0080h to 0003h when user program
+ 	exits (for all commands/programs except `rem'). This means
+ 	`ifpeek' can be used to check result of Hitech C program (the exit
+ 	status).
+
+	* New internal command `ifpeek' - if byte at given address equals
+ 	given value, run given command.
+
+	* doc/zcn.txt: added a section on `bbcbas'.
+
+	* utils/bbcbas.z: added a second `copy' cursor like on the BBC.
+ 	This is a huge improvement over the rather crap `EDIT' command.
+
+Mon May 11 20:21:32 1998  Russell Marks  <rus@lifeson>
+
+	* Created `bigrun', which runs generic CP/M programs in a 62k TPA.
+ 	It deliberately won't run ZCN-specific programs though (since
+ 	these might try to access the screen directly, which is a Bad Idea
+ 	when it's paged out and a bdos redirector thing is there...), or
+ 	more accurately it quits if a ZCN-specific BDOS function is
+ 	called. It needs 32k free at the end of a drive (current drive, or
+ 	a specified one) to use as extra memory in order to provide the
+ 	62k.
+
+	* utils/defrag.z: created. Defragments free space, useful if
+	`sys' or `bigrun' fail. Speaking of which, see above... :-)
+
+Sun May 10 04:32:10 1998  Russell Marks  <rus@lifeson>
+
+	* utils/stat.z: created. An emulation of the old `stat' command.
+
+Sat May  2 18:26:15 1998  Russell Marks  <rus@lifeson>
+
+	* src/ccp.z (getsubln): no longer strips high bit from cmdline
+	read from SUB file.
+
+	* src/internal.z: many optimisations, including the breaking of
+	stat into smaller more focused commands (k3 and df), saving 184
+	bytes.
+
+Mon Apr 27 01:29:18 1998  Russell Marks  <rus@lifeson>
+
+	* utils/bbcbas.z: added (a small amount of) online help.
+
+Sun Apr 26 04:47:39 1998  Russell Marks  <rus@lifeson>
+
+	* src/bdos.z (bfrename): fixed bug - it didn't check to see if a
+ 	file with the new file existed. (I probably forgot to do this
+ 	previously because the `ren' internal command does the check
+ 	itself, before calling bfrename.)
+
+Sat Apr 25 16:57:42 1998  Russell Marks  <rus@lifeson>
+
+	* utils/bbc_io.z: added CR <-> CR/LF conversion for text files.
+
+	* utils/bbcbas.z: added printer support (both parallel and
+	serial).
+
+Wed Apr 22 02:31:11 1998  Russell Marks  <rus@lifeson>
+
+	* src/main.z: change to allow BBC Basic to check for Esc much more
+	quickly.
+
+Tue Apr 21 18:06:50 1998  Russell Marks  <rus@lifeson>
+
+	* src/term.z: saved 32 bytes.
+
+	* utils/bbcbas.z: run BBC Basic under ZCN as if it were a native ZCN
+ 	program. Works much the same way as `calc', but with rather more
+ 	ROM emulation going on. Unfortunately files are a bit weird due to
+ 	CP/M's lack of exact file length, so text files need to be
+	opened with a `:' at the start of the filename. (This applies
+	everywhere, so e.g. `*EXEC :FOO.TXT' works.)
+
+	* src/main.z: moved xloc/yloc to fixed location (start+254, or
+	more usefully (1)-5), and documented this in zcn.txt. Main
+	reason was for a hack to run BBC Basic which I'm working on.
+
+Sun Apr 19 22:04:03 1998  Russell Marks  <rus@lifeson>
+
+	* utils/calc.z: run the ROM calculator under ZCN very much as if
+	it were a native ZCN program. This involves going through a number
+	of low-level hoops, but it's quite transparent, and you probably
+	wouldn't know anything tricky was going on unless you checked out
+	the source. :-)
+
+Sun Apr 12 16:42:57 1998  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: many changes to reflect what runrom/rrxfer/rrinit
+ 	mean you can do.
+
+	* utils/rrinit.z: running this from the ROM software means you can
+ 	save a snapshot of memory before transferring ZCN, so you never
+ 	lose any data.
+
+	* Converted all *.asm files in `utils' to zmac (.z) format.
+
+	* utils/rrxfer.z: transfers files to/from memory snapshot used by
+	`runrom', so you can copy files between the ROM software and ZCN.
+
+	* utils/runrom.z: run the ROM software nicely from ZCN. Works by
+ 	keeping a 64k snapshot of the memory's state on disk when using
+ 	ZCN.
+
+Sat Apr 11 05:15:38 1998  Russell Marks  <rus@lifeson>
+
+	* src/misc.z: fixed silly bug in hex-dump routine.
+
+Wed Apr  1 00:52:35 1998  Russell Marks  <rus@lifeson>
+
+	* utils/zdbe.z: many changes, most significant of which is that
+ 	finally this disk editor supports editing! :-) The way it works is
+ 	roughly bpe-ish, but zdbe makes it harder to lose changes
+ 	accidentally.
+
+Tue Mar 31 21:36:47 1998  Russell Marks  <rus@lifeson>
+
+	* zcnlib/int32.z: corrected `exit' listings for routines which
+	claimed to use f' and af' but didn't. Same change to zcnprog.txt.
+
+Mon Feb 16 00:19:28 1998  Russell Marks  <rus@lifeson>
+
+	* After fairly massive space-optimisation effort, saved 321 bytes.
+ 	This was enough to free up 512 more bytes for TPA by moving the
+ 	`org' in main.z up to bb00h. It hasn't been up that high since ZCN
+ 	0.3 back in 1995. :-) Even so, I've yet to attack bdos.z,
+	internal.z, and term.z...
+
+Sat Feb 14 01:00:15 1998  Russell Marks  <rus@lifeson>
+
+	* src/internal.z: allow `cd' as another way of doing `user', and
+	made `user *' (and `cd *', of course :-)) the same as `user 255'.
+	Similarly made `user'/`cd' with no args same as `user 0'.
+
+	* Added redefinable prompt. This ate up about 40% of the recent
+	savings. :-)
+
+	* src/misc.z (dispdec): made specific to displaying decimal
+	numbers, as that's all it's ever used for. (Saved 29 bytes
+	including smaller `numtmp'.)
+
+Fri Feb 13 01:55:38 1998  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: added better terminfo entry.
+
+	* Various optimisations, including crude tokenisation of error
+	messages and the like, saving 93 bytes.
+
+	* src/misc.z: got rid of pointless (i.e. ignored) overflow checks
+	in mult/div routines (saving 11 bytes).
+
+	* Made `ilprint' calls indirect via a new `rst 28h' for internal
+ 	commands, saving 2 bytes each for the 30 calls in `internal.z'.
+ 	Only internal commands use it, so it doesn't matter what user
+ 	programs do with the jump at 0028h. (Documented it in zcn.txt, all
+ 	the same.) Needed a few instructions added to bdos.z to generate
+ 	the 0028h jump, so overall saved 51 bytes.
+
+	* src/internal.z (iformat): minor mod required since `format' uses
+	part of the font data, and since it's now the same as the stored
+	font in a `zcn.com' would be on a card to be reformatted, if it
+	were exactly aligned on a 16k boundary the card's size would be
+	incorrectly measured. So now it takes away one internal stack
+	entry so it can stick a magic number on the front of the font data
+	to compare against. If that sounds confusing just RTFS, ok? :-)
+
+	* src/term.z: removed font high-nibble-to-low-nibble copy code,
+	and made font data (`4x6font.dat') pre-initialised in this way.
+	Saved 26 bytes.
+
+	* src/ccp.z (memchk): saved 18 bytes.
+
+	* Removed the unnecessary `attrs' and `start8' EQUs, a couple
+	of extraneous labels, and a unused rexec error message (the latter
+	saving 28 bytes).
+
+Tue Jan 27 01:56:11 1998  Russell Marks  <rus@lifeson>
+
+	* doc/zcnprog.txt: a couple of small changes, most notably
+	documenting the possibility of output being redirected to the
+	printer.
+
+Thu Jan 15 03:47:49 1998  Russell Marks  <rus@lifeson>
+
+	* utils/dmp2txt.z: created. Converts a ZCN screen dump to a text
+	file.
+
+Wed Jan 14 03:37:15 1998  Russell Marks  <rus@lifeson>
+
+	* utils/submit.z: fixed so that when used with `*' (i.e. invoked
+	as first line of a sub file) it follows ZCN's com/sub file open
+	strategy, trying current drive/user, then user 0, then A0:.
+
+	* src/internal.z (iumv): fixed umv so it stops you moving a file
+	to a user where another file with the same name exists (which
+	would effectively corrupt them both).
+
+Sat Jan 10 16:36:58 1998  Russell Marks  <rus@lifeson>
+
+	* Added support for redirection to printer.
+
+Tue Oct 14 00:19:00 1997  Russell Marks  <rus@lifeson>
+
+	* utils/zdbe.z: tiny change to get binary down to 2k.
+
+Mon Jun 23 23:46:03 1997  Russell Marks  <rus@lifeson>
+
+	* zcnlib/graph.z (drawline): fixed fairly minor bug where short
+ 	horizontal lines could be drawn inaccurately. Maybe two years of
+ 	testing wasn't *quite* enough, eh? :-)
+
+Thu Oct  3 01:15:34 1996  Russell Marks  <rus@lifeson>
+
+	* Version 1.0a.
+
+	* doc/zcn.txt: removed references to it being a beta version. I
+	think two years of testing is probably enough. :-) Also made a
+	few minor cleanups, etc.
+
+	* Changed my release-building Makefile to not use the `-k' switch.
+ 	That way the capitalisation should be kept intact on Real
+ 	Computers (but it's still ok on MS-DOG). Also ditched renaming of
+ 	this file.
+
+	* src/powrhndl.z: added saving of R when saving context. Since the
+ 	top bit of R can be used as a flag, this may not be as pointless
+ 	as it sounds. (Well, I doubt this makes a difference to anything
+ 	in practice, but it's so easy to do that I figured I might as well
+ 	add it.)
+
+Wed Sep 11 23:20:51 1996  Russell Marks  <rus@lifeson>
+
+	* doc/zcnprog.txt: some clarification of why I don't know a great
+ 	deal about (real) CP/M's internals.
+
+Thu Sep  5 02:40:57 1996  Russell Marks  <rus@lifeson>
+
+	* Added my `cp/m inside' logo to the `doc' dir.
+
+	* doc/zcnprog.txt: wildcards in BDOS function calls don't include
+	`*', which I'd neglected to mention. Explained that.
+
+Wed Sep  4 20:17:13 1996  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (idump): fixed file offset bug, and also removed
+ 	the reverse-video on the "More" prompt. There was already a bug
+ 	which made it appear unreversed; I removed that code but left it
+ 	unreversed as I think it looks better that way.
+
+Tue Sep  3 01:08:36 1996  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: changed quoting style from 'this' to `this'. Now I
+	know why Emacs has the start/end-of-word regexp operators. :-)
+
+Mon Sep  2 02:34:28 1996  Russell Marks  <rus@lifeson>
+
+	* doc/zcnprog.txt: massively updated and expanded. It's pretty
+	much complete now. (At >60k, I should bloody hope so too. Blimey,
+	I think I ended up doing about 1000 words an hour...)
+
+	* zcnlib/ctype.z (ispunct): whoops, digits aren't punctuation...
+
+	* zcnlib/string.z: added strcat.
+
+	* zcnlib/stdio.z (fseek): fixed. Finally. :-)
+
+	* src/bdos.z: whoops - report user num. (instead of drive) in dir
+	entry returned by findfirst/next when *`dr'* is `?', not when `ex'
+	is! (This is a pretty obscure aspect of the function though, and
+	this bug didn't hurt any program I know of.)
+
+Sat Aug 10 00:31:20 1996  Russell Marks  <rus@lifeson>
+
+	* zcnlib/getopt.z: created. A getopt() clone.
+
+	* zcnlib/string.z: added strprint, ilprint and strcat.
+
+	* zcnlib/ctype.z: created. implements clones of all of C's
+	`ctype' routines like islower, toupper, etc.
+
+	* zcnlib/args.z: created. Turns the command tail into argc/argv.
+	With any luck, I should write some kind of getopt-like routine to
+	work with these soon.
+
+Tue Aug  6 00:29:47 1996  Russell Marks  <rus@lifeson>
+
+	* zselx/zselx.z: created. A reasonably faithful conversion of my
+	zselx program for Unix, a simple file manager. It's nice and small
+	(5k) and can copy, move, delete, and view multiple files, as well
+	as showing file size and listing files in name/ext/size order.
+	Really intended for ZCN, but should work on any Z80 CP/M box.
+
+	* src/misc.z: fixed bug in ilprint - previously it was outputting
+	the NUL at the end of the string, which of course you couldn't
+	see... :-)
+
+	* utils/ls.z: fixed 'foo' printed as 'foo.' on serial console bug.
+
+	* zcnlib/qsort.z: created. It contains a qsort routine, which
+	works rather like C's qsort(). Except it's not a quicksort, but an
+	exchange sort. Write a quicksort in Z80? You MUST be kidding! :-)
+
+Mon Aug  5 20:42:49 1996  Russell Marks  <rus@lifeson>
+
+	* zcnlib/string.z: added strchr and strrchr.
+
+Wed Jul 17 20:58:24 1996  Russell Marks  <rus@lifeson>
+
+	* Version 1.0.
+
+	* Added my 'cpmtris' to included programs.
+
+	* Made it filter out F7h even to serial console.
+
+Fri May 24 21:29:53 1996  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: mentioned that memory card battery level check is
+ 	very likely useless on the NC100 (which would explain why the
+ 	rom's support for it is effectively commented out).
+
+Wed Mar 27 15:49:48 1996  Russell Marks  <rus@lifeson>
+
+	* zcnlib/maths.z: fixed a bug in 'atoi' (I lifted it from ZCN
+	without remembering that the 'divide' in zcnlib has different
+	entry conditions). Also switched to a version of 'divide' which
+	doesn't use undocumented opcodes, so that programs using it work
+	under 'cpm'.
+
+Fri Mar 22 20:36:12 1996  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (ipoke): added (internal command 'poke').
+
+Thu Mar 21 15:03:52 1996  Russell Marks  <rus@lifeson>
+
+	* utils/ls.z: fixed bug in rounding file sizes where (for example)
+	files just under 32k were mysteriously listed as being 0k!
+
+	* src/bdos.z: fixed bug in matchfcb - the fix to make nswp work
+	broke 'get file size' and others in most non-zero user numbers.
+	Whoops. :-)
+
+	* zcnlib/graph.z: alter flood-fill routine to always use pset no
+	matter what currently selected 'intdpix' routine is.
+
+	* doc/zcn.txt: mention that ZCN'll be sent as a zip file unless
+	another format is requested.
+
+Sun Mar 17 02:08:38 1996  Russell Marks  <rus@lifeson>
+
+	* utils/zcnbrot.z: a Mandelbrot-plotting program. It uses
+	fixed-point maths and a 'munching squares'-style technique, so
+	it's relatively fast. Still takes 12 minutes to draw though.
+
+	* zcnlib/int32.z: created. (32-bit int routines.)
+
+Sun Mar  3 15:50:55 1996  Russell Marks  <rus@lifeson>
+
+	* utils/spellwd.z: created. A simple cmdline interface to the ROM
+	spellchecker which checks a single word given on the cmdline.
+
+Wed Feb 14 04:29:34 1996  Russell Marks  <rus@lifeson>
+
+	* src/internal.z: made 'unsys' corrupt the "NC100PRG" signature
+	previously written by 'sys', to prevent a future Fn-X from
+	attempting to boot from the card.
+
+Fri Feb  2 04:58:13 1996  Russell Marks  <rus@lifeson>
+
+	* Some minor documentation fixes.
+
+Wed Jan 24 01:33:33 1996  Russell Marks  <rus@lifeson>
+
+	* Version 0.4.
+
+	* doc/zcn.txt: lots of hacking to document zcnclock and zcnpaint.
+
+	* zcnclock/zcnclock.z: a simple ana/digi clock program.
+
+Tue Jan 23 20:38:03 1996  Russell Marks  <rus@lifeson>
+
+	* utils/play2b.z: 2-bit sample player. Probably only play4b is any
+	real use, as 1-bit and 2-bit samples sound pretty horrible.
+
+	* utils/play4b.z: 4-bit sample player.
+
+	* utils/play1b.z: 1-bit sample player.
+
+Sun Jan 21 19:34:11 1996  Russell Marks  <rus@lifeson>
+
+	* utils/zrx.z: a simple xmodem receive program designed for use
+	when console I/O is redirected to the serial port. QTERM and
+	similar programs can't handle this properly. I may write an
+	analogous 'zsx' program at some point.
+
+Sat Jan  6 01:34:47 1996  Russell Marks  <rus@lifeson>
+
+	* src/bdos.z (mfdone): fixed incredibly stupid bug where
+	findfirst/next always returned FCB with user area of zero. This
+	was what was screwing up the user area stuff in nswp. Also added
+	support for '?' in FCB dr field which should get nswp's
+	all-user-areas mode working.	
+
+Sun Dec 31 18:28:48 1995  Russell Marks  <rus@lifeson>
+
+	* Makefile: made version pre-0.4 and added zcnpaint to included
+	directories.
+
+	* zcnpaint/README: added the README to explain that it's not
+	documented, etc.
+
+	* src/bdos.z (bgetfree): added CP/M 3 get free space function.
+	Also made bdos support '?' in EX field for findfirst/next. (These
+	changes for nswp.)
+
+Mon Dec 25 01:10:59 1995  Russell Marks  <rus@lifeson>
+
+	* zcnpaint/zcnpaint.z: added pattern selector.
+
+	* zcnlib/graph.z: extra entry point to draw8x8, for zcnpaint.
+
+Sat Dec 16 19:23:23 1995  Russell Marks  <rus@lifeson>
+
+	* zcnpaint/zcnpaint.z: circle ops done, and iconpanel bugs fixed.
+
+Tue Nov 21 00:54:08 1995  Russell Marks  <rus@lifeson>
+
+	* zcnpaint/zcnpaint.z: first usable version. The simpler
+	operations are implemented; things like 'window' ops, pattern
+	selection and patterned flood-fill not done yet.
+
+Mon Nov 20 17:51:53 1995  Russell Marks  <rus@lifeson>
+
+	* zcnlib/graph.z (rect): added outline rectangle routine.
+
+	* zcnpaint/zcnpaint.z: started (yesterday in fact). It's a
+	simple mouse-based paint program.
+
+Sat Nov 18 17:12:03 1995  Russell Marks  <rus@lifeson>
+
+	* zcnlib/msdemo.z: a mouse demo, has a mouse pointer and lets you
+	draw stuff. Cor. :-)
+
+	* zcnlib/mouse.z: created. (mouse driver)
+
+	* zcnlib/graph.z: added 8x8 masked sprite routines for the mouse
+	driver.
+
+	* Various hacks to allow an MS mouse driver to work.
+
+Tue Oct 31 00:47:40 1995  Russell Marks  <rus@lifeson>
+
+	* Updated comments in zcnlib.
+
+Mon Oct 25 12:19:08 1995  Russell Marks  <rus@lifeson>
+
+	* Version 0.3a.
+
+Tue Oct 24 00:33:42 1995  Russell Marks  <rus@lifeson>
+
+	* src/term.z (fakeldir): fixed fakeldir/fakelddr to only do real
+ 	ldir/lddr when bc<256, rather than just when bit 0 of b = 0. (!)
+ 	Wasn't too nasty, at most would have caused dropped serial input
+ 	of one or two chars if they were sent immediately after an
+ 	insert/delete line.
+
+Mon Oct 23 23:56:28 1995  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (idump): fixed '-- More --' message to not use
+	real ^Y and ^X for inverse on/off; calling 'tctrly' and 'tctrlx'
+	directly is more serial-friendly.
+
+Fri Oct 20 14:32:54 1995  Russell Marks  <rus@lifeson>
+
+	* Some minor fixes to zcnlib (comments mainly).
+
+	* utils/submit.z: stopped 'missing arg' errors. CP/M may do them,
+ 	but they're just really annoying and almost always the Wrong
+ 	Thing. Now it just substitutes a single space if a parameter
+ 	wasn't given on the cmdline.
+
+Fri Oct 20 03:18:17 1995  Russell Marks  <rus@lifeson>
+
+	* src/bdos.z: removed partly incorrect speculative comments about
+ 	the bdos (written in prehistory when I was working from DOS int21
+ 	and FCB docs - no, you don't want to know :-)).
+
+	* src/internal.z: fixed some comments that were misleading or
+ 	wrong.
+
+Tue Oct 17 06:26:49 1995  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: cleaned up bits on GPL and assembling ZCN.
+
+Sat Oct 14 02:34:40 1995  Russell Marks  <rus@lifeson>
+
+	* src/internal.z (iformat): only accepts drives in range A: to D:
+	now. Previously it would accept "E:" as A:, "F:" as B:, etc.
+	(iusys): fixed fall-through bug.
+
+	* doc/zcn.txt: sorted command lists, documented 'ver', listed
+	other oddities such as spurious serial char when turning on, and
+	fixed a few random layout bugs.
+
+	* Added 'ver' command, which reports ZCN and ROM versions.
+
+Sun Sep 24 01:42:15 1995  Russell Marks  <rus@lifeson>
+
+	* src/init.z (mhello): changed bootup message to read 'ZCN v0.3a'.
+ 	The various recent changes are significant enough to mean I should
+ 	distinguish this from 0.3. zcn.txt also updated.
+
+	* src/powrhndl.z: hmm. It turns out that a few other things in the
+ 	b200-b3ff range are blasted on power-up too, as it *runs the
+ 	interrupt routine* at least twice while restoring the context.
+ 	It's a definite bug in the rom, or at best a misfeature. Grrr.
+ 	I've altered it to save that range as well as b000-b1ff, which
+ 	fixes this for good (that's the whole of the ROM software's
+ 	variable area covered now). I had an extra 256 bytes handy from
+ 	the serial buffer, but still needed to notch up the static data
+ 	size by 256 bytes... :-(
+
+	* src/powrhndl.z: it turns out the context restore routine in the
+	ROM (which ZCN has to use) blasts two bytes at B3BBh and one at
+	B257h. Now fixed to handle that. It took so long to notice as
+	nothing normally uses that area of memory except wade and possibly
+	mallard basic, and neither screwed up. Running speccy IK+ with my
+	ZCN patch for it did make it clear, though. Complete luck - it
+	corrupted one of the main sprites. :-}
+
+Fri Sep 22 04:26:18 1995  Russell Marks  <rus@lifeson>
+
+	* src/keyread.z: made shift-menu produce '~', in keeping (so it
+	seems) with unshifted menu producing backquote. Fixed control-key
+	generation so that control-menu gives the right result.
+
+	* src/ccp.z: removed the ^C from the prompt and made it directly
+ 	call the routine in term.z (tctrlc) which turns the cursor on.
+ 	This now makes ZCN perfectly well-behaved when using a terminal as
+ 	the console. (My terminal and all the emulators I tried ignored
+ 	the ^C, which is why I took so long to fix it!)
+
+Sat Sep 16 19:23:30 1995  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: some minor fixes, grammar and the like.
+
+Sun Sep  3 22:34:37 1995  Russell Marks  <rus@lifeson>
+
+	* utils/submit.z: made it look for '?' in fcb rather than a
+	literal '*', as these will of course now be expanded. :-)
+
+	* src/ccp.z: fixed bug where it ran an internal command which
+ 	matched but wasn't the same length, e.g. 'catalog' used to run
+ 	'cat'. Also made it expand '*' in fcbs derived from command-line
+	into '?'s as appropriate.
+
+Fri Sep  1 17:30:31 1995  Russell Marks  <rus@lifeson>
+
+	* src/term.z: added clear to end-of-screen to work around stupid
+	zsh bug. (If you have 'up' but not 'cd', it draws the prompt then
+	rubs it out *twice*. Duh!)
+
+	* doc/zcn.txt: typo - cursor 'up' and 'right' codes were
+	interchanged (incorrectly!) before.
+
+Wed Aug 30 01:16:23 1995  Russell Marks  <rus@lifeson>
+
+	* Version 0.3.
+
+	* src/term.z: gave in to pressure from stupid old versions of vi
+	and added cursor up and cursor right codes.
+
+Tue Aug 29 22:27:32 1995  Russell Marks  <rus@lifeson>
+
+	* Put a note about the 66h problem early on in zcn.txt, so less
+	techie people won't be worrying what's happened.
+
+	* Added and documented 'semi', an external command which runs a
+	semicolon-separated command-line by writing an appropriate
+	$$$.SUB.
+
+Tue Aug 22 14:43:39 1995  Russell Marks  <rus@lifeson>
+
+	* src/main.z: a quick hack to make Mallard Basic work without
+	patching.
+
+Sat Aug  5 23:46:26 1995  Russell Marks  <rus@lifeson>
+
+	* zcnlib/graph2.z: added filled triangle drawing routine.
+
+	* zcnlib/graph.z: added horiz/vert/general line-drawing routines.
+
+Fri Aug  4 03:05:43 1995  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: finished proofreading/fixing.
+
+	* src/misc.z: fixed screen dump at ccp bug. The bfmake call in
+	scrndump was trashing comfcb, which affected the previously-reset
+	drive and extension.
+
+Thu Aug  3 21:22:33 1995  Russell Marks  <rus@lifeson>
+
+	* Many zcnlib bugfixes.
+
+Thu Aug  3 01:39:06 1995  Russell Marks  <rus@lifeson>
+
+	* zcnlib/graph.z: created.
+
+	* zcnlib/README: commenting on creation of stdio.z and maths.z
+	here, a PD 'stuff useful for assembly programmers' library. Most
+	of it (all except the graphics routines) should work on CP/M, but
+	it's really meant for use with ZCN.
+
+Mon Jul 31 00:20:21 1995  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: proofread (and fixed) up to 'external commands'.
+
+	* support/sokoban/sokzcn.c: added cursor support, and changed the
+	format of soklevls.dat. It now has the text of a level, followed
+	by ^L, CR, LF, then the next level, etc. This saves another 4k. It
+	should also make it pretty easy to add levels again. OTOH, it
+	means that the levels take longer to load as you go on. For
+	example, level 50, the last level, takes about 3 seconds to load.
+
+Sat Jul 29 18:11:12 1995  Russell Marks  <rus@lifeson>
+
+	* utils/du.asm: created. It's a very simple 'du' clone, which
+	tells you the disk usage of the current drv/user or the filespec
+	given.
+
+	* src/internal.z: added 'get' command, to read a file in at a
+	given (hex) address. Haven't added 'usr', as '!!' can be used more
+	successfully than that would have been (can give cmdline args,
+	etc.).
+
+Sat Jul 29 00:29:39 1995  Russell Marks  <rus@lifeson>
+
+	* src/bdos.z: a bit more paranoid dealing with resetting of
+	IM1/IM2 stuff on warm boot.
+
+Fri Jul 28 13:14:03 1995  Russell Marks  <rus@lifeson>
+
+	* src/bdos.z (initbdos): now re-inits (0038) jump on warm boot.
+
+	* support/sokoban/sokzcn.c: made it use a single file with the
+	levels embedded, separated by NULs, and at 330-byte boundaries.
+	This saves a *lot* of disk space, at least 30k.
+
+	* support/sokoban/sokhack.z: done the 80x24 stuff.
+
+	* support/sokoban/sokzcn.c: CP/M port of curses sokoban. Now I
+	just have to get the 80x24 stuff working with it (eek!).
+
+	* Added rogue to support directory. I hacked a kind of 80x24
+	emulator into it to get it working ok. I may be able to generalise
+	this to work with other programs.
+
+Thu Jul 27 14:31:29 1995  Russell Marks  <rus@lifeson>
+
+	* src/bdos.z: fixed it so LU works! It makes some extremely
+	dubious, i.e. undocumented, assumptions about the value of HL for
+	BDOS functions which only return values in A, which are now
+	allowed for.
+
+	* doc/zcn.txt: added explanation of the way ZCN sees 'foo.txt' as
+	matching the wildcard 'foo?.txt'. CP/M and MS-DOS also react the
+	same way.
+
+	* User 255 is now read-only except for allowing 'umv' and 'era'
+	(user programs are also allowed to delete files in user 255).
+
+Thu Jul 27 01:22:13 1995  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: lots of mods to catch up with all the recent
+	hacking. :-)
+
+	* src/bdos.z: made user area 255 read-only.
+
+	* utils/ls.z: now gives warning if two different files have the
+	same name. This is only likely to occur in user 255. The idea here
+	is that you would only normally read files in user 255 when
+	backing up, and this warning effectively means that you'll have to
+	backup the separate user areas one by one.
+
+Wed Jul 26 03:15:52 1995  Russell Marks  <rus@lifeson>
+
+	* src/ccp.z: made prompt show user number if non-zero, e.g. 'B2>'.
+	Shows user 255 as e.g. 'B*>'.
+
+	* src/ccp.z: variant of " command, the ' command. Also echoes
+	text, but omits the ccp's cr/lf after it.
+
+	* utils/optdir.z: created. Optdir optimises dir. entries by
+	putting the largest extents nearest the beginning. Makes large
+	files *much* faster to read, at least three times faster in some
+	cases.
+
+Tue Jul 25 14:48:26 1995  Russell Marks  <rus@lifeson>
+
+	* src/card.z: made card reading a bit quicker when dest buffer is
+	cardbuf. Essentially, this makes directory searches etc. at least
+	20% quicker. Haven't done it with writes as that's a bit hairier;
+	it would have more impact on non-cardbuf writes than this change
+	does on non-cardbuf reads.
+
+	* Updated docs to cover changes; in particular, added comment
+	about effective processor speed, and changed 'sertest' serial
+	speed discussion to reflect faster terminal driver. (It's faster
+	due to the interrupt changes, of course... :-))
+
+	* src/inthndl.z: fixed tight ints mode so keys get 'released' in
+	krawmap (i.e. it gets zeroed every time in tight ints mode). This
+	makes the mode a bit slower, approximately equivalent to running
+	on a 4.8MHz Z80 [not true - see the note below], but there's no
+	way around it as ZCN doesn't control when krawmap is accessed by
+	the user program. Note that this change doesn't make the mode
+	slower compared to v0.2 - I've simply changed TI mode back to how
+	it worked then so it works again. :-)
+
+	* src/keyread.z: made interrupt keyboard-reading routine a lot
+	quicker if no keys are pressed (and, of course, very slightly
+	slower when they are). This means user programs are effectively
+	running on a 5.61MHz Z80 (about 0.66 MIPS) rather than a 4.14MHz
+	one on ZCN previously, or a 4.50MHz one with the ROM software.
+	It's still a bit slower than the Z80's true speed of 6MHz (0.71
+	MIPS). [NB: I have since found this to be wrong. The NC100 has a
+	6MHz Z80 which is supplied with a ~4.606MHz clock. See zcn.txt for
+	details.]
+
+Sun Jul 23 18:51:57 1995  Russell Marks  <rus@lifeson>
+
+	* src/internal.z: added 'df' command, which just does the last
+	line of 'stat'. The idea is that it's a little bit like the Unix
+	'df' command. A very little bit. :-)
+
+	* Saved another 130 bytes by extensively using an inline
+	message printing routine, ilprint, rather than bdprint.
+
+	* src/term.z (fakelddr): made as quick (slow) as fakeldir.
+
+	* Saved about 30 bytes by replacing 'rl a' with 'rla', 'call
+	nnnn:ret' with 'jp nnnn', and similar things.
+
+Thu Jul  6 01:12:39 1995  Russell Marks  <rus@lifeson>
+
+	* utils/invaders.z: think I've worked around the bug. Also added
+	large chunks of chrome. :-)
+
+	* Tested new divide stuff, it seems to work ok. 'stat' still gives
+	the right answers, anyway. :-)
+
+	* src/powrhndl.z: made it re-enable interrupts on power-on if they
+	were on when the power-off NMI occurred. I should probably remove
+	all the warnings about not using 'halt' etc. in zcn.txt sometime.
+
+	* utils/invaders.z: got the guts of a basic m/c invaders clone
+	mostly working (aside from one bizarre bug).
+
+Wed Jul  5 01:48:22 1995  Russell Marks  <rus@lifeson>
+
+	* doc/zcn.txt: added some more stuff on battery warnings, and how
+	long rechargeables seem to last.
+
+Tue Jul  4 02:22:46 1995  Russell Marks  <rus@lifeson>
+
+	* src/misc.z: used undocumented instructions to speed up divide
+	routine a little. Untested as yet, since amnesia's serial lead is
+	currently part of the local doomnet. :-)
+
+Sun Jun 25 21:23:16 1995  Russell Marks  <rus@lifeson>
+
+	* Version 0.2. May as well upload it before leaving the 'net. :-)
+
+Tue Jun  6 20:29:36 1995  Russell Marks  <rus@lifeson>
+
+	* Added some more programs to support dir. Some bugfixes in
+	documentation.
+
+Mon May 29 03:38:18 1995  Russell Marks  <rus@lifeson>
+
+	* utils/ls.z: now sorts listing vertically.
+
+	* Time read/set programs working.
+
+Sun May 21 23:28:11 1995  Russell Marks  <rus@lifeson>
+
+	* src/card.z: corrected several comments.
+
+Sun May 21 00:21:10 1995  Russell Marks  <rus@lifeson>
+
+	* src/bios.z (wboot): worked around zmac bug. (That bug took some
+	serious tracing...)
+
+	* 'useim2' option. This uses IM 2, freeing the RST 38h position
+	and instruction for use by debuggers (e.g. WADE works properly
+	after 'useim2 1'). Default is still IM 1, since using IM 2
+	takes a bit more memory (512 bytes).
+
+Sat May 20 02:20:56 1995  Russell Marks  <rus@lifeson>
+
+	* src/bdos.z: fixed bug in bsnext (it was assuming the FCB's
+	address was passed again). Amazingly, this worked most of the
+	time.
+
+Thu May 18 04:38:03 1995  Russell Marks  <rus@lifeson>
+
+	* Made terminal driver slightly faster.
+
+Fri May 12 01:01:27 1995  Russell Marks  <rus@lifeson>
+
+	* More documentation updates.
+
+	* A couple of optimisations, saving 73 bytes.
+
+Tue May  9 17:12:22 1995  Russell Marks  <rus@lifeson>
+
+	* src/term.z (tcurgrok): made cursor movement tolerant of losing
+	top bit of X position, which would otherwise fail with X positions
+	>=96. Some programs (e.g. QTERM) drop NULs though, which means
+	that moving to column 96 fails. :-( This is completely losing;
+	it's the *terminal's* job to drop padding characters. (sigh)
+
+	* src/bdos.z: added blogvec, BDOS function 24 'return login
+	vector'. Also added brovec, BDOS function 29 'get read-only
+	vector' (which always returns HL=0 and A=0).
+
+Mon May  8 17:35:07 1995  Russell Marks  <rus@lifeson>
+
+	* Support for .SUB files with args. The way it works is similar to
+	CP/M 2.2, but 'submit' takes a special '*' arg which causes it to
+	ignore the first line of the input file and use the cmdtail as
+	given to the .SUB file as it was run. This means you can have
+	self-running .SUB files that take arguments if the first line is
+	'submit filename.sub *'.
+
+	* utils/submit.z: been there, done that. :-)
+
+	* Added support for $$$.SUB. Hopefully I'll write a 'submit'
+	program soon, and you'll be able to create .SUB files that take
+	arguments. Wow. :-)
+
+	* src/zcnfunc.z: setting real-time clock time works now, as far as
+	I can tell.
+
+Mon May  8 00:54:01 1995  Russell Marks  <rus@lifeson>
+
+	* Made ZCN's use of the user stack as minimal as I can manage. The
+	BDOS and interrupt handler now use 2 bytes (this is from the
+	program's CALL, so that's unavoidable :-)) and the BIOS uses 4
+	bytes.
+
+	* Made serial support a lot better. It can now cope with even
+	19200 without hanging; good for file transfers. :-) Of course, the
+	terminal driver can't keep up with this speed, and 4800 is about
+	the fastest speed reasonable for interactive use. Also made the
+	serial buffer 768 bytes instead of 128 by swapping it with the
+	keyboard buffer (which is now 128 bytes) and letting it run on
+	into the buffer used by the context saving stuff. This sounds
+	dangerous, but because interrupts are disabled all the time the
+	context saving/restoring is going on, it's actually perfectly
+	safe.
+
+Sun May  7 14:13:48 1995  Russell Marks  <rus@lifeson>
+
+	* src/term.z: made tabs non-destructive so you can use `it#8' in
+	the termcap for (potentially) faster horizontal movement.
+
+Sat May  6 00:04:06 1995  Russell Marks  <rus@lifeson>
+
+	* utils/ls.z: merged ls and lsl into single 'ls' which takes a
+	'-l' option, and fixed it so files without extensions appear
+	without the separating dot.
+
+	* Updated documentation a bit.
+
+Fri May  5 23:52:35 1995  Russell Marks  <rus@lifeson>
+
+	* src/internal.z: fixed bug in 'save' internal command.
+
+Wed Feb  1 01:07:34 1995  Russell Marks  <rus@lifeson>
+
+	* Version 0.1.
+
+Wed Jan 11 02:35:16 1995  Russell Marks  <rus@lifeson>
+
+	* Made various keys do something useful. Cursor up/left/right/down
+	are now mapped to ^E/^S/^D/^X, i.e. Wordstar-style cursor movement
+	keys. 'Del->' is mapped to ^G for the same reason.
+
+	* Fixed long-standing cursor-down bug - the cursor-down key works
+	now.
+
+Tue Jan 10 03:05:23 1995  Russell Marks  <rus@lifeson>
+
+	* Renamed 'ls' to 'lsl'. New 'ls' doesn't display file sizes, which
+	makes it quite a bit faster.
+
+Thu Nov 17 15:01:55 1994  Russell Marks  <rus@lifeson>
+
+	* Made ZCN bootable from a card with Function-X. That's all you
+	have to do now, after a reset - just press Fn-X.
+
+Sun Oct 30 21:25:56 1994  Russell Marks  (rus@lifeson)
+
+	* Fixed bug with serial console - keyboard status checks come from
+	serial now if serial con input is being used.
+
+Thu Oct 20 13:23:28 1994  Russell Marks  (rus@lifeson)
+
+	* Put BIOS jumptable on a 256-byte page boundary - i.e. xx00h.
+	Wanderer gets one stage closer to being playable. :-)
+
+Mon Oct 17 19:41:16 1994  Russell Marks  (rus@lifeson)
+
+	* src/zcnfunc.z: get/set real-time clock functions. Not very
+	tested, etc. but they seem to work.
+
+	* src/internal.z: Adjustable baud rate. Don't get your hopes up,
+	2400 is all you can do when using the NC100 as a terminal, or for
+	file transfers, but when using a terminal (or PC, whatever)
+	connected to the NC100 as a serial console, you can do 19200 no
+	problem. This is because the NC100 can handle human-speed input at
+	any baud rate it supports, but full-speed (computer) input causes
+	too many interrupts. (It's actually more tricky than this, but
+	that's the essence of it.)
+
+Thu Oct 13 23:37:06 1994  Russell Marks  (rus@lifeson)
+
+	* 'ren' command fixed - now reports 'File exists' if the filename
+	to change to is already in use.
+
+	* Real beep now given if you do 'realbeep 1' (you could put this
+	in your 'autoexec.sub' if you want). It's a rather weird beep but
+	it's the only one I've come up with that is reasonably quiet - the
+	NC100's speaker is rather too loud IMHO.
+
+Wed Oct 12 19:08:32 1994  Russell Marks  (rus@lifeson)
+
+	* Added ZCN-specific function to report current redirections (i.e.
+	serial or not). Changed 'ls' to act appropriately - assume 80
+	cols and don't use italics.
+
+	* Parallel printer support.
+
+	* Added redirection of console input/output/both to serial port.
+
+Tue Oct 11 16:43:36 1994  Russell Marks  (rus@lifeson)
+
+	* Disallowed random access functions in user 255, to avoid
+	potentially VERY nasty problems extending a file originally
+	created in user number 1-15. (It would have ended up splitting the
+	file and putting the new bits in user 0... oouucchh.)
+
+	* src/bdos.z (bfrename): Added, and fixed bug. Rename will screw
+	up a findfirst/next cycle if called in the middle of one... hope
+	this isn't a problem. :-)
+
+	* Loads of changes to get user numbers working properly. Now when
+	you run a com/sub ZCN looks in specified drv/current usr then in
+	specified drv/usr0 then in a:/usr0. Extra feature - when you do
+	'user 255' files of all usernums appear. Writing files in user 255
+	actually writes them to user 0. Also added command 'umv' to move
+	file(s) to specified usernum. Used up all those saved bytes now,
+	and more. :-(
+
+	* Saved about 350 bytes by making error messages etc. less
+	verbose.
+
+Mon Oct 10 22:19:32 1994  Russell Marks  (rus@lifeson)
+
+	* src/term.z: moved poweroff timeout reset and control/symbol
+	pause from tputchar to grokchar, so they now work when text is
+	printed with BDOS function 9.
+
+	* src/internal.z (ibatwarn): added internal command to
+	disable/re-enable battery warnings.
+
+	* src/ccp.z (memchk): made battery warnings optional.
+
+	* src/bdos.z: superugly hack to get pmarc stuff to work. ZCN now
+	uses a static data area for BDOS search first/next calls rather
+	than using part of the FCB.
+
+Sun Oct  9 01:17:18 1994  Russell Marks  (rus@lifeson)
+
+	* src/ccp.z: battery testing before prompt displayed.
+
+	* src/powrhndl.z (rstrhndl): added cold-boot (from memory) when
+	both shifts are pressed on powerup.
+
+	* doc/zcn.txt: put together some of the new stuff on building and
+	changes to ZCN. Added stuff about the 1/100th strobe. Still have
+	to fix the stuff about building on DOS sometime.
+
+Thu Sep 29 23:55:10 1994  Russell Marks  (rus@lifeson)
+
+	* First beta-test version of ZCN.
+
+Fri Aug 26 ??:??:?? 1994  Russell Marks  (rus@lifeson)
+
+	* First ever version of ZCN. (Historical investigation reveals
+ 	that this first standalone version of ZCN ran for the first time
+ 	on 940826. All it did was act as a dumb terminal echoing input,
+ 	but it worked.)

@@ -1,0 +1,10 @@
+NAME
+	lfconv - convert Unix-format text files to CP/M format
+
+SYNOPSIS
+	lfconv infile outfile
+
+DESCRIPTION
+	Convert an LF-only text file to the CR/LF format used by most
+	CP/M and ZCN programs. (Some cope with LF-only files, but not
+	many.)

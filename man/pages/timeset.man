@@ -1,0 +1,35 @@
+NAME
+	timeset - set current time/date
+
+SYNOPSIS
+	timeset [[YYMMDD] HHMM[SS]]
+
+DESCRIPTION
+	Set the time (and optionally the date) of the NC100's
+	real-time clock. The time given must be in 24-hour format, and
+	both the time and (if specified) the date must be given as
+	digits only (no `-' or `/' separators, etc.), padded with
+	zeroes if necessary.
+
+EXAMPLES
+	Run `timeset' without any time/date to get some examples of
+	how to use it.
+
+BUGS
+	The NC100's real-time clock doesn't support dates before 1st
+	Jan 1990, nor does it support dates after 31st Dec 2099. If
+	you're using ZCN in the 22nd century, apologies for the
+	inconvenience. :-)
+
+	Timeset should really use YYYYMMDD, or at least *allow* a
+	four-digit year, for better consistency with `time'. It deals
+	with the YY digits reasonably though - to get the century,
+	1900 is added if YY>=90, and 2000 is added otherwise. This
+	should be ok until 2089, and shouldn't be too confusing as
+	`timeset' is only ever concerned with the current date.
+
+	ZCN only currently uses the time/date for the programs listed
+	below...
+
+SEE ALSO
+	time, rrxfer, zcnclock

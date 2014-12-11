@@ -1,0 +1,677 @@
+;defrag - defragments free space on drive.
+;
+;this will not make anything quicker, but *does* make free space
+;contiguous. This can be important for `sys' and (especially) `bigrun'.
+;
+;since file fragmentation makes *ZERO* difference to performance
+;on a memory card (no seek time, of course), this only defragments
+;free space, pushing all allocated blocks up as near the start of the
+;drive as possible.
+
+org 0100h
+
+jr start
+
+dirblks equ 04000h
+freeblkmap equ 08000h
+blockbuf equ 09000h
+
+drive: defb 0		;drive we're working on, 0=a:
+numdirblks: defb 0	;number of dir. blocks (usually 2)
+dirblksiz: defw 0	;size of dirblks in bytes (usually 2048)
+numdatblks: defb 0	;number of data blocks on drive
+numfreeblks: defb 0	;number of free blocks on drive
+
+verbose: defb 0		;=1 if we should say what's going on.
+
+
+start:
+ld a,(066h)
+cp 0f7h
+ret nz		;ZCN only
+
+;I *think* this should be re-entrant, but with something like this
+;it's really not worth taking the risk, so we prevent it just in case.
+ld a,0c9h
+ld (0100h),a
+
+;see if they did `-q'
+ld a,1
+ld (verbose),a
+ld hl,(05dh)
+and a
+ld de,0512dh	;`-Q' as a little-endian hex word
+sbc hl,de
+jr nz,start2
+
+xor a
+ld (verbose),a
+;copy drive number from arg2
+ld a,(06ch)
+ld (05ch),a
+
+start2:
+;have to specify drive, and must be A:..D:, i.e. 1..4
+ld a,(05ch)
+and a
+jr z,usage
+cp 5
+jr nc,usage
+dec a
+ld (drive),a
+
+call init		;init various bits
+call getfreeblk		;get free-blocks map
+call dir_read		;read dir blocks
+call defrag		;do the actual defragmentation of free space
+call dir_write		;write dir blocks
+
+bombout:		;init comes here if there are zero free blocks
+call is_verbose
+jp nc,0
+
+call ilprint
+defb 'done.',0
+rst 0
+
+
+is_verbose:
+ld a,(verbose)
+;could just do rra, but I prefer a proper non-zero check.
+and a
+ret z	;and nc
+scf
+ret
+
+
+usage:
+call ilprint
+defb 'usage: defrag [-q] <drive>',0
+rst 0
+
+
+;this table is for reading the first 128 bytes of the drive's boot block
+initblk:
+defb 0		;drive (modified)
+defw 0		;offset from start of drive
+defw 080h	;address to read bytes to
+
+
+init:
+ld a,(drive)
+ld (initblk),a
+
+ld de,initblk
+ld c,138	;read for boot/sys blocks
+call 5
+
+ld a,(089h)
+ld (numdirblks),a
+
+;multiply by 1024 and put in (dirblksiz)
+ld h,a
+ld l,0		;*256
+add hl,hl	;*512
+add hl,hl	;*1024
+ld (dirblksiz),hl
+
+;now we need to figure out the number of data blocks on the drive.
+;First we figure out how big the drive is overall, minus the boot
+;block. If the card size is 256 or over (i.e. if the low byte of the
+;size is zero) then it'll be 255k, otherwise it's the low byte minus 1.
+;in fact, using 8-bit maths, low_byte-1 works for both cases. :-)
+ld a,(086h)
+dec a
+
+;subtract the number of system blocks then, and we've got our number.
+ld hl,088h
+sub (hl)
+ld (numdatblks),a
+
+;find out how many blocks are free
+;we *could* do this later by looking at the free-blocks map later,
+;but it's easier to do it this way now. :-)
+ld a,(drive)
+ld e,a
+ld c,46		;get free disk space
+call 5
+
+ld hl,(080h)
+;div by 8 (it's in records)
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ld a,l
+ld (numfreeblks),a
+
+;if there are zero free blocks, say we're done already, 'cos we are. :-)
+and a
+jp z,bombout
+ret
+
+
+getfreeblk:
+ld a,(drive)
+ld d,a
+ld c,140
+call 5
+ld de,freeblkmap
+ld bc,256
+ldir
+ret
+
+
+
+blktbl:
+defb 0		;block number (modified)
+defb 0		;record number in block (modified)
+defb 0		;drive (modified)
+defw 0		;address to read/write bytes to/from (modified)
+
+
+dir_read:
+call is_verbose
+jr nc,drskip
+
+call ilprint
+defb 'reading dir',13,10,0
+
+drskip:
+ld ix,blktbl
+ld hl,dirblks
+ld a,(drive)
+ld (ix+2),a
+
+ld c,0
+dr_blklp:
+ld (ix),c
+
+ld b,0
+dr_sectlp:
+ld (ix+1),b
+push bc
+push hl
+ex de,hl
+ld (ix+3),e
+ld (ix+4),d
+
+ld de,blktbl
+ld c,136	;read from data block
+call 5
+inc a
+jr z,dir_rderr
+
+pop hl
+ld de,128
+add hl,de
+pop bc
+inc b
+ld a,b
+cp 8
+jr nz,dr_sectlp
+
+inc c
+ld a,(numdirblks)
+cp c
+jr nz,dr_blklp
+ret
+
+
+dir_rderr:
+call ilprint
+defb 'Error reading dir',0
+rst 0
+
+
+;almost identical to read, as it happens...
+dir_write:
+call is_verbose
+jr nc,dwskip
+
+call ilprint
+defb 'writing dir',13,10,0
+
+dwskip:
+ld ix,blktbl
+ld hl,dirblks
+ld a,(drive)
+ld (ix+2),a
+
+ld c,0
+dw_blklp:
+ld (ix),c
+
+ld b,0
+dw_sectlp:
+ld (ix+1),b
+push bc
+push hl
+ex de,hl
+ld (ix+3),e
+ld (ix+4),d
+
+ld de,blktbl
+ld c,137	;write to data block
+call 5
+inc a
+jr z,dir_wrerr
+
+pop hl
+ld de,128
+add hl,de
+pop bc
+inc b
+ld a,b
+cp 8
+jr nz,dw_sectlp
+
+inc c
+ld a,(numdirblks)
+cp c
+jr nz,dw_blklp
+ret
+
+
+dir_wrerr:
+call ilprint
+defb 'Error writing dir (not good!)',0
+rst 0
+
+
+
+
+oldblock: defb 0
+newblock: defb 0
+
+defrag:
+;here's how it works.
+;
+;say we have a typical non-bootable drive with 255 blocks, and X blocks
+;on it are free. We go through from block (255-X) onwards looping X
+;times, seeing if the block is allocated. If so, we write it to the
+;first free block, mark that as used in our free-blocks map,
+;and correct all references to the old block number in any in-use
+;directory entries. (There should only be one reference, but there's
+;no harm in checking them all.)
+
+;get block to start from
+ld a,(numdatblks)
+ld hl,numfreeblks
+sub (hl)
+ld c,a
+
+;and we'll be doing this many blocks
+;(since we've got this far, we know it's non-zero)
+ld b,(hl)
+
+call is_verbose
+jr nc,dflp
+
+;start up "  0 /  42"-like display.
+push bc
+call ilprint
+defb '    / ',0
+ld a,(numfreeblks)
+call dispdec
+;leave the cursor on the slash
+call ilprint
+defb 8,8,8,8,8,0
+pop bc
+
+
+dflp:
+push bc
+
+call is_verbose
+jr nc,dfvbskip
+push bc
+ld a,13
+call putchar
+ld a,(numfreeblks)
+sub b
+inc a		;make it 1-based
+call dispdec
+;leave the cursor on the slash
+ld a,32
+call putchar
+pop bc
+dfvbskip:
+
+ld hl,freeblkmap
+ld b,0
+add hl,bc
+ld a,(hl)
+and a
+jr nz,dfskip	;don't do anything if it's already free
+
+;otherwise, read it, and write it to first free block.
+ld a,c
+ld (oldblock),a
+ld (hl),1	;mark it as free
+ld hl,blockbuf
+call readblk	;read it
+call firstfree	;get first free block in a
+ld (newblock),a
+ld hl,freeblkmap
+ld b,0
+ld c,a
+add hl,bc
+ld (hl),0	;mark it as used
+;a is already block to write
+ld hl,blockbuf
+call writeblk
+
+;that's the block itself dealt with. now we have to go through
+;dirblks fixing any references to it.
+ld ix,oldblock
+ld hl,dirblks
+dfdirlp:
+push hl
+
+ld a,(hl)
+cp 0e5h
+jr z,dfdirskip		;skip if it's an unused entry
+
+ld de,16
+add hl,de
+
+ld b,16
+dfentlp:
+ld a,(hl)
+cp (ix)		;i.e. (oldblock)
+jr nz,dfentskip
+ld a,(newblock)
+ld (hl),a
+dfentskip:
+inc hl
+djnz dfentlp
+
+dfdirskip:
+pop hl
+ld de,32
+add hl,de
+
+;see if we've reached the end of dirblks
+ex de,hl
+ld hl,(dirblksiz)
+ld bc,dirblks
+add hl,bc
+and a
+sbc hl,de
+ex de,hl
+
+jr nz,dfdirlp
+
+dfskip:
+pop bc
+inc c
+djnz dflp
+
+
+call is_verbose
+ret nc
+
+call ilprint
+defb 13,10,0
+ret
+
+
+
+;entry: hl=addr to read block at, a=block number
+readblk:
+ld ix,blktbl
+ld (ix),a
+ld a,(drive)
+ld (ix+2),a
+
+ld b,0
+rb_sectlp:
+ld (ix+1),b
+push bc
+push hl
+ex de,hl
+ld (ix+3),e
+ld (ix+4),d
+
+ld de,blktbl
+ld c,136	;read from data block
+call 5
+inc a
+jr z,blk_rwerr
+
+pop hl
+ld de,128
+add hl,de
+pop bc
+inc b
+ld a,b
+cp 8
+jr nz,rb_sectlp
+ret
+
+
+;entry: hl=addr to write block from, a=block number
+writeblk:
+ld ix,blktbl
+ld (ix),a
+ld a,(drive)
+ld (ix+2),a
+
+ld b,0
+wb_sectlp:
+ld (ix+1),b
+push bc
+push hl
+ex de,hl
+ld (ix+3),e
+ld (ix+4),d
+
+ld de,blktbl
+ld c,137	;write to data block
+call 5
+inc a
+jr z,blk_rwerr
+
+pop hl
+ld de,128
+add hl,de
+pop bc
+inc b
+ld a,b
+cp 8
+jr nz,wb_sectlp
+ret
+
+
+;since all the old data is left where it is as well as new copies
+;being written, only a failed directory write can possibly result
+;in data loss or corruption. so this error isn't over-optimistic. :-)
+blk_rwerr:
+call ilprint
+defb 'Error reading/writing block (but data is intact)',0
+rst 0
+
+
+;return first free block (according to freeblkmap) in A
+firstfree:
+ld hl,freeblkmap
+ld bc,256
+ld a,1
+cpir
+ld a,0
+jr nz,ff_failed
+
+;get block number
+ld de,freeblkmap
+and a
+sbc hl,de
+ld a,l
+dec a	;block in a
+ret
+
+ff_failed:
+;since we know that there must have been one free (this routine
+;was only called to find it, not to check it was there!), something
+;has gone very badly wrong. This is a serious can't-happen situation.
+;(but data is intact because dirblks wasn't written back)
+call ilprint
+defb 'Failed "firstfree" - can',39,'t happen! (data intact)',0
+rst 0
+
+
+;from zcnlib:
+
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+call putchar
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)
+
+putchar:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;these from zcnlib via stat.z
+
+div10:
+ld b,h
+ld c,l
+
+ld de,0
+ld h,d
+ld l,d
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+and a
+rl e
+rl d
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+push de
+ld de,10
+and a
+sbc hl,de
+pop de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+ld a,1
+or e
+ld e,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp	equ 06ch
+
+;convert number in de to ascii in internal buffer
+;entry: de=number
+;exit:  de=addr of number in internal buffer, '$' terminated
+itoa:
+ld hl,numtmp+5
+ld (hl),'$'
+
+dispnlp:
+push hl
+ex de,hl
+
+call div10
+
+ld a,e
+add a,48
+
+ex de,hl	;so de now is result of division
+pop hl
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ret
+
+
+;display 8-bit decimal number padded to 3 chars long
+;entry: a=number to print
+dispdec:
+cp 100
+call c,printspc
+cp 10
+call c,printspc
+ld d,0
+ld e,a
+call itoa
+ld c,9
+jp 5
+
+printspc:
+push af
+ld a,32
+call putchar
+pop af
+ret

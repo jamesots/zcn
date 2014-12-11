@@ -1,0 +1,56 @@
+NAME
+	sokoban - a puzzle game
+
+SYNOPSIS
+	sokoban [start_level]
+
+DESCRIPTION
+	Sokoban is a ZCN port of a Linux version of a Minix port of a
+	Unix puzzle game which was a clone of one for MS-DOS. :-)
+
+	In sokoban you (`**') have to push the blocks (`[]') around in
+	order for them to all end up where they have to be put (`..').
+	(Blocks appear as `<>' when on a `..' location.)
+
+	Note that you can't pull a block - you can only *push* them.
+	That's where the `puzzle' aspect comes from. :-)
+
+	This port does not support proper save-games (only the
+	temporary in-memory position-within-a-level save), but this
+	shouldn't matter too much as you can choose which level to
+	start on. For example, starting with `sokoban 4' starts you on
+	the 4th level. There are 50 levels in all.
+
+KEYS
+	h		move/push left
+	l		move/push right
+	j		move/push down
+	k		move/push up
+	H (shift-H) or ^H
+			run left
+	L or ^L		run right
+	J or ^J		run down
+	K or ^K		run up
+	u		undo last move/push
+	U		undo all
+	c		save current position (in memory)
+	^U		restore last saved position
+	^R		redraw screen
+	q		quit
+
+FILES
+	soklevls.dat - required data file, containing level layouts.
+
+BUGS
+	If you press a key too quickly after the previous one (this is
+	likely to happen if you hold a key down), then the key is
+	ignored and the ordinary terminal driver displays the
+	character you pressed, messing up the screen slightly. This is
+	nothing to worry about - just do ^R to redraw the screen and
+	try not to get so carried away. :-)
+
+AUTHORS
+	The MS-DOS sokoban was by Spectrum Holobyte.
+	"ber@astbe" wrote a Unix clone of the above.
+	Bengt Andersson ported that to Minix, then Linux.
+	Russell Marks ported the Linux version to ZCN.

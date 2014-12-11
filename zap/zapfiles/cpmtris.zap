@@ -1,0 +1,27 @@
+progname Cpmtris
+progfile cpmtris.com
+# no filetype
+bmphex 7fbfee0e
+bmphex 40a02912
+bmphex 4fb328a2
+bmphex 50386b4e
+bmphex 6fbfaffe
+bmphex 76bfeefa
+bmphex 7fbc0f5e
+bmphex 00003c00
+bmphex 000043f0
+bmphex 03c1810e
+bmphex 0c3e0606
+bmphex 301b880e
+bmphex c060701e
+bmphex b1803f3c
+bmphex 5f007afc
+bmphex 6bc1f57c
+bmphex 35bffabc
+bmphex 1b57fd7c
+bmphex 15abfab8
+bmphex 0ed5fd78
+bmphex 036bf3b0
+bmphex 00d5e070
+bmphex 003bc000
+bmphex 00078000

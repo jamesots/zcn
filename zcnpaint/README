@@ -1,0 +1,12 @@
+Zcnpaint is a paint program. You need a microsoft-compatible serial
+mouse (plugged in the 9-pin serial port) to use it. I use a Logitech
+Pilot Trackball, and haven't tried it with any other mice. It should
+work with just about anything, though.
+
+Zcnpaint is documented in doc/zcn.txt. Look in the "ZCN external
+commands" section under "ZCNPAINT".
+
+This directory contains source only; the binary is in the 'bin'
+directory.
+
+-Rus.

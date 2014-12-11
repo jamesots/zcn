@@ -1,0 +1,1015 @@
+;graph - simple graphics routines.
+;these are *definitely* ZCN-specific. :-)
+;XXX flood-fill only works for solid black.
+
+
+;for cpm zmac:
+;ZZglobal intdpix
+;ZZglobal pixstyle	;pixel draw routine for line, circle, etc. = hl
+;ZZglobal pos2addr	;pixel pos. (de,c) to hl=addr, c=byte w/bit set at pos
+;ZZglobal pset		;set pixel at (de,c)
+;ZZglobal fastpset	;pset without clipping (dangerous)
+;ZZglobal preset	;reset pixel at (de,c)
+;ZZglobal fastpres	;preset without clipping (dangerous)
+;ZZglobal pxor		;xor pixel at (de,c)
+;ZZglobal fastpxor	;pxor without clipping (dangerous)
+;ZZglobal pfillpat	;draw pixel according to current fill pattern
+;ZZglobal setfill	;set fill ptr to point to 8 byte fill bmp at hl
+;ZZglobal patwhite	;
+;ZZglobal patlgrey	;
+;ZZglobal patmgrey	; the 'built-in' fill patterns
+;ZZglobal patdgrey	;  ('patblack' is the default)
+;ZZglobal patblack	;
+;ZZglobal hline		;draw horizontal line from (de,c) to (hl,c)
+;ZZglobal vline		;draw vertical line from (de,c) to (de,b)
+;ZZglobal rect		;draw outline rect. from (de,c) to (hl,b)
+;ZZglobal frect		;draw filled rect. from (de,c) to (hl,b)
+;ZZglobal drawline	;draw line from (de,c) to (hl,b)
+;ZZglobal clrscrn	;fast clear screen (quicker than ldir or ^A)
+;ZZglobal pget		;get pixel at (de,c) in a - FFh=on, 0=off
+;ZZglobal flood		;floodfill from (de,c)
+;ZZglobal draw8x8	;draw 8x8 bmp/mask from ix at (de,c)
+;ZZglobal save16x8	;save 16x8 at (de&~7,c) at ix
+;ZZglobal rstr16x8	;restore 16x8 from ix to (de&~7,c)
+
+
+;x pos & 7 -> mask table for pos2addr routine
+masktbl:
+defb 080h,040h,020h,010h,008h,004h,002h,001h
+
+;the line, circle etc. routines call this to draw a pixel at (de,c)
+;af/bc/de/hl allowed to corrupt
+;set this routine with 'pixstyle'
+intdpix: jp pset
+
+
+;use the routine at hl as 'pixel draw' routine for all graphics
+;routines which set more than one pixel, such as 'circle'.
+;valid choices are pset, preset and pxor, but you can supply your
+;own routine if you want. You could even use fastp{set,reset,xor},
+;but you risk a crash if an attempt is made to draw off the screen.
+;the pixel drawing routine can corrupt af/bc/de/hl, but must leave
+;ix/iy intact. it will need to do co-ordinate range checking itself
+;if you need it.
+;entry: hl=addr of pixel draw routine
+;exit:	nothing
+pixstyle:
+ld (intdpix+1),hl
+ret
+
+
+;convert pixel position (de=x, c=y) to hl=addr, c=mask w/pixel set at pos
+;af/b/de corrupt
+;this is primarily intended for internal use, but feel free to use it
+;directly.
+pos2addr:
+push de
+;get pixel mask byte first
+ld a,e
+and 7
+ld d,0
+ld e,a
+ld hl,masktbl
+add hl,de
+ld a,(hl)
+
+;y pos
+ld h,c
+ld l,d	;d is still 0
+rr h	;carry flag is 0 from the 'add hl,de'
+rr l
+rr h
+rr l
+
+;put mask (from a) into c
+ld c,a
+
+;x pos
+pop de
+ld a,e
+and 0f8h
+rr d	;get the only used bit in d
+rra
+rra
+rra
+or l
+ld l,a
+
+;effectively add 0f000h to hl
+ld a,0f0h
+or h
+ld h,a
+ret
+
+
+;set pixel at (de,c)
+;use 'fastpset' to avoid clipping
+;af/bc/de/hl corrupt
+pset:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+fastpset:
+call pos2addr
+ld a,(hl)
+or c
+ld (hl),a
+ret
+
+
+;reset pixel at (de,c)
+;use 'fastpres' to avoid clipping
+;af/bc/de/hl corrupt
+preset:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+fastpres:
+call pos2addr
+ld a,c
+cpl
+and (hl)
+ld (hl),a
+ret
+
+
+;xor pixel at (de,c)
+;use 'fastpxor' to avoid clipping
+;af/bc/de/hl corrupt
+pxor:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+fastpxor:
+call pos2addr
+ld a,(hl)
+xor c
+ld (hl),a
+ret
+
+
+;set/reset pixel at (de,c) according to a fill pattern
+;(you set the fill pattern with the 'setfill' routine below)
+;af/bc/de/hl corrupt
+pfillpat:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+push bc
+call pos2addr
+pop de
+;get relevant fill byte's bit into b
+push hl
+ld hl,(intfpat)
+ld d,0
+ld a,e
+and 7
+ld e,a
+add hl,de
+ld a,(hl)
+and c		;mask out irrelevant bits
+ld b,a
+pop hl
+
+;get byte from screen and mask out the bit we're interested in
+ld a,c
+cpl
+and (hl)
+or b		;add fill bit
+ld (hl),a
+ret
+
+
+;setfill - set fill used by 'pfillpat' to that at hl
+;actually sets the address of the 8x8 (mono, 8 bytes) fill bitmap
+; rather than the bitmap itself, so you can change the fill without
+; having to call this if you want.
+;entry: hl=addr of fill bitmap
+;exit:  nothing
+;none corrupt
+setfill:
+ld (intfpat),hl
+ret
+
+
+intfpat: defw patblack		;default fill is just black
+
+;the 'preset' fills
+
+;completely white
+patwhite: defb 0,0,0,0, 0,0,0,0
+
+;light grey
+patlgrey: defb 0aah,0,0aah,0, 0aah,0,0aah,0
+
+;medium grey
+patmgrey: defb 0aah,055h,0aah,055h, 0aah,055h,0aah,055h
+
+;dark grey
+patdgrey: defb 0aah,0ffh,0aah,0ffh, 0aah,0ffh,0aah,0ffh
+
+;completely black
+patblack: defb 0ffh,0ffh,0ffh,0ffh, 0ffh,0ffh,0ffh,0ffh
+
+
+
+;hline - draw a horizontal line from (de,c) to (hl,c)
+;entry: as indicated above
+;exit:	nothing
+;af/bc/de/hl corrupt
+hline:
+;make sure de is the lesser of de,hl
+and a
+push hl
+sbc hl,de
+pop hl
+;while we're at it, it's quite easy if only one pixel long!
+jp z,intdpix
+jr nc,hlinelp
+;if hl<de, swap them
+ex de,hl
+hlinelp:
+;now draw from de to hl inclusive
+push bc
+push de
+push hl
+call intdpix
+pop hl
+pop de
+pop bc
+and a
+push hl
+sbc hl,de
+pop hl
+inc de
+jp nz,hlinelp
+ret
+
+
+;vline - draw a vertical line from (de,c) to (de,b)
+;entry: as indicated above
+;exit:	nothing
+;af/bc/de/hl corrupt
+vline:
+;make sure c is the lesser of c,b
+ld a,b
+cp c
+jr nc,vline1
+;if b<c, swap them
+;a still = b
+ld b,c
+ld c,a
+vline1:
+;now draw from c to b inclusive
+dec c
+vlinelp:
+inc c
+push bc
+push de
+call intdpix
+pop de
+pop bc
+ld a,c
+cp b
+jp nz,vlinelp
+ret
+
+
+;rect - draw (outline) rectangle from (de,c) to (hl,b)
+;entry: as above
+;exit:  nothing
+;af/bc/de/hl corrupt
+rect:
+ld (intrbc),bc
+ld (intrde),de
+ld (intrhl),hl
+
+;'left' line
+call vline
+
+;'right' line
+ld bc,(intrbc)
+ld de,(intrhl)
+call vline
+
+;'top' line
+ld bc,(intrbc)
+ld de,(intrde)
+ld hl,(intrhl)
+call hline
+
+;'bottom' line
+ld bc,(intrbc)
+ld de,(intrde)
+ld hl,(intrhl)
+ld c,b
+call hline
+ret
+
+intrbc: defw 0
+intrde: defw 0
+intrhl: defw 0
+
+
+;frect - draw filled rectangle from (de,c) to (hl,b)
+;entry: as above
+;exit:  nothing
+;af/bc/de/hl corrupt
+frect:
+;make sure de is the lesser of de,hl
+and a
+push hl
+sbc hl,de
+pop hl
+jr nc,frect0
+;if hl<de, swap them
+ex de,hl
+frect0:
+dec de
+ld (frect1+1),hl
+
+frectlp:
+inc de
+push de
+push bc
+call vline
+pop bc
+pop de
+frect1: ld hl,0		;modified above
+and a
+sbc hl,de
+jr nz,frectlp
+ret
+
+
+
+
+;drawline - draw line from (de,c) to (hl,b).
+;entry: as above
+;exit:  nothing
+;af/bc/de/hl corrupt
+;adapted from Paul Heckbert's C implementation of Bresenham's algorithm
+; in "Graphics Gems".
+;XXX could do with a bit of tuning for speed...
+dlinx1: defw 0
+dliny1: defb 0
+dlinx2: defw 0
+dliny2: defb 0
+dlind: defw 0
+dlinax: defw 0		;x len of line
+dlinay: defb 0		;y len
+dlinsx: defw 0		;x dir
+dlinsy: defb 0		;y dir
+dlindx: defw 0
+dlindy: defb 0
+
+drawline:
+ld (dlinx1),de
+ld (dlinx2),hl
+ld a,c
+ld (dliny1),a
+ld a,b
+ld (dliny2),a
+
+;dx=x2-x1
+;atm, hl=x2 and de=x1
+and a
+sbc hl,de
+ld (dlindx),hl
+
+;ax=abs(dx)/2
+;atm, hl=dx
+bit 7,h
+jr z,dlin1
+;reverse 2's cpl
+dec hl
+ld a,h
+cpl
+ld h,a
+ld a,l
+cpl
+ld l,a
+dlin1:
+;so now hl is abs(dx).
+sla l
+rl h
+ld (dlinax),hl
+
+;sx=sgn(dx), where sgn(x) is -1 if <0 and 1 if >=0
+ld hl,(dlindx)
+bit 7,h
+ld hl,1
+jr z,dlin2
+dec l
+dec hl
+dlin2:
+ld (dlinsx),hl
+
+;now do the same for the y vars
+;dy=y2-y1
+ld a,(dliny1)
+ld b,a
+ld a,(dliny2)
+sub b
+ld (dlindy),a
+
+;ay=abs(dy)/2
+;dy still in a
+;XXX must be a better way to test this?
+bit 7,a
+jr z,dlin3
+neg
+dlin3:
+sla a
+ld (dlinay),a
+
+;sy=sgn(dy) (as described above)
+ld a,(dlindy)
+bit 7,a
+ld a,1
+jr z,dlin4
+neg
+dlin4:
+ld (dlinsy),a
+
+;now get (x1,y1) into (de,c)
+ld de,(dlinx1)
+ld a,(dliny1)
+ld c,a
+
+;test which version of the algorithm we use:
+; if the x length is longer or equal, we use the one here;
+; if not, we use the latter one.
+push bc
+ld hl,(dlinax)
+ld a,(dlinay)
+ld b,0
+ld c,a
+and a
+sbc hl,bc
+pop bc
+jr c,dlinydom
+
+;start off the gradient error var, d
+;d=ay-(ax/2)
+push bc
+ld bc,(dlinax)
+srl b
+rr c
+ld a,(dlinay)
+ld l,a
+ld h,0
+and a
+sbc hl,bc
+pop bc
+ld (dlind),hl
+
+dlinxdlp:
+;draw current pixel
+push de
+push bc
+call intdpix
+pop bc
+pop de
+
+;if de=x2, we're done
+ld hl,(dlinx2)
+and a
+sbc hl,de
+ret z
+
+;now take a step as appropriate considering the grad. err.
+ld hl,(dlind)
+bit 7,h
+jr nz,dlinxd1
+;so d>=0
+;y+=sy
+ld a,(dlinsy)
+add a,c
+ld c,a
+;d-=ax
+;hl is still (dlind)
+push bc
+ld bc,(dlinax)
+and a
+sbc hl,bc
+pop bc
+ld (dlind),hl
+;falls through to make the move diagonal
+
+dlinxd1:
+;so d<0
+;x+=sx
+ld hl,(dlinsx)
+add hl,de
+ex de,hl
+;d+=ay
+ld hl,(dlind)
+push bc
+ld a,(dlinay)
+ld c,a
+ld b,0
+add hl,bc
+pop bc
+ld (dlind),hl
+jr dlinxdlp
+
+
+dlinydom:
+;d=ax-(ay/2)
+push bc
+ld a,(dlinay)
+srl a
+ld c,a
+ld b,0
+ld hl,(dlinax)
+and a
+sbc hl,bc
+pop bc
+ld (dlind),hl
+
+dlinydlp:
+;draw current pixel
+push de
+push bc
+call intdpix
+pop bc
+pop de
+
+;if c=y2, we're done
+ld a,(dliny2)
+cp c
+ret z
+
+;now take a step as appropriate considering the grad. err.
+ld hl,(dlind)
+bit 7,h
+jr nz,dlinyd1
+;x+=sx
+ld hl,(dlinsx)
+add hl,de
+ex de,hl
+;d-=ay
+push bc
+ld hl,(dlind)
+ld a,(dlinay)
+ld c,a
+ld b,0
+and a
+sbc hl,bc
+ld (dlind),hl
+pop bc
+;falls through to make the move diagonal
+
+dlinyd1:
+;y+=sy
+ld a,(dlinsy)
+add a,c
+ld c,a
+;d+=ax
+push bc
+ld hl,(dlind)
+ld bc,(dlinax)
+add hl,bc
+ld (dlind),hl
+pop bc
+jr dlinydlp
+
+
+
+;fast clear screen routine
+;entry and exit: nothing
+;f/b/de/hl corrupt
+;takes 17[call]+20+10+4+6+(11*8+13)*255+11*8+8+20+10[ret]=25938 cycles
+;at 6MHz (ints disabled) - 25938/6000000=4.323ms, including call/ret
+;an ldir would take 10+10+10+7+21*4095+16=86048 cycles, or 14.341ms
+;
+;note to pedants: yes, in theory this shouldn't run with ints on as
+; it could corrupt N bytes below F000h. But in ZCN, N=2, and N would
+; have to be >256 to cause any problems.
+;
+clrscrsp: defw 0	;old sp is put here
+clrscrn:
+ld (clrscrsp),sp
+ld hl,0
+ld b,h		;loop 256 times, to clear 256*16=4096 bytes
+ld sp,hl
+
+clrscrlp:
+;clears 16 bytes per loop
+push hl
+push hl
+push hl
+push hl
+push hl
+push hl
+push hl
+push hl
+djnz clrscrlp
+
+ld sp,(clrscrsp)
+ret
+
+
+
+;get pixel at (de,c) in a - FFh = on, 0 = off
+;entry/exit: as above
+;f/bc/de/hl corrupt
+pget:
+;check x pos - see if 479<de
+ld hl,479
+and a
+sbc hl,de
+ret c
+;check y pos
+ld a,c
+cp 64
+ret nc
+call pos2addr
+ld a,(hl)
+and c
+ret z
+ld a,0ffh
+ret
+
+
+;flood-fill from (de,c)
+; fills in black all pixels inside a black boundary
+; as such, it uses pset directly rather than the generic intdpix.
+;WARNING: this needs a *large* stack, 4k or more is probably safe.
+;this is an implementation of the 'region filling based on runs of
+;pixels' algorithm on p440 of "Computer Graphics" by F. S. Hill.
+; the pseudo-code given there is:
+;   Push address of seed pixel on the stack
+;   while stack not empty do
+;   begin
+;     Pop the stack to provide the next seed
+;     Fill in the run defined by the seed
+;     Examine the row above for runs reachable from this run
+;     Push the addresses of the rightmost pixels of each such run
+;     Do the same for row below the current run
+;   end
+;we use the machine stack as the pixel stack referred to above.
+
+flrunl: defw 0
+flrunr: defw 0
+olddpix: defw 0		;saves old 'intdpix'
+
+flood:
+;if the seed pixel is set, give up now
+push de
+push bc
+call pget
+pop bc
+pop de
+and a
+ret nz
+
+;use pset
+ld hl,(intdpix+1)
+ld (olddpix),hl
+ld hl,pset
+ld (intdpix+1),hl
+
+;push an impossible pixel (FFFFh) so we can spot when the
+; stack is empty
+ld hl,0ffffh
+push hl
+
+;push the seed pixel
+call flpack
+push hl
+
+floodlp:
+;get current seed into (de,c)
+pop hl
+call flunpack
+push de		;will need this later
+
+;fill in the run. we know the current pixel is zero,
+;so we need to trace to the first set pixel to the left/right.
+;first, get left one
+floodlp2:
+ld a,d
+or e
+jr z,flood1	;if de=0, better stop here!
+dec de
+push de
+push bc
+call pget
+pop bc
+pop de
+and a
+jr z,floodlp2
+inc de		;move back to last unset pixel
+
+flood1:
+;get seed back again
+pop hl		;hl=old de
+
+ld (flrunl),de
+
+;now again, for the right side
+ex de,hl
+
+floodlp3:
+ld hl,479
+and a
+sbc hl,de
+jr z,flood2	;if de=479, stop
+inc de
+push de
+push bc
+call pget
+pop bc
+pop de
+and a
+jr z,floodlp3
+dec de		;move back to last unset pixel
+
+flood2:
+ld (flrunr),de
+ld hl,(flrunl)
+ex de,hl
+;fill in the run
+push bc
+call hline
+pop bc
+
+;now check the row above for runs reachable from this one.
+;we push the rightmost unset pixel of each, so we're really
+;looking for unset pixels followed by set ones.
+;b is used to hold the previous set/unset value.
+
+ld b,0ffh
+ld de,(flrunl)
+dec c
+;don't do it if it's a row <0.
+jp m,flskipa
+
+floodlp4:
+push de
+push bc
+call pget
+pop bc
+pop de
+rr b
+ld b,a
+rla
+;so a=FEh if last wasn't set but this is, i.e. end of a run.
+cp 0feh
+jr nz,flood3
+
+dec de
+call flpack
+push hl
+inc de
+
+flood3:
+ld hl,(flrunr)
+and a
+sbc hl,de
+inc de
+jr nz,floodlp4
+
+;if the last pixel we looked at was unset, push that.
+ld a,b
+and a
+jr nz,flskipa
+
+dec de
+call flpack
+push hl
+
+
+flskipa:
+;now do the row below.
+
+ld b,0ffh
+ld de,(flrunl)
+inc c
+inc c
+;don't do it if it's a row >=64.
+ld a,c
+cp 64
+jr nc,flskipb
+
+floodlp5:
+push de
+push bc
+call pget
+pop bc
+pop de
+rr b
+ld b,a
+rla
+;so a=FEh if last wasn't set but this is, i.e. end of a run.
+cp 0feh
+jr nz,flood4
+
+dec de
+call flpack
+push hl
+inc de
+
+flood4:
+ld hl,(flrunr)
+and a
+sbc hl,de
+inc de
+jr nz,floodlp5
+
+;if the last pixel we looked at was unset, push that.
+ld a,b
+and a
+jr nz,flskipb
+
+dec de
+call flpack
+push hl
+
+
+flskipb:
+;if the stack is non-empty, loop again
+pop hl
+push hl
+inc hl
+ld a,h
+or l
+jp nz,floodlp
+
+;pop the 'impossible pixel' stack entry
+pop hl
+
+;restore intdpix
+ld hl,(olddpix)
+ld (intdpix+1),hl
+ret
+
+
+;in order to use the machine stack as the pixel address stack,
+;we pack the x and y co-ords into 16 bits like this:
+;
+;   b15 b14 b13 b12 b11 b10  b9  b8  b7  b6  b5  b4  b3  b2  b1  b0
+;  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;  |x8 |///|     y position        |   low 8 bits of x position    |
+;  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;
+;so bit 14 is unused, and bit 15 is the high (ninth) bit of the x
+;position. This looks bizarre, but it's the easiest arrangement.
+
+;pack (de,c) into hl
+;(XXX may want to 'inline' this as it's so short)
+;af corrupt
+flpack:
+ld l,e
+ld a,c
+rrc d
+or d
+rlc d
+ld h,a
+ret
+
+;unpack hl into (de,c)
+flunpack:
+ld e,l
+ld d,0
+ld a,h
+rla
+rl d
+rra
+and 63
+ld c,a
+ret
+
+
+
+;very simplistic 'sprite' routines
+
+;these are primarily for the mouse driver, and aren't terribly
+;flexible, but if you want to draw 8x8 masked 'sprites' these could be
+;just what you're looking for. :-)
+
+
+;draw the 8x8 bitmap at ix (with 8x8 mask after) at (de,c)
+;af/bc/de/hl/ix corrupt
+draw8x8:
+push de
+call pos2addr
+pop de
+
+;or call here with ix=bitmap, hl=screen pos, and e=pos in byte
+draw8x8addr:
+ld a,e
+and 7
+ld b,a
+ld a,7
+sub b
+inc a
+ld (d8op+1),a
+
+;so now hl=addr of top-left and ix points to bitmap to draw
+
+ld b,8
+d8loop:
+push bc
+
+ld d,0
+ld e,(ix)
+ld b,0ffh
+ld c,(ix+8)
+d8op: ld a,0	;modified as necessary
+d8lp2:
+;bitmap
+and a
+rl e
+rl d
+;mask
+scf
+rl c
+rl b
+dec a
+jr nz,d8lp2
+
+ld a,(hl)
+and b
+or d
+ld (hl),a
+inc l
+ld a,(hl)
+and c
+or e
+ld (hl),a
+
+pop bc
+ld de,63
+add hl,de
+ret c		;stop if we've gone off the screen
+inc ix
+djnz d8loop
+ret
+
+
+;save 16x8 (approx) from (de,c) at ix (usually before doing draw8x8)
+;af/bc/de/hl/ix corrupt
+save16x8:
+call pos2addr
+
+ld de,63
+ld b,8
+s16loop:
+ld a,(hl)
+ld (ix),a
+inc l
+inc ix
+ld a,(hl)
+ld (ix),a
+add hl,de
+inc ix
+djnz s16loop
+ret
+
+
+;restore 16x8 from ix to (de,c)
+;af/bc/de/hl/ix corrupt
+rstr16x8:
+call pos2addr
+
+ld de,63
+ld b,8
+r16loop:
+ld a,(ix)
+ld (hl),a
+inc l
+inc ix
+ld a,(ix)
+ld (hl),a
+add hl,de
+ret c		;quit if hl goes off end of screen
+inc ix
+djnz r16loop
+ret

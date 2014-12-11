@@ -1,0 +1,32 @@
+NAME
+	submit - run a SUB file with arguments
+
+SYNOPSIS
+	If run at start of SUB file itself:
+		submit filename.sub *
+	otherwise:
+		submit filename.sub [arg1 [arg2 ... ]]
+
+DESCRIPTION
+	Substitutes `$1', `$2', etc. in original SUB file with
+	arguments given, and runs the resulting `$$$.sub'.
+
+	`$1' to `$9' are supported. `$$' can be used to get a literal
+	`$' in the output. Any arg not specified on the command-line
+	is replaced with a space.
+
+	If `*' is used, submit looks for the SUB file in the same way
+	ZCN does - see the `path' man page.
+
+OPTIONS
+	*	indicates that submit is being run as the first line
+		of a SUB file, and that the command-line the SUB file
+		was run with should be used. (It *must* be the first
+		line of the SUB file for this to work correctly.)
+
+FILES
+	$$$.sub - this file is created, and ZCN runs it to run the
+		commands.
+
+SEE ALSO
+	semi, path

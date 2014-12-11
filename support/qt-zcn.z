@@ -1,0 +1,193 @@
+; QTERM patch file for the Amstrad NC100 running ZCN.
+
+; Russell Marks 94/09/21
+; modified to use 20h+y for cursor movement 1998-11-12
+
+
+.org 0x0110
+modist:
+ld c,7
+call 5
+and a
+ret
+
+.org 0x0120
+modin:
+ld c,3
+call 5		;bdos, read char. from AUX
+ret
+
+.org 0x130
+modost:
+ld c,8
+call 5
+and a
+ret
+
+.org 0x0140
+modout:
+ld c,4
+ld e,a
+call 5
+ret
+
+
+;no break for now
+.org 0x0150
+sbreak:
+ret
+
+.org 0x0160
+ebreak:
+ret
+
+
+;no dtr raise/drop for now
+.org 0x0170
+dtroff:
+ret
+
+.org 0x0180
+dtron:
+ret
+
+
+;set baud rate - uh, guess :)
+.org 0x0190
+setbd:
+ret
+
+.org 0x01a0
+baudtb:
+b38400:	db 0,0
+b19200:	db 15,0xff
+b9600:	db 14,0xff
+b4800:	db 12,0xff
+b2400:	db 10,0xff
+b1200:	db 8,0xff
+b600:	db 7,0xff
+b300:	db 6,0xff
+
+
+;more of the same
+.org 0x01b0
+setmod:
+ret
+
+; [from qt-patch.z, in case I decide to do this stuff sometime]
+; Communication Mode Table.  Single byte values for 12 combinations of
+;    number-of-bits(7/8), parity(none/even/odd), number-of-stop-bits(1/2).
+
+.org 0x01c0
+
+modetb:
+n17:	db	0b10000000	;0x80, 7n1
+n18:	db	0b11000000	;0xc0, 8n1
+n27:	db	0b10001000	;0x88, 7n2
+n28:	db	0b11001000	;0xc8, 8n2
+e17:	db	0b10000011	;0x83, 7e1
+e18:	db	0b11000011	;0xc3, 8e1
+e27:	db	0b10001011	;0x8b, 7e2
+e28:	db	0b11001011	;0xcb, 8e2
+o17:	db	0b10000001	;0x81, 7o1
+o18:	db	0b11000001	;0xc8, 8o1
+o27:	db	0b10001001	;0x89, 7o2
+o28:	db	0b11001001	;0xc9, 8o2
+
+
+.org 0x01cc
+resvd:	db 0
+xfersz:	db 8
+speed:	db 5
+escape:	db '\\' & 0x1f	;escape char. - ^\
+
+.org 0x1d0
+signon:
+db 'NC100 with ZCN',0
+
+.org 0x1f0
+clrs:	db 1,0	;clear screen with ^A
+
+.var scrout 0x109
+
+; move to h,l on screen
+.org 0x200
+moveto:
+push hl
+ld c,16		;^P
+call scrout
+pop hl
+push hl
+ld a,h
+add a,32
+ld c,a
+call scrout
+pop hl
+ld a,l
+add a,32
+ld c,a
+jp scrout
+
+
+; [from qt-patch.z]
+; Terminal Capability Bits.  The eight bits stand for each of the following
+;   strings.   They count from 01h=bright to 80h=clear-to-end-of-screen.
+
+.var	b_brit	0b00000001	; 0: bright (1.)	-- NOT mandatory
+.var	b_dim	0b00000010	; 1: dim    (2.)	-- NOT mandatory
+.var	b_dlln	0b00000100	; 2: delete line (4.)	-- important
+.var	b_inln	0b00001000	; 3: insert line (8.)	-- important
+.var	b_dlch	0b00000000	; 4: delete character (16.)-- unused by QTERM
+.var	b_inch	0b00000000	; 5: insert character (32.)-- NOT mandatory
+.var	b_clel	0b01000000	; 6: clear to end-of-line(64.) -- important
+.var	b_cles	0b10000000	; 7: clear to end-of-screen(128.)-- important
+
+.org 0x022f
+trmcap:	db b_brit + b_dim + b_dlln + b_inln + b_dlch + b_clel + b_cles
+
+; I use italics for 'dim'
+
+.org 0x0230
+brites: db 'N' & 0x1f,0	;stop italics
+
+.org 0x0238
+dims:	db 'O' & 0x1f,0	;start italics
+
+.org 0x0240
+dlstr:	db 'T' & 0x1f,0	;delete line
+
+.org 0x0248
+ilstr:	db 'R' & 0x1f,0	;insert line
+
+.org 0x0250
+dcstr:	db 0		;delete char
+
+.org 0x0258
+icstr:	db 0		;insert char
+
+.org 0x0260
+ceol:	db 0x1f,0	;clear to end of line
+
+.org 0x0268
+ceos:	db 'Z' & 0x1f,0	;clear to end of screen
+
+
+;now the various hooks.
+;these are in xyzzy mode at the moment, i.e. nothing happens. :-)
+
+.org 0x0270
+entry:
+ret
+
+.org 0x0273
+exit:
+ret
+
+.org 0x0276
+user:
+ret
+
+.org 0x0279
+kbmap:
+ret
+

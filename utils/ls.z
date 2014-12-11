@@ -1,0 +1,731 @@
+;ls - enhanced (i.e. slower) version of internal command 'dir'.
+;makes a few assumptions which make it ZCN-specific.
+
+;sorts directory (vertically, like Unix ls)
+;shows names lowercase with spaces removed
+;shows executable files (com and sub) in italics
+;shows file sizes in K, if '-l' arg given
+
+
+org 0100h
+
+
+jr start
+
+;bdos functions
+conout		equ 2
+
+bdos		equ 5
+userfcb1	equ 05ch
+userfcb2	equ 06ch
+dmapos		equ 080h
+
+showsize:	defb 0
+serial:		defb 0
+duplicate:	defb 0
+mnofile:	defb 'No files$'
+mdirsplt:	defb '  $'	;dir. list 'splitter'
+mdup:		defb '*** WARNING: duplicate files found! ***',13,10,'$'
+mspc:		defb '   '
+mcom:		defb 'COM'
+msub:		defb 'SUB'
+mcrlf:		defb 13,10,'$'
+idnum:		defb 8		;num. of files listed horizontally
+idhcount:	defb 0	;horiz. file pos. count
+idfirst:	defb 1	;first time around?
+listpos:	defw 0	;current pos. in list (pointer)
+listend:	defw 0	;points after last entry in list
+listadd:	defw 0	;skip in bytes to next horiz. entry onscreen
+lineslft:	defb 0	;num. horiz lines left
+numlines:	defb 0	;number of horiz lines
+hrizcols:	defb 0	;number of horiz columns
+flcount:	defw 0	;num. of files found
+swapbuf:	defw 0,0,0,0,0,0	;tmp. buf used in sorting
+
+
+start:
+;check for ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+ld c,132	;console in/out assignments
+call bdos
+ld a,l
+ld (serial),a
+and a
+jr z,start2
+
+ld a,5
+ld (idnum),a
+
+start2:
+;see if they did 'ls -l'
+ld hl,(userfcb1+1)
+and a
+ld de,04c2dh	;'-l' as a little-endian hex word
+sbc hl,de
+jr nz,start3
+
+;adjust things accordingly
+ld a,1
+ld (showsize),a
+ld a,(serial)
+and a
+ld a,(idnum)
+jr nz,skip1
+dec a
+skip1:
+dec a
+ld (idnum),a
+
+;copy 2nd fcb over first
+ld hl,userfcb2
+ld de,userfcb1
+ld bc,16
+ldir
+
+start3:
+ld a,(userfcb1+1)
+cp 32		;if no filespec given...
+jr nz,idir1
+
+;...put '*.*' in place
+ld a,'*'
+ld (userfcb1+1),a
+ld (userfcb1+9),a
+
+idir1:
+call makelist
+call sortlist
+call displist
+ret
+
+
+makelist:
+ld hl,filelist
+ld (listpos),hl
+ld hl,0
+ld (flcount),hl
+
+ld de,userfcb1
+call bsfirst
+cp 255
+jr z,idirnone	;if none match, display 'no files' message
+
+idirlp:
+inc a
+ret z		;all done
+
+;add filename, from fcb created at DMA, to list
+ld hl,dmapos+1
+ld de,(listpos)
+ld bc,11
+ldir
+ex de,hl
+ld (listpos),hl
+ld (listend),hl	;in case there's no more after this one
+
+ld hl,(flcount)
+inc hl
+ld (flcount),hl
+
+;look for more
+ld de,userfcb1
+call bsnext
+jr idirlp
+
+idirnone:
+;no files found
+ld de,mnofile
+call bdprint
+jp 0
+
+
+
+;display files in list.
+;we know there was at least one file found.
+displist:
+;first give warning about duplicate files, if any.
+ld a,(duplicate)
+and a
+jr z,displ1
+
+ld de,mdup
+call bdprint
+
+displ1:
+;work out stuff for vertical sorted display
+;if there are N files, there are L=(N+(idnum)-1)/(idnum) lines of
+; output. We have to display horizontally, so the list ptr
+; must start at filelist and skip over L entries each time before
+; display. For the next line, we start at the entry after the one
+; at filelist, and do the same, etc.
+;ok, first get number of lines.
+ld hl,(flcount)		;no. of files
+ld a,(idnum)
+dec a
+ld e,a
+ld d,0
+add hl,de		;hl=N+(idnum)-1
+inc e
+call divide		;hl=(N+(idnum)-1)/(idnum)
+ld a,l
+ld (numlines),a
+
+;now we want that in terms of bytes to add to the list ptr,
+; so multiply by 11.
+;(11=8+2+1)
+ld d,h
+ld e,l
+and a
+rl l
+rl h		;*2
+ld b,h
+ld c,l
+rl l
+rl h		;*4
+rl l
+rl h		;*8
+add hl,bc	;*10
+add hl,de	;*11
+ld (listadd),hl
+
+;get max. horiz width in columns (used to tell when to cr/lf)
+ld hl,(flcount)
+ld a,(numlines)
+dec a
+ld e,a
+ld d,0
+add hl,de
+inc e
+call divide
+ld a,l
+ld (hrizcols),a
+
+
+;now init stuff
+xor a
+ld (idhcount),a
+inc a
+ld (idfirst),a
+ld hl,filelist
+ld (listpos),hl
+ld a,(numlines)
+ld (lineslft),a
+
+idirlp2:
+ld a,(idhcount)
+and a
+jr nz,idir1a
+ld a,(idfirst)
+and a
+jr nz,idir1b
+ld de,mcrlf
+call bdprint
+jr idir1b
+idir1a:
+ld de,mdirsplt
+call bdprint
+idir1b:
+xor a
+ld (idfirst),a
+
+;print the filename
+ld de,(listpos)
+call pfcbname
+
+ld hl,(listpos)
+ld de,userfcb1+1
+ld bc,11
+ldir
+
+ld a,(showsize)
+and a
+jr z,idir1c
+
+ld de,userfcb1
+call dispflsz
+
+idir1c:
+ld hl,hrizcols
+ld a,(idhcount)
+inc a
+cp (hl)
+jr nz,idir3
+;end of line
+xor a
+idir3:
+ld (idhcount),a
+
+;advance list ptr etc.
+ld hl,(listpos)
+ld de,(listadd)
+add hl,de
+ld (listpos),hl
+ld de,(listend)
+and a
+sbc hl,de
+jr c,idirlp2	;if not past end, do more
+
+;see if there's another horiz line to go
+ld a,(lineslft)
+dec a
+ld (lineslft),a
+ret z		;nope, all done
+
+;there is, so re-init (listpos) appropriately,
+; i.e. (listpos)=filelist+((numlines)-(lineslft))*11
+ld a,(numlines)
+ld hl,lineslft
+sub (hl)
+ld hl,0
+ld d,h
+ld e,a
+ld b,11
+idirlp3:
+add hl,de
+djnz idirlp3
+ld de,filelist
+add hl,de
+ld (listpos),hl
+xor a
+ld (idhcount),a		;make sure horiz. pos count is set to 0
+jp idirlp2
+
+
+
+;print the filename contained in fcb pointed at by de, folding spaces,
+;adding them and 1 extra after. If ext. is COM or SUB, do in italic.
+;WIBBLE.DAT comes out as 'wibble.dat    '.
+pfcbnoex: defb 0
+
+pfcbname:
+push de
+xor a
+ld (pfcbnoex),a
+ld c,1		;normal spaces printed after
+ld hl,8
+add hl,de
+ld de,mspc
+call cmpext
+jr nc,pfcb0
+ld a,1
+ld (pfcbnoex),a
+pfcb0:
+;if not console, don't do italics
+ld a,(serial)
+and a
+jr nz,pfcb2
+ld de,mcom
+call cmpext	;saves bc/hl
+jr c,pfcb1
+ld de,msub
+call cmpext
+jr nc,pfcb2
+pfcb1:
+ld a,15
+call putchar	;italics on
+pfcb2:
+pop hl
+push hl
+ld b,8
+call plcase
+ld a,(pfcbnoex)
+and a
+ld a,'.'
+jr z,pfcb3
+ld a,32
+pfcb3:
+call putchar
+ld b,3
+call plcase
+pop hl
+
+;print spaces
+ld b,c
+pfcblp:
+ld a,32
+call putchar
+djnz pfcblp
+
+;don't do italics off if not console
+ld a,(serial)
+and a
+ret nz
+
+ld a,14
+call putchar	;italics off
+ret
+
+
+;compare three bytes at hl and de. if same, set carry.
+;saves bc/hl
+cmpext:
+push bc
+push hl
+ld b,3
+cmplp:
+ld a,(de)
+cp (hl)
+jr nz,cmpno
+inc hl
+inc de
+djnz cmplp
+pop hl
+pop bc
+scf
+ret
+
+cmpno:
+pop hl
+pop bc
+and a
+ret
+
+
+;print num. bytes in b from hl, smashing case to all-lower
+;returns hl *after* last byte printed and b=0
+;incr c for each space (but don't display spaces)
+plcase:
+ld a,(hl)
+call isupper
+jr nc,pfn1
+set 5,a
+pfn1:
+cp 32
+jr nz,pfn2
+inc c
+jr pfn3
+pfn2:
+call putchar
+pfn3:
+inc hl
+djnz plcase
+ret
+
+
+;display one char, saving regs.
+putchar:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,conout
+call bdos
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;print $-term'd string, addr in de
+bdprint:
+ld c,9
+jp bdos
+
+;search first
+bsfirst:
+ld c,17
+jp bdos
+
+;search next
+bsnext:
+ld c,18
+jp bdos
+
+
+;returns carry set if uppercase alpha char. in a
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+
+;de=fcb
+dispflsz:
+push de
+ld c,35
+call bdos
+pop hl
+ld de,33
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+ld bc,7
+add hl,bc	;make sure division rounds up
+;div by 8
+ld b,3
+dfslp1:
+and a
+rr h
+rr l
+djnz dfslp1
+ld a,l
+ex de,hl
+;de=size of file in K
+ld a,e
+cp 100
+call c,printspc
+cp 10
+call c,printspc
+call dispdec
+ld a,'k'
+call putchar
+ret
+
+
+printspc:
+push af
+ld a,32
+call putchar
+pop af
+ret
+
+
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+push ix
+ld ix,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+add ix,ix
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+sbc hl,de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+;this is like OR IX,1 - there is a *really* hairy way to do this which
+;goes like push ix/dec sp/pop af/or 1/push af/inc sp/pop ix, but it's
+;4 clock cycles slower. Pity. :-)
+
+push ix
+pop hl
+ld a,1
+or l
+ld l,a
+push hl
+pop ix
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+push ix
+pop hl
+pop ix
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp: defb '0000000000000000$'	;16 zeroes and '$'
+
+;display number in de in decimal
+dispdec:
+ld b,10
+;FALLS THROUGH
+
+;display number in de, in given base (unsigned)
+;entry: de=number to display, b=base (from 2 to 36)
+;exit: af/bc/de/hl corrupt
+dispnum:
+ld hl,numtmp+16
+ld a,'$'
+ld (hl),a
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+jp bdprint
+
+
+
+;sort the list of files (exchange sort)
+tmpc:	defw 0
+sortlist:
+ld hl,filelist
+ld (listpos),hl
+
+sortlp:
+ld hl,(listpos)
+ld (tmpc),hl
+ex de,hl
+
+sortlp2:
+ld hl,(tmpc)
+call nodecmp
+jr nc,sort1
+ld (tmpc),de
+
+sort1:
+;move de to next node.
+ld hl,11
+add hl,de
+
+;see if we're at end of list yet.
+push hl
+ld de,(listend)
+and a
+sbc hl,de
+pop de
+jr nz,sortlp2
+
+;ok, (tmpc) is the node to swap. won't matter if it's the same one.
+ld hl,(tmpc)
+ld de,(listpos)
+call nodeswap
+
+;next node.
+ld hl,(listpos)
+ld de,11
+add hl,de
+ld (listpos),hl
+
+ld de,(listend)
+and a
+sbc hl,de
+jr nz,sortlp
+
+;done.
+ret
+
+
+;compare two nodes in list
+;de=(addr of) 1st node, hl=2nd node
+;returns carry set if node at de < node at hl, else carry false
+;a corrupt
+nodecmp:
+push hl
+push de
+push bc
+
+ld b,11
+nslp:
+ld a,(de)
+cp (hl)
+jr nz,ncmpdone
+inc hl
+inc de
+djnz nslp
+
+and a	;completely equal, so not less than.
+push af
+
+;this also means that there must be duplicate files, if de<>hl.
+;test it, and if de<>hl, set the flag to warn about this.
+and a
+sbc hl,de
+jr z,ncmpsame
+
+ld a,1
+ld (duplicate),a
+
+ncmpsame:
+pop af
+
+ncmpdone:
+;restore regs
+pop bc
+pop de
+pop hl
+ret
+
+
+;swap nodes in hl and de
+;flags corrupt, other preserved
+nodeswap:
+push hl
+push de
+push bc
+
+push de
+push hl
+push de
+ld de,swapbuf
+ld bc,11
+ldir
+pop hl
+pop de
+ld bc,11
+ldir
+ld hl,swapbuf
+pop de
+ld bc,11
+ldir
+
+pop bc
+pop de
+pop hl
+ret
+
+
+
+;must be last thing in source - list of files starts here
+filelist:

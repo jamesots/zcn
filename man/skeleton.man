@@ -1,0 +1,28 @@
+NAME
+	skeleton - a `bare bones' example man page
+
+SYNOPSIS
+	command [args]
+
+DESCRIPTION
+	summary of operation
+
+OPTIONS
+	explanation of args, if any
+
+EXAMPLES
+	in a man page? surely you jest
+
+(any extra headings here)
+
+FILES
+	files used, if any
+
+BUGS
+	guess :-)
+
+AUTHOR
+	J. Random Hacker
+
+SEE ALSO
+	references

@@ -1,0 +1,124 @@
+NAME
+	zdbe - a disk block (hex) editor
+
+SYNOPSIS
+	zdbe
+
+DESCRIPTION
+	A disk block editor. It allows you to view and navigate a
+	drive, and shows a map of the allocated blocks. If you use `M'
+	to enable read/write mode, you can also edit the data in
+	hex/ascii.
+
+	Although `zdbe' uses the full 120-column screen, it detects
+	when you're running the console via the serial port and alters
+	output to work correctly on an 80x24 VT100 or compatible
+	terminal.
+
+SCREEN LAYOUT, AND KEYS
+	The screen is split up into two panels. The left one (or top
+	one if running via serial) shows the hex/ascii dump of 128
+	bytes of the current block. The right one (bottom one if via
+	serial) shows a map of the blocks on the drive, and the
+	current drive, block number, and offset of the cursor within
+	the block. Only one of these two panels can be used at a time
+	- Tab selects which is active. The active one is indicated by
+	dashes surrounding the panel's title bar (at the top); also,
+	the cursor will be on the active panel somewhere. When you
+	start up zdbe, you're in the block-map panel.
+
+	The block-map panel lets you choose which block to
+	display/edit. Boot blocks are shown as `B', system blocks as
+	`S', directory blocks as `D', used data blocks as `#', and
+	free data blocks as `.'. The following keys can be used in
+	this panel:
+
+	Esc			quit the program
+	Tab			switch panels
+	Space			page forward through entire disk
+	Del			page backward through entire disk
+	cursor keys		move
+	^E/^S/^D/^X		move up/left/right/down respectively
+	h/j/k/l			move left/down/up/right respectively
+	d			go to first directory block
+	< or ,			go to start of drive
+	> or .			go to end of drive
+	M (shift-m)		switch between read-only and read-write modes
+	^L			switch to (`login') a new drive
+	w			write edited block to drive
+
+	To further explain some of the above:
+
+	- Space/Del are supported in both panels, and let you navigate
+	through the drive's data sequentially without having to mess
+	around switching panels all the time.
+
+	- In read-only mode (the default), no data on the drive can be
+	edited. In read-write mode, data can be edited (though you're
+	still prompted before data is ever written). Only the
+	currently selected block can be edited. When you switch blocks
+	(or press Esc, etc.) you're given the chance to write edits to
+	the drive, but you can also do this explicitly by using `w'.
+
+	The hex/ascii view/edit panel lets you look through or edit
+	the current block. When not editing, the following keys can be
+	used:
+
+	Esc			quit the program
+	Tab			switch panels
+	Space			page forward through entire disk
+	Del			page backward through entire disk
+	cursor keys		move
+	^E/^S/^D/^X		move up/left/right/down respectively
+	h/j/k/l			move left/down/up/right respectively
+	g			go to data block referenced by byte at cursor
+	b			go to previous block
+	d			go to first directory block
+	< or ,			go to start of block
+	> or .			go to end of block
+	^C or ^V		page down (move 128 bytes forward)
+	^R or ^U		page up   (move 128 bytes backward)
+	M (shift-m)		switch between read-only and read-write modes
+	^L			switch to (`login') a new drive
+	e			enter ASCII edit mode
+	E (shift-e)		enter hex edit mode
+	w			write edited block to drive
+
+	`g' can be used in a directory block to jump to a block used
+	by a file, if you know enough about the CP/M directory format.
+	(Essentially, the line of hex underneath the filename gives up
+	to 16 data block numbers. Put the cursor on one of these and
+	press `g' to get a data block. Which block of the file it
+	actually is depends on which extent of the file the directory
+	entry is for, which is a bit complicated to go into here - for
+	files of 16k or less though, the first byte on the line
+	represents the first 1k of the file, the second the 2nd, etc.)
+	`b' is intended to be used to return to the correct directory
+	block after a `g', but might conceivably be useful in other
+	circumstances too.
+
+	(While on the topic of directory blocks, it's possible to
+	undelete a file by changing the E5h just before the filename
+	back to a user number to put the file in - say, zero. You can
+	use the hex edit mode to do this. Again though, the picture is
+	more complicated for files of over 16k. And you should bear in
+	mind that - if the drive has been written to since you deleted
+	the file, or if you've run `defrag' on it since - the file
+	when undeleted may turn out to be corrupt.)
+
+	The hex and ascii edit modes let you change the data in the
+	block. These operate on the copy in memory, as you may have
+	gathered, and you can use `w' after the edit to save the
+	changes to the drive.
+
+	The keys for hex edit mode are largely the same as those for
+	the non-editing mode, except that 0-9 and a-f/A-F enter hex at
+	the cursor position. You have to enter a byte at a time - once
+	you've entered one `hexit', you have to enter another (to
+	complete the byte) before you can do anything else. Other
+	keys: Del backspaces a byte, and ^Q exits edit mode.
+
+	The keys for ASCII edit mode are again largely like the
+	non-editing mode, except that all printable ASCII characters
+	enter themselves at the cursor position. Other keys are as for
+	hex edit mode (see above).

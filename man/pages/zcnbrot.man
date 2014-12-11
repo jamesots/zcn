@@ -1,0 +1,24 @@
+NAME
+	zcnbrot - plot the Mandelbrot set
+
+SYNOPSIS
+	zcnbrot
+
+DESCRIPTION
+	A simple program to plot the Mandelbrot set, a famous fractal.
+	It uses fixed-point 32-bit integer maths and an estimation
+	method similar to the `tesseral' method in the excellent free
+	PC program "fractint".
+
+	When it's finished, it waits for a keypress. You can press
+	Ctrl-Shift-S then to dump the screen, if you want.
+
+BUGS
+	It only plots the complete set, and doesn't allow any zooming
+	in.
+
+	It's very slow - it takes 12 minutes.
+
+	There is no abort key. To quit before it finishes, do a cold
+	reboot by turning the machine off, then holding both shifts
+	while turning it on again.

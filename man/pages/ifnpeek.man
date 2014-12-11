@@ -1,0 +1,16 @@
+NAME
+	ifnpeek - run command (or not) based on a byte's value
+
+SYNOPSIS
+	ifnpeek hex_address hex_value command [args]
+
+DESCRIPTION
+	Run command if the byte at the address is not of the given
+	value. Primarily of use in SUB files.
+
+	To check the value of 80h after the last command finished, use
+	3 as the `hex_address'. This is useful for checking the exit
+	status of a Hitech C program.
+
+SEE ALSO
+	ifpeek

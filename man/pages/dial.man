@@ -1,0 +1,14 @@
+NAME
+	dial - tone `dial' a phone number 
+
+SYNOPSIS
+	dial number
+
+DESCRIPTION
+	`dial' tone dials `number', which can consist of any of the
+	characters `0123456789*#ABCD'. (A/B/C/D are extra `digits'
+	available on some phones etc.)
+
+BUGS
+	The combination of the NC100's sound chip and speaker seems to
+	distort the sound so much that it doesn't actually work.

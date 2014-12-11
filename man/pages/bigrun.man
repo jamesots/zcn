@@ -1,0 +1,35 @@
+NAME
+	bigrun - run a command in a 62k TPA
+
+SYNOPSIS
+	bigrun [d:] command [args]
+
+DESCRIPTION
+	Run the command with as much free memory as possible (62k),
+	using 32k of disk space on the specified drive (or the current
+	drive if not specified) to do this.
+
+	The 32k must be at the end of the drive, so you may need to
+	run `defrag' on it before running bigrun.
+
+	You should not attempt to run ZCN-specific programs with
+	bigrun. They may do some rather odd things if you try...
+
+	WARNING: BIGRUN IS AN *EXPERIMENTAL* PROGRAM, AND MAY CRASH
+	YOUR MACHINE. DON'T RUN IT IF YOU DON'T HAVE A BACKUP!
+
+	Only run bigrun if you have to. And even then, think about it. :-)
+
+FILES
+	$$bigrun - this is the file temporarily created on the card to
+		use as memory.
+
+BUGS
+	Under bigrun, there's a serious overhead to all BDOS/BIOS
+	calls, which slows things down.
+
+	Not all programs work under bigrun. In particular, Mallard
+	Basic crashes.
+
+SEE ALSO
+	defrag

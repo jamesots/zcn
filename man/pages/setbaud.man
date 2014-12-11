@@ -1,0 +1,25 @@
+NAME
+	setbaud - set baud rate used by serial port
+
+SYNOPSIS
+	setbaud rate_code
+
+NOTE
+	setbaud is obsolete - you should use `stty' instead.
+
+DESCRIPTION
+	Set baud rate of serial port. The rate_code is a single digit
+	indicating the speed to use, and should be one of the
+	following:
+	
+	0	  150 baud
+	1	  300 baud
+	2	  600 baud
+	3	 1200 baud
+	4	 2400 baud (ZCN's default speed)
+	5	 4800 baud
+	6	 9600 baud
+	7	19200 baud
+
+SEE ALSO
+	stty

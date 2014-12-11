@@ -1,0 +1,101 @@
+* -*- outline -*-
+
+	     Cpmtris v1.1 - (c) 1996,1999 Russell Marks
+
+	     A tetris clone for Z80-based CP/M machines.
+
+
+* License
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or (at
+your option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+
+[The GNU GPL is in the file 'COPYING'.]
+
+
+* About cpmtris
+
+Cpmtris is a free tetris clone for CP/M machines. It works as is on
+VT52s (PCW and +3) and ZCN boxes, works with VT100s with 'cpmtris 1',
+and is patchable for other machines and terminals.
+
+It's a conversion of my Psion series 3 OPL tetris program, via my ZX81
+tetris. Both are free like cpmtris, and available on request.
+
+
+* Playing cpmtris
+
+It's tetris. Surely you've played tetris!?
+
+Ok, the basics. Blocks fall from the top of the screen. You have to
+fit them together to make solid horizontal lines, as a horizontal line
+of blocks disappears to make room for more blocks. And why is this the
+case? Well, if the pile of blocks reaches the top of the screen, it's
+game over. So it quickly gets important to fit the shapes together
+well, and not leave any gaps.
+
+You can rotate the blocks with 's', move them left or right with 'k'
+and 'l', and 'drop' them with 'd'.
+
+Cpmtris does not (yet) speed up. It starts pretty fast and stays that
+way. If you want to play it faster, specify a MHz rating on the
+command-line (see below) lower than your machine's actually is.
+
+* Command-Line Options
+
+In Unix terms, the synopsis (usage) is 'cpmtris [termtype [mhz10]]'.
+
+If 'termtype' is specified, it must be a single digit corresponding to
+a terminal type. If 'mhz10' is specified, it should be ten times the
+speed (in MHz) of the Z80 the machine has. For example, on a 3.5MHz
+machine you'd use '35'. You must have a 'termtype' specified to use
+'mhz10'.
+
+To explain this 'terminal type' stuff: It's traditional for
+full-screen CP/M programs to either include a configuration program,
+or (more usually) document patches which need to be made to support
+different terminals. Cpmtris does have a patch area (100h-17fh), but
+also has built-in support for a few terminals. These are:
+
+Type	Terminal
+0	as defined in patch area
+1	VT100
+2	VT52 (PCW, +3, etc.) - this is the default
+3	ZCN (this is auto-detected)
+4	VC404
+
+The idea behind being able to specify both terminal type and speed
+when you run cpmtris is that it's more convenient if you sometimes use
+your machine via a terminal or terminal emulator. With most programs
+you have to devise some method of patching them when you want to use
+something other than the default configuration. With cpmtris, if (for
+example) I'm using my ZCN box via kermit on my Linux box - not
+uncommon - then it's just a matter of using 'cpmtris 1'.
+
+See the source (cpmtris.z) for details of the patch area.
+
+
+* Acknowledgements
+
+The original text-mode PC tetris game (which a surprising number of
+people have never played, it seems). It's inspired more clones than
+any other game since space invaders, I think. :-)
+
+Rush's "Presto" album. I listened to it constantly while hacking up
+cpmtris.
+
+
+* Contacting the Author
+
+You can email me at russell.marks@ntlworld.com.

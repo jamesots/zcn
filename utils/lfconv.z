@@ -1,0 +1,72 @@
+;lfconv - convert LF-only (Unix format) text files to CR/LF (CP/M and MS-DOS).
+
+org 0100h
+
+jr start
+
+inh: defw 0
+outh: defw 0
+
+dmabuf equ 01000h
+minifcb equ 01800h
+
+musage: defb 'usage: lfconv lf.txt crlf.txt$'
+mopenerr: defb 'Error opening file$'
+mwriteerr: defb 'Error writing file - disk full?$'
+mdone: defb 'done.$'
+
+start:
+ld de,musage
+ld c,9
+ld a,(05dh)
+cp 32
+jp z,5
+ld a,(06dh)
+cp 32
+jp z,5
+
+ld hl,06ch
+ld de,minifcb
+ld bc,12
+ldir
+
+ld hl,05ch
+ld a,0		;read text
+call fopenfcb
+ld (inh),hl
+ld de,mopenerr
+ld c,9
+jp nc,5
+
+ld hl,minifcb
+ld a,1		;write text
+call fopenfcb
+ld (outh),hl
+ld de,mopenerr
+ld c,9
+jp nc,5
+
+loop:
+ld hl,(inh)
+call fgetc
+jr nc,done
+ld hl,(outh)
+call fputc
+jr c,loop
+
+;error writing
+ld de,mwriteerr
+ld c,9
+jp 5
+
+done:
+;don't actually need to close files on ZCN
+;ld hl,(inh)
+;call fclose
+;but, do need to make sure stdio flushes output... :-)
+ld hl,(outh)
+call fclose
+
+ld de,mdone
+ld c,9
+jp 5

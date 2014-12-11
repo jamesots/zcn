@@ -1,0 +1,709 @@
+;zcnbrot - machine-code fixed-point munching mandelbrot displayer
+
+;based on my series 3 OPL program 'intmand3.opl', included here for
+;reference. if you're wondering what I mean by 'munching', run it and
+;see. :-) (it's similar to fractint's 'tesseral' method)
+
+;note that while this program is quicker than any other 8-bit
+;fractal program I know of, it is VERY SLOW. It takes TWELVE MINUTES
+;to draw the full set. I recommend you:
+; - run the NC100 off the mains while running it!
+;    not necessary to run it, but a Good Idea.
+; - do 'timeout 0' beforehand, as otherwise the auto-poweroff
+;    will kick in while it's running.
+;when it's finished, it waits for a keypress. press ctrl-shift-s then
+;to dump the screen if you want to do that.
+
+;note there is no abort key. to quit before it finishes, do a cold
+;reboot by turning the machine off, then holding both shifts while
+;turning it on again.
+
+;yes, I know I could just generate the top half and mirror it for the
+;bottom half, but I'm keeping it like it is now so that different
+;ranges can be specified.
+
+;if you're interested in fractals and have a PC, get fractint. it's
+;the best fractal-drawing program bar none, and it's free. on a 486
+;it's several hundred times faster than zcnbrot, and it lets you zoom
+;in. any decent pd/shareware place should have it. linux users like me
+;can either run it under dosemu, or use the X port of it, xfractint.
+;the latter should work on any reasonable unix with X.
+
+org 0100h
+
+jr drawbrot
+
+scl	equ 8000
+xa	equ 128
+ya	equ 64
+iter	equ 15		;num. iterations - increase for more accuracy
+mstp	equ 64		;size of biggest block to munch
+done	equ 01000h	;the 'done' array
+
+;these define the start (x,y) and size.
+;if you want to zoom in etc., hack on these, which are
+; num*8000
+;(why didn't I use a bitshift instead of * and /8000? well, 8192
+; just overflows, and 8000 doesn't, while keeping more accuracy.
+; change it if you want.)
+qa:	defw 0afc0h,0ffffh	;-2.568
+qb:	defw 0d8f0h,0ffffh	;-1.25
+qasize:	defw 071a0h,00000h	;3.636
+qbsize: defw 04e20h,00000h	;2.5
+qscl4:	defw 0,0
+
+qastp: defw 0,0
+qbstp: defw 0,0
+
+
+
+drawbrot:
+di
+
+call clrscrn
+
+;zero the 'done' array
+ld hl,done
+ld de,done+1
+ld bc,xa*ya
+ld (hl),0
+ldir
+
+;put scl*4 in qscl4
+ld ix,0
+ld hl,scl
+ld de,0
+ld bc,4
+call mul32
+ld (qscl4+2),ix
+ld (qscl4+0),hl
+
+;astp&=asize&/xa%
+ld ix,(qasize+2)
+ld hl,(qasize+0)
+ld de,0
+ld bc,xa
+call div32
+ld (qastp+2),ix
+ld (qastp+0),hl
+
+;bstp&=bsize&/ya%
+ld ix,(qbsize+2)
+ld hl,(qbsize+0)
+ld de,0
+ld bc,ya
+call div32
+ld (qbstp+2),ix
+ld (qbstp+0),hl
+
+;gat 0,0
+;gpatt -1,xa%,ya%,0
+;i.e. draw grey box in area to be filled by brot.
+ld hl,pfillpat
+call pixstyle
+
+ld hl,patmgrey
+call setfill
+
+ld de,0
+ld c,0
+ld hl,xa-1
+ld b,ya-1
+call frect
+
+ld hl,pset
+call pixstyle
+
+
+ld bc,0
+loopy:
+
+ld de,0
+loopx:
+push bc
+push de
+
+;do an mstp x mstp square
+ld hl,mstp
+call dosq
+
+pop de
+pop bc
+
+ld hl,mstp
+add hl,de
+ex de,hl
+ld hl,xa
+and a
+sbc hl,de
+jr nz,loopx
+
+ld hl,mstp
+add hl,bc
+ld b,h
+ld c,l
+ld hl,ya
+and a
+sbc hl,bc
+jr nz,loopy
+
+ei
+
+call getch
+ret
+
+
+;entry: (de,bc)=(x,y) pos to calculate
+;exit: pixel value in a - 0=on, 1=off
+;f/bc/de/hl/af'/bc'/de'/hl'/ix/iy corrupt
+qposr:	defw 0,0
+qposi:	defw 0,0
+qr:	defw 0,0
+qi:	defw 0,0
+qs:	defw 0,0
+qz:	defw 0,0
+count:	defw 0
+lxpos:	defw 0
+lypos:	defw 0
+donepos: defw 0
+
+calcpix:
+
+ld (lxpos),de
+ld (lypos),bc
+
+;test done array, to see if we've done this pixel before
+ld h,b
+ld l,c
+ld de,xa
+call multiply
+ld de,(lxpos)
+add hl,de
+ld de,done
+add hl,de
+ld (donepos),hl		;save this address for later
+
+ld a,(hl)
+and a
+jr z,cpix1
+
+dec a		;we have - use the old value
+ret
+
+cpix1:
+;ok, not done before, so calculate it.
+
+;posr&=n%*astp&+a&
+ld ix,0
+ld hl,(lxpos)
+ld de,(qastp+2)
+ld bc,(qastp+0)
+call mul32
+ld de,(qa+2)
+ld bc,(qa+0)
+call add32
+ld (qposr+2),ix
+ld (qposr+0),hl
+
+;posi&=m%*bstp&+b&
+ld ix,0
+ld hl,(lypos)
+ld de,(qbstp+2)
+ld bc,(qbstp+0)
+call mul32
+ld de,(qb+2)
+ld bc,(qb+0)
+call add32
+ld (qposi+2),ix
+ld (qposi+0),hl
+
+;r&=0 :i&=0 :s&=0 :z&=0
+ld hl,0
+ld (qr+2),hl
+ld (qr+0),hl
+ld (qi+2),hl
+ld (qi+0),hl
+ld (qs+2),hl
+ld (qs+0),hl
+ld (qz+2),hl
+ld (qz+0),hl
+
+;count%=0
+ld bc,0
+
+cpixlp:
+push bc
+
+;  z&=r&*r&/scl&-i&*i&/scl&
+;first, r*r/scl
+ld ix,(qr+2)
+ld hl,(qr+0)
+push ix
+pop de
+ld b,h
+ld c,l
+call smul32
+
+ld de,0
+ld bc,scl
+call sdiv32
+
+push ix
+push hl
+
+;now, i*i/scl
+ld ix,(qi+2)
+ld hl,(qi+0)
+push ix
+pop de
+ld b,h
+ld c,l
+call smul32
+
+ld de,0
+ld bc,scl
+call sdiv32
+
+;subtract from r*r/scl
+pop bc
+pop de
+call swap32
+call sub32
+
+;put in z
+ld (qz+2),ix
+ld (qz+0),hl
+
+;save z for next but one line
+push ix
+push hl
+
+;  i&=2*r&*i&/scl&+posi&
+;2*r*i
+ld ix,0
+ld hl,2
+ld de,(qr+2)
+ld bc,(qr+0)
+call smul32
+ld de,(qi+2)
+ld bc,(qi+0)
+call smul32
+ld de,0
+ld bc,scl
+call sdiv32
+;add posi
+ld de,(qposi+2)
+ld bc,(qposi+0)
+call add32
+;put in i
+ld (qi+2),ix
+ld (qi+0),hl
+
+
+;  r&=z&+posr&
+;pop the z pushed above
+pop hl
+pop ix
+ld de,(qposr+2)
+ld bc,(qposr+0)
+call add32
+ld (qr+2),ix
+ld (qr+0),hl
+
+;  s&=r&*r&/scl&+i&*i&/scl&
+;r*r/scl - r is still in ixhl
+push ix
+pop de
+ld b,h
+ld c,l
+call smul32
+ld de,0
+ld bc,scl
+call sdiv32
+;save for later
+push ix
+push hl
+
+;i*i/scl
+ld ix,(qi+2)
+ld hl,(qi+0)
+push ix
+pop de
+ld b,h
+ld c,l
+call smul32
+
+ld de,0
+ld bc,scl
+call sdiv32
+
+;add the old r*r/scl
+pop bc
+pop de
+call add32
+;put in s
+ld (qs+2),ix
+ld (qs+0),hl
+
+;xlation of "while count%<iter% and s&<=4*scl&"
+;break out here if 's&>4*scl&', i.e. if (qs)>(qscl4)
+ld ix,(qs+2)
+ld hl,(qs+0)
+ld de,(qscl4+2)
+ld bc,(qscl4+0)
+call sub32
+pop bc		;pop the iteration var first
+ld a,1		;to say 'outside set' if we jump here
+jr nc,cpixsk2	;this is really >=, should be good enough
+
+;else iterate
+inc bc
+ld hl,iter
+and a
+sbc hl,bc
+jp nz,cpixlp
+
+xor a	;did all iterations, so it's inside the set
+
+cpixsk2:
+;done. 
+
+;if s&>4*scl& and (count% and 1)
+;(i.e. if a=1 and bc&1)
+;  done%(m%*xa%+n%+1)=2
+;  return 1
+ld hl,(donepos)		;as saved earlier
+and a
+jr z,cpixsk3
+bit 0,c
+jr z,cpixsk3
+
+ld (hl),2
+ld a,1
+ret
+
+cpixsk3:
+;else
+;  done%(m%*xa%+n%+1)=1
+;  return 0
+ld (hl),1
+xor a
+ret
+
+
+;entry: (de,bc)=(x,y) of top corner, hl=size of square (16 for 16x16, etc.)
+;this routine is major grief, as it recurses. so, we have to do avoid
+; using vars and instead use purely regs and stack.
+;in other words, it's write-only code. :-)
+;note that 'stp' as referred to in comments etc. in this routine means
+; the value passed in hl, not the equ 'mstp'.
+dosq:
+ld b,l
+;now de,c for loops, b for stp
+;so hl/ix/iy/alts are usable
+
+;put -(x+stp) in ix so we can test de's end-loop condition
+; 'de=x+stp' with 'add ix,de'
+ld h,0
+;l is still stp
+push hl
+pop ix	;ix=stp
+add ix,de	;ix=x+stp
+push de
+push ix
+pop de
+ld hl,0
+and a
+sbc hl,de
+push hl
+pop ix
+pop de
+;so now ix=-(x+stp)
+
+;tot%=0
+;use h for total
+ld h,0
+
+;save current de (x)
+push de
+
+;do all sides
+;top/bottom
+
+tbloop:
+;  r%=calcpix%:(x%+a%,y%)
+push hl
+push bc
+push de
+push ix
+ld b,0
+call calcpix
+pop ix
+pop de
+pop bc
+push af
+;  drawpix:(x%+a%,y%,r%)
+push bc
+push de
+call drawpix
+pop de
+pop bc
+pop af
+pop hl
+;  tot%=tot%+r%
+add a,h
+ld h,a
+
+;  r%=calcpix%:(x%+a%,y%+stpm1%)
+push hl
+push bc
+push de
+push ix
+;c+=stp-1
+ld a,c
+add a,b
+dec a
+ld c,a
+ld b,0
+call calcpix
+pop ix
+pop de
+pop bc
+push af
+push bc
+push de
+;  drawpix%:(x%+a%,y%+stpm1%,r%)
+;c+=stp-1... have to just do it again :-(
+push af
+ld a,c
+add a,b
+dec a
+ld c,a
+pop af
+call drawpix
+pop de
+pop bc
+pop af
+pop hl
+;  tot%=tot%+r%
+add a,h
+ld h,a
+
+;iterate
+inc de
+push ix
+add ix,de
+pop ix
+jr nc,tbloop
+
+;restore de (x)
+pop de
+
+
+;if stp<=2 (i.e. <3), we're done
+ld a,b
+cp 3
+ret c
+
+
+;save c (y) and b (stp)
+push bc
+
+;now do left/right
+;total is still in h
+
+;l=y+stp-1
+ld a,c
+add a,b
+dec a
+ld l,a
+
+;start from y+1
+inc c
+
+lrloop:
+;  r%=calcpix%:(x%+a%,y%)
+push hl
+push bc
+push de
+ld b,0
+call calcpix
+pop de
+pop bc
+push af
+;  drawpix:(x%+a%,y%,r%)
+push bc
+push de
+call drawpix
+pop de
+pop bc
+pop af
+pop hl
+;  tot%=tot%+r%
+add a,h
+ld h,a
+
+;  r%=calcpix%:(x%+stpm1%,y%+b%)
+push hl
+push bc
+push de
+;de+=stp-1
+dec b
+ld l,b
+ld h,0
+add hl,de
+ex de,hl
+ld b,0
+call calcpix
+pop de
+pop bc
+push af
+push bc
+push de
+;  drawpix%:(x%+stpm1%,y%+b%,r%)
+;de+=stp-1... have to just do it again :-(
+dec b
+ld l,b
+ld h,0
+add hl,de
+ex de,hl
+call drawpix
+pop de
+pop bc
+pop af
+pop hl
+;  tot%=tot%+r%
+add a,h
+ld h,a
+
+;iterate
+inc c
+ld a,c
+cp l
+jr c,lrloop
+
+;restore c (y) and b (stp)
+pop bc
+
+
+;so now we're back to de=x, c=y, b=stp
+
+;if total=0 or stp*4-4 all are same, fill in
+
+;total still in h
+ld a,h
+and a
+jr z,dsskip1
+;work out stp*4-4
+ld a,b
+rla
+rla
+and 0fch
+dec a
+dec a
+dec a
+dec a
+cp h
+jr nz,dsskip2
+
+dsskip1:
+;fill in the inside of the square in the right colour, and ret
+ld a,h
+and a
+jr nz,dsskip3
+;0, so pset
+ld hl,pset
+call pixstyle
+jr dsskip4
+
+dsskip3:
+;1, so preset
+ld hl,preset
+call pixstyle
+dsskip4:
+;draw rectangle from (x+1,y+1)-(x+stp-2,y+stp-2)
+;de and c are still x,y
+dec b
+dec b	;b=stp-2
+ld h,0
+ld l,b
+add hl,de	;hl=x+stp-2
+inc de		;de=x+1
+ld a,c
+add a,b
+ld b,a		;b=y+stp-2
+inc c		;c=y+1
+call frect
+ret
+
+dsskip2:
+;otherwise, we recurse for each of the four quadrants
+rrc b	;b=stp/2
+ld l,b
+ld h,0
+ld b,0
+;now de=x, bc=y, hl=stp/2
+
+;  dosq:(x%,y%,a%)
+push bc
+push de
+push hl
+call dosq
+pop hl
+pop de
+pop bc
+
+;  dosq:(x%+a%,y%,a%)
+push bc
+push de
+push hl
+;de+=stp/2
+push hl
+add hl,de
+ex de,hl
+pop hl
+call dosq
+pop hl
+pop de
+pop bc
+
+;  dosq:(x%,y%+a%,a%)
+push bc
+push de
+push hl
+;c+=stp/2
+ld a,c
+add a,l
+ld c,a
+call dosq
+pop hl
+pop de
+pop bc
+
+;  dosq:(x+a%,y%+a%,a%)
+;this is the last one, so don't bother saving regs
+;de+=stp/2
+push hl
+add hl,de
+ex de,hl
+pop hl
+;c+=stp/2
+ld a,c
+add a,l
+ld c,a
+call dosq
+
+;at last! :-)
+ret
+
+
+
+;draw pixel at (de,c) according to a - a=0 pset, a=1 preset
+;entry: (de,c), a
+;exit: none
+;af/bc/de/hl corrupt
+drawpix:
+and a
+jp z,pset
+jp preset
+

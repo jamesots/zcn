@@ -1,0 +1,17 @@
+NAME
+	undoc - list of programs without man pages
+
+SYNOPSIS
+	Undocumented programs
+
+DESCRIPTION
+	All internal/external ZCN commands should have man pages.
+	However, some third-party programs bundled with ZCN don't have
+	man pages (at least, not yet):
+
+	pmcat
+	pmexe2
+	pmset
+	pmsfx2
+	qterm
+	z8e

@@ -1,0 +1,5 @@
+This directory contains the source to dclock and zcnclock. The
+binaries were moved to the `bin' directory along with most of the
+other utils.
+
+-Rus.

@@ -1,0 +1,30 @@
+;ZCN v1.3 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2000 Russell Marks. See `zcn.txt' for license details.
+
+;this just includes all the main files.
+;(this approach is better than `cat' or something of that nature as
+;it preserves filenames and line numbers for error reports.)
+
+;you should assemble nc100.z or nc200.z instead of this. That decides
+;whether you get an NC100 or NC200 version (neither will work well on
+;the other machine, as they differ more than one might like).
+
+
+include start.z		;must be first
+
+include init.z
+include inthndl.z
+include bdos.z
+include bios.z
+include zcnfunc.z
+include ccp.z
+include misc.z
+include card.z
+include cardboot.z
+include internal.z
+include powrhndl.z
+include keyread.z
+include serial.z
+include term.z
+
+include eof.z		;must be last

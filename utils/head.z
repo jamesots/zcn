@@ -1,0 +1,88 @@
+;Unix-like head command.
+;for obvious reasons, display 8 lines only.
+
+org 0100h
+
+jr start
+
+numlines equ 8
+
+userfcb1 equ 05ch
+bdos equ 5
+bconout equ 2
+bdprint equ 9
+fopen equ 15
+fread equ 20
+
+lincount: defb 0
+musage: defb 'usage: head [filename]$'
+mnofile: defb 'No file$'
+
+start:
+ld a,(userfcb1+1)
+cp 32
+jp z,usage
+
+xor a
+ld (lincount),a
+
+;open file
+ld de,userfcb1
+ld c,fopen
+call bdos
+inc a
+jr nz,fileok
+
+ld de,mnofile
+ld c,bdprint
+jp bdos
+
+fileok:
+ld hl,0100h
+
+loop:
+ld a,h
+and a
+call nz,loadmore
+
+ld a,(hl)
+cp 10
+jr z,gotlf
+and 07fh
+ld e,a
+ld c,bconout
+push hl
+call bdos
+pop hl
+inc hl
+jr loop
+
+gotlf:
+ld a,(lincount)
+inc a
+ld (lincount),a
+cp numlines
+jp z,0  ;finish if done N lines
+ld e,10
+ld c,bconout
+push hl
+call bdos
+pop hl
+inc hl
+jr loop
+
+
+usage:
+ld de,musage
+ld c,bdprint
+jp bdos
+
+
+loadmore:
+ld de,userfcb1
+ld c,fread
+call bdos
+inc a
+jp z,0  ;exit now if no more
+ld hl,080h
+ret

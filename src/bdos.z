@@ -1,0 +1,2187 @@
+;ZCN v1.3 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2001 Russell Marks. See `zcn.txt' for license details.
+
+;bdos stuff
+
+;all fcb-using functions now handle the 066h problem.
+;PLEASE ADD THIS TO NEW FCB-USING FUNCTIONS IF REQUIRED!
+;(test like 'low 7 bits of byte in ext. field = 077h' is good enough)
+
+;bdos functions preserve ix, iy and alternates, but not any others.
+
+;note that 'bdos' and 'bdoshndl' are NOT RE-ENTRANT - any bdos
+;function definitions which need to call other bdos routines should
+;call them directly.
+
+;the only functions which check for a valid drive are bfopen,
+;bfmake, bfdel, bsfirst, bfrename, moveuser.
+;ichngdrv in internal.z checks too,
+;as does the command-loading routine runext in ccp.z (since it uses
+;bfopen).
+
+;this has the interesting result that if a card is removed, say,
+;at the ccp prompt, and a 'dir' is carried out, no error will be
+;given, it will simply report 'No file'. I'm not entirely sure
+;if this is good or not. :-/
+
+
+
+;constants
+cpmver	equ 022h	;claim to be cp/m v2.2
+cardbuf	equ 0e980h	;card read/write buffer
+ffreebuf equ 0e880h	;'find free block' scratch area
+
+;blocksize
+rcds2blk equ 8		;records per block
+byte2blk equ 1024	;bytes per block
+log2blk  equ 3		;log2(rcds2blk)  that is, 2^log2blk=rcds2blk
+
+;fcb offsets, afaik
+fcbdrive	equ 0
+fcbname		equ 1
+fcbcurblk	equ 12
+fcbuserno	equ 13
+fcbrcdsiz	equ 14		;set to 128 by bfopen (why?)
+fcbcurrcd	equ 32
+fcbrand		equ 33		;3 byte rand. rec. field
+				;not init'd by bfopen
+
+;block used in FCB by matchfcb when called internally. (For user
+;programs it uses a separate buffer.) It uses bytes at offset 24..26.
+fcbdblk		equ 24		;dir. block of last file found
+;(25..26 are used to hold the address in blk of last file found.)
+
+
+;dir. entry offsets
+dentuser	equ 0		;user area num., or 0e5h if unused
+				;entry
+dentname	equ 1
+dentpart	equ 12		;part num. 0,1,2...
+dentsiz		equ 15		;size of this file part. in rcds
+dentblks	equ 16		;(up to) 16 blocks of file.
+
+
+;vars
+dmapos:	defw 080h	;address of DMA (FCB data read/write buffer)
+curdrive: defb 0	;current drive - 0=A: on startup
+	;curuser/prevuser must stay contiguous and in same order
+curuser: defb 0		;current user area number
+prevuser: defb 0	;previous user area, used/set only by init.z and `user'
+tmpde:	defw 0		;generic 'save de' var
+wildok:	defb 1		;sets if wildcards ok in bsfirst.
+			;(set to 0 by other functions for a short time)
+findera: defb 0		;similar - if 1, find empty (erased) entry.
+only0th: defb 1		;similar - if 1, find only 0th part
+			;altered temporarily by bfdel and prob. others
+usrsrch: defb 0		;user search first/next if 1
+bdosdbug: defb 0	;say number of bdos function if nonzero
+
+bfunctbl:
+defw warmboot	;0 system reset
+defw bconin	;1 console input
+defw bconout	;2 console output
+defw bauxin	;3 aux input (always serial)
+defw bauxout	;4 aux output
+defw blstout	;5 list output (always parallel)
+defw bdconio	;6 direct console i/o
+defw bauxinp	;7 (cpm3-style) aux input status
+defw bauxoutp	;8 (cpm3-style) aux output status
+defw bdprint	;9 print string
+defw bgetbuf	;10 read console, buffered
+defw bconstat	;11 get con status
+defw bversion	;12 version number
+defw bresetds	;13 reset disk system
+defw bseldisk	;14 select disk
+defw bfopen	;15 open file
+defw bfclose	;16 close file
+defw bsfirst	;17 search for first
+defw bsnext	;18 search for next
+defw bfdel	;19 delete file
+defw bfread	;20 read sequential
+defw bfwrite	;21 write sequential
+defw bfmake	;22 make file
+defw bfrename	;23 rename file
+defw blogvec	;24 return login vector
+defw bretdsk	;25 return current disk
+defw bsetdma	;26 set DMA address
+defw bnop	;27 get addr (alloc)
+defw bnop	;28 write protect disk
+defw brovec	;29 get r/o vector
+defw bnopok	;30 set file attributes
+defw bnop	;31 get addr (DPB)
+defw bsetuser	;32 set/get user code
+defw brread	;33 read random
+defw brwrite	;34 write random
+defw bfsize	;35 compute file size
+defw bsetrand	;36 set random record
+defw bnopok	;37 reset drive (this is good enough, under ZCN)
+defw bnop	;38 cpm3 - access drive
+defw bnop	;39 cpm3 - free drive
+defw brwrite	;40 write random with zero fill (not done properly!)
+;also 46, but jumped to from bdoshndl
+
+;saves user sp
+bstksav: defw 0
+
+
+;bdos function dispatcher
+bdoshndl:
+ei
+ld (bstksav),sp
+ld sp,intstack	;use internal stack
+ld hl,bexitfnc	;push addr of stack-restore/hl-setting routine for 'ret'
+push hl
+
+;function 2 (console output) gets top priority, primarily
+; for terminal programs etc.
+ld a,c
+cp 2
+jp z,bconout
+
+;and function 46 (cpm3 get free space) as it's separate from main
+;block in table
+cp 46
+jr z,bgetfree
+
+call chksdmp
+
+;check the 'rst 30h' at the NMI address (66h)
+di
+ld a,(066h)
+cp 0f7h		;'rst 30h'
+jr z,b66ok
+cp 077h		;'rst 30h' with top bit stripped
+jr z,b66sk
+ld (real66),a
+b66sk:
+ld a,0f7h
+ld (066h),a
+b66ok:
+ei
+
+ld a,(bdosdbug)
+and a
+jr z,bnodb
+ld a,'['
+call putchar
+ld a,c
+call hexbyte	;saves regs
+ld a,']'
+call putchar
+
+bnodb:
+ld a,c
+cp 128
+jp nc,zcnfunc	;zcn-specific functions
+cp 41
+jr nc,bnop	;only functions <41 listed in table, 'nop' for others.
+
+push de
+ld de,bfunctbl
+tblderef:	;also used by zcnfunc.z
+ld h,0
+ld l,a
+add hl,hl
+add hl,de
+ld e,(hl)
+inc hl
+ld d,(hl)
+ex de,hl
+pop de
+jp (hl)
+
+
+;'ret' stack restore routine.
+bexitfnc:	;used by bdos (by default)
+;setting H and L is important for some programs.
+ld h,0
+ld l,a
+bexitstk:	;used by bios/zcnfunc and a few bdos functions
+ld sp,(bstksav)
+ret
+
+
+;nop routine, for unimplemented (as yet) functions
+bnop:
+ld a,0ffh	;usually means failure
+ret
+
+
+;nop routine, but returns 'success'.
+bnopok:
+xor a
+ret
+
+
+;cpm3 get free space
+bgetfree:
+ld d,e		;already 0=a:
+call diskfree
+;that's in a, and in k - put in hl and multiply by 8
+ld h,0
+ld l,a
+add hl,hl
+add hl,hl
+add hl,hl
+;now put at dma addr
+ex de,hl
+ld hl,(dmapos)
+ld (hl),e
+inc hl
+ld (hl),d
+inc hl
+ld (hl),0	;just in case the program is written well :-)
+ret
+
+
+
+;console input (busy wait if none)
+;judging from dos v1 functions, this should echo the character too.
+;it does this now, anyway.
+;should ctrl-c be tested for in other bdos routines too?
+;(also tested for in buffered-read)
+bconin:
+ei
+call kgetchar
+jr nc,bconin
+cp 3		;is it ctrl-c?
+jp z,bctrlc	;if so, warm boot, but echo "^C" first
+push af
+ld e,a
+call bconout
+pop af
+ret
+
+bctrlc:
+call ilprint
+defb '^C',0
+jp wboot
+
+
+bconout:
+ld a,e
+jp tputchar
+
+
+bconstat:
+ei
+call kchkchar
+rla
+and 1
+ret
+
+
+;some interrupt stuff here too, so everything should be sane after
+;warm boot.
+initbdos:
+;init jumps
+ld a,0c3h
+ld (0),a
+ld hl,warmboot
+ld (1),hl
+ld (5),a 	;still c3h
+ld hl,bdos	;this is in start.z
+ld (6),hl
+ld hl,start
+ld (cpmstack),hl
+call initijp	;init IM2 jump table and interrupt jump
+		;(not really needed any more, but what the heck)
+
+;init internal stuff
+xor a
+ld (findera),a
+inc a
+ld (wildok),a
+ld (only0th),a
+ret
+
+
+bdprint:
+push de
+;stop drawing cursor to improve speed a bit
+call curseit	;undraw cursor by hand *before* turning it off :-)
+pop hl
+bdp1:
+ld a,(hl)
+cp '$'
+jr z,bdp2
+push hl
+push af
+call loc2addr	;internal bit of tputchar
+if IS_NC200
+ ld a,043h
+ call cardin
+endif
+pop af
+call grokchar	;another internal bit
+if IS_NC200
+ call cardout
+endif
+pop hl
+inc hl
+jr bdp1
+bdp2:
+jp curseit
+
+
+;return version number in hl
+;h is zero, to indicate cpm. uh, yeah, keep taking the tablets guys.
+;l is cpm version number
+bversion:
+ld a,cpmver
+;HL set from A on ret
+ret
+
+
+;read buffer from console - similar to dos int21 func. 10.
+;checks for ^C
+;XXX only editing supported is delete backwards
+;temp vars:
+bgbpos:	defb 0	;position, where 0 = at (bgbbuf)+2
+bgbbuf:	defw 0	;buffer being filled - from de
+bgblen: defb 0  ;current length of string
+bgbchar: defb 0	;last char. input
+
+bgetbuf:
+ld (bgbbuf),de
+
+;give up now if max. len. is zero
+ld a,(de)
+and a
+ret z
+
+xor a
+ld (bgbpos),a
+ld (bgblen),a
+
+bgbloop:
+call bdgetkey	;con input, no echo or ^c check
+and a
+jr z,bgbloop
+cp 3		;is it ctrl-c?
+jp z,bctrlc	;if so, echo ^C and warm boot
+ld (bgbchar),a
+
+;if it was backspace, print a backspace/space/backspace
+cp 8
+jr z,bgbbksp
+;same for DEL
+cp 127
+jr nz,bgb1
+
+bgbbksp:
+;delete char onscreen and in buffer if pos!=0
+ld a,(bgbpos)
+and a
+jr z,bgbagain
+
+dec a
+ld (bgbpos),a
+ld a,(bgblen)
+dec a
+ld (bgblen),a
+
+ld a,8
+call tputchar
+ld a,32
+call tputchar
+ld a,8
+ld (bgbchar),a	;make DEL look like backspace
+call tputchar
+
+bgb1:
+;now echo and add, but only if printable
+ld a,(bgbchar)
+call isprint
+jr nc,bgbagain
+
+;add char to string
+;XXX this only works if (bgbpos)=(bgblen), i.e. cursor is at end of
+;string
+ld hl,(bgbbuf)
+inc hl
+inc hl
+ld a,(bgblen)
+ld b,0
+ld c,a
+add hl,bc
+ld a,(bgbchar)
+ld (hl),a
+
+;incr. len of string
+ld hl,bgbpos
+inc (hl)
+ld hl,bgblen
+inc (hl)
+
+;echo char
+ld a,(bgbchar)
+call tputchar
+
+;end of loop bit
+bgbagain:
+;check for size - if bgblen=bufsiz then buffer is full
+ld hl,(bgbbuf)
+ld a,(bgblen)
+cp (hl)
+jr z,bgbfin
+
+;check for CR
+ld a,(bgbchar)
+cp 13
+jr nz,bgbloop
+
+bgbfin:
+;finished - echo a CR and return length in bgbbuf+1
+ld a,13
+call tputchar
+
+ld hl,(bgbbuf)
+inc hl
+ld a,(bgblen)
+ld (hl),a
+ret
+
+
+;returns carry set if 32<=a<=126
+isprint:
+cp 32
+ccf
+ret nc
+cp 127
+ret
+
+
+;reset disk system
+;just sets DMA to 080h
+bresetds:
+ld de,080h
+;FALLS THROUGH
+
+;set dma address
+bsetdma:
+ld (dmapos),de
+ret
+
+
+;return current disk
+;curiously, should be returned as base val 0 (i.e. 0=A:)
+;suits me fine. :-)
+bretdsk:
+ld a,(curdrive)
+ret
+
+
+;set/get current user area num.
+bsetuser:
+ld a,e
+cp 0ffh
+ld a,(curuser)
+ret z
+ld a,e
+and 15
+ld (curuser),a
+ret
+
+
+;direct con i/o
+;if e=0ffh, do input without echo
+;if e=0feh, call bconstat (con status)
+;else output e
+bdconio:
+ld a,e
+cp 0ffh
+jr z,bdgetkey
+cp 0feh
+jp z,bconstat
+jp tputchar
+
+;(bdgetkey can be used internally as a shortcut)
+bdgetkey:
+;input, no echo, no pause
+;returns A=char if one ready, A=0 otherwise
+;(internally, you can also rely on carry set if char else nc.)
+call kgetchar
+ret c
+xor a
+ret
+
+
+
+
+
+
+;BDOS DISK FUNCTIONS
+
+
+;open (existing) file function.
+;de=addr. of fcb
+;returns a=0 if opened ok, else a=255.
+;if file exists then fcbcurblk and fcbcurrcd are zeroed,
+;fcbrcdsiz is set to 128, and if fcbdrive is 0 it is replaced by the
+;current drive.
+;apparently the zeroing behaviour is non-standard - not sure about the
+;rest.
+bfopen:
+ld (tmpde),de
+
+;see if drive is valid
+ld a,(de)
+call bchkdrv
+ld a,255
+ret nc
+
+ld de,(tmpde)
+call fexist
+cp 255
+ret z
+
+push ix
+ld ix,(tmpde)
+ld a,080h
+ld (ix+fcbrcdsiz),a
+xor a
+ld (ix+fcbcurblk),a
+ld (ix+fcbcurrcd),a
+pop ix
+ld hl,(tmpde)
+cp (hl)
+jr nz,bfo1	;skip if drive num. non-zero
+
+;fill in drive num. with current
+ld a,(curdrive)
+inc a	;make it baseval=1
+ld (hl),a
+
+bfo1:
+xor a	;return value
+ret
+
+
+;check that card is in, that the card has a ZCN1 format A: drive,
+;that the logical drive position exists on the card, and that
+;the logical drive has a ZCN1 boot block.
+;in other words, this checks if a drive is valid.
+;blasts cardbuf
+;entry: drive num. in a (0=current, 1=A:, 2=B:, 3=C:, 4=D:)
+;exit:  carry set if all ok, false otherwise.
+bcadrv:	defb 0
+bchkdrv:
+and a
+jr nz,bca1
+ld a,(curdrive)
+inc a
+bca1:
+dec a
+ld (bcadrv),a
+
+call iscard
+ret nc
+
+ld d,0
+call iszcn1
+ret nc
+
+ld a,(bcadrv)
+call bchkdnum
+ret nc
+
+ld a,(bcadrv)
+ld d,a
+call iszcn1
+ret nc
+
+scf
+ret
+
+
+;checks drive num. in a
+;entry: a=drive num. (0=A:, 1=B:, 2=C:, 3=D:)
+;exit:  carry set if drive valid, else carry false
+bchkdnum:
+cp 4
+ret nc		;bad drive if >=4
+
+;check if drive exists on card.
+and a
+scf
+ret z		;drive A: always exists.
+
+ld b,a
+push bc
+xor a
+ld hl,cf1size+1		;read msb of cardsize
+call creadone
+pop bc
+ld h,a
+cp 4
+scf
+ret z	;if msb of cardsize=4, then card size=400h=1024k so B/C/D: ok.
+
+;if still here and drive is C: or D:, it doesn't exist.
+ld a,b
+cp 2
+ret nc	;ret if drive >=C:.
+
+;so now it's B: - if not 512k (=200h) card, doesn't exist.
+ld a,h
+cp 2
+scf
+ret z	;512k and drive B:, so it's ok.
+
+and a	;else error.
+ret
+
+
+;wrapper around bsfirst that effectively tries to find
+;if a single file exists.
+;actually finds first dir. entry belonging to file, whether
+;0th or not.
+;enter with de=addr. of fcb
+;exit as for bsfirst
+fexist:
+xor a
+ld (wildok),a
+ld (only0th),a
+call intfirst
+push af
+ld a,1
+ld (wildok),a
+ld (only0th),a
+pop af
+ret
+
+
+;wrapper around bsfirst that effectively tries to find
+;a free dir. entry
+;drive number used is as in fcb pointed to by (tmpde)
+;exit as for bsfirst
+emptydir:
+ld a,1
+ld (findera),a
+ld hl,(tmpde)
+ld de,erafcb
+ld a,(hl)
+ld (de),a
+call intfirst
+push af
+xor a
+ld (findera),a
+pop af
+ret
+
+;rubbish-value fcb used by emptydir
+;(only drive is init'd)
+erafcb:	defw 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0
+	defb 0
+
+
+
+;close file, de=fcb
+;usually only called when file has been written to.
+;the way zcn currently works means this only need return 'ok'.
+bfclose:
+xor a
+ret
+
+
+;de=fcb
+;exit: a=0 if a name found, else a=255.
+;beware if using internally - blasts cardbuf!
+;(remember to call 'intfirst' when using internally.)
+;(cardbuf actually exits containing the record referenced in internal FCB
+; stuff. If internal functions need internal FCB values soon after
+; calling, might as well use the 'mf...' variables below directly.)
+;blasts af/bc/de/hl
+bsfcb:	defw 0
+bsfirst:
+ld a,1
+ld (mfmkfcb),a	;gets auto-zeroed by matchfcb after use
+ld (usrsrch),a  ;same
+ld (bsfcb),de	;store since we won't get it for bsnext
+ld a,(de)
+cp '?'
+jr z,intfirst	;'?' means search all user areas, so skip test
+push de
+call bchkdrv
+ld a,255
+pop de
+ret nc		;forget it if bad drive
+intfirst:	;internal version - no FCB created at DMA
+xor a
+jp matchfcb
+
+
+;much the same
+bsnext:
+ld a,1
+ld (mfmkfcb),a
+ld (usrsrch),a
+ld de,(bsfcb)	;get from bsfirst
+intnext:	;internal version - no FCB created at DMA
+ld a,1
+jp matchfcb
+
+
+;vars for matchfcb
+;these must stay the same size and in the same order
+mfde: 		defw 0
+mfdblk:		defb 0		;dir block
+mfdaddr:	defw 0		;dir addr in block
+mfdrcd:		defb 0		;record num. in block
+mfdptr:		defw 0		;above as ptr in loaded record
+
+mfdirblks:	defb 0		;num. dir blocks
+mflast:		defw 0ffffh	;last dir. blk/rcd loaded
+
+mfmkfcb:	defb 0		;=1 if create FCB at DMA
+
+usrmfd:		defw 0,0,0	;used to save user first/next context
+
+mfdrive:	defb 0		;drive being used, 0=A:
+
+;match dir. entry against fcb at de
+;a=0 if first time, a=1 for subsequent times.
+;handles 066h
+;this is unfortunately pretty hairiferious as I needed to hack in
+;some compatibility thingies needed for pmarc and prob. other progs.
+matchfcb:
+ld (mfde),de
+push af
+
+;check ex to fix op later on
+ld hl,fcbcurblk
+add hl,de
+ld a,(hl)
+sub '?'
+ld (exquesop+1),a
+
+ld a,(wildok)
+and a
+ld a,0a7h	;and a
+jr z,mf000
+ld a,037h	;scf
+mf000:
+;write relevant opcode so we can check wildok more quickly/easily later.
+ld (wildtmp1),a
+ld (wildtmp2),a
+
+ld hl,0ffffh
+ld (mflast),hl		;nuke 'last dir. blk bit loaded' value
+
+;store num. dir. blocks value
+ld de,(mfde)
+ld a,(de)
+cp '?'
+jr z,mf00
+and a
+jr nz,mf0
+mf00:
+ld a,(curdrive)
+inc a
+mf0:
+dec a
+ld (mfdrive),a
+ld b,a
+call dirblks
+ld a,c
+ld (mfdirblks),a
+
+ld hl,(mfde)
+ld de,fcbdblk
+add hl,de	;so hl=(mfde)+fcbdblk
+ld a,(hl)
+ld (mfdblk),a
+inc hl
+ld e,(hl)
+inc hl
+ld d,(hl)
+ld (mfdaddr),de
+
+ld a,(usrsrch)
+and a
+jp z,mf0a
+
+;actually get it from user context saved area.
+ld hl,usrmfd
+ld de,mfdblk
+ld bc,6
+ldir
+
+mf0a:
+;if matched before, skip init. stuff
+pop af
+and a
+jr nz,mf1
+
+;set it to 0th dir. entry.
+xor a
+ld (mfdblk),a
+ld h,a
+ld l,a
+ld (mfdaddr),hl
+;need to skip the direntry++ stuff, so jump to mf2
+jr mf2
+
+mfnope:		;jumps here if match not found, to try the next one
+mf1:
+;add 32 to last matching entry
+;(if that entry doesn't contain a match, we loop to here again and try
+;the next after that)
+ld hl,(mfdaddr)
+ld de,32
+add hl,de
+ld (mfdaddr),hl
+;if it's the same as the blocksize, then zero it and incr mfdblk
+ld a,h
+cp 1024/256
+jr nz,mf2
+
+;zero addr, incr blk
+ld hl,0
+ld (mfdaddr),hl
+ld hl,mfdblk
+inc (hl)
+
+;see if that was the last dir. block
+ld a,(mfdirblks)
+ld c,a
+ld a,(mfdblk)
+cp c
+jr nz,mf2
+
+;it was, so there are no more matching entries.
+xor a
+ld (mfmkfcb),a	;reset fcb-create flag
+ld (usrsrch),a
+dec a	;a=ffh
+ret
+
+;mf2 can be jumped to from before mf1 to skip the direntry++ bit.
+mf2:
+;before we can search, must load record in block we're covering
+ld a,(mfdblk)
+ld b,a
+
+;get top bits 7-14 of mfdaddr to use for rcd num. in blk
+ld hl,(mfdaddr)
+and a
+rl l
+rl h
+ld c,h
+ld a,c
+ld (mfdrcd),a
+
+;while we're at it, get low 7 bits and put in mfdoff.
+ld a,(mfdaddr)
+and 07fh
+ld d,0
+ld e,a
+ld hl,cardbuf
+add hl,de
+ld (mfdptr),hl
+
+;ok! now load the record, but only if we need to
+ld hl,(mflast)
+and a
+sbc hl,bc
+jr z,mfgotblk
+
+;ok, we do need to, so load it.
+ld (mflast),bc
+ld a,(mfdrive)
+ld d,a
+ld hl,cardbuf
+call readblkrcd
+
+mfgotblk:
+;so now we start searching from mfdblk/mfdaddr for entries
+;which match the fcb at (mfde).
+;(don't forget to deal with 2nd char of ext. specially
+; for (mfde)=5ch)
+
+ld a,(findera)
+and a
+jr z,mf3
+
+;ok, just see if it's blank.
+ld hl,(mfdptr)
+ld a,(hl)
+cp 0e5h
+jp nz,mf1	;loop again if not
+jp mfdone	;finish up if it is
+
+mf3:
+;if the drive is '?', it matches anything on the current drive (boy,
+; what a kludge that one was) - i.e. anything matches so stop now.
+ld hl,(mfde)
+ld a,(hl)
+cp '?'
+jp z,mfdone	;jump if so
+
+;check it's in the current user area if (curuser)!=255
+ld hl,(mfdptr)
+ld a,(hl)
+cp 0e5h
+jp z,mfnope	;erased space
+ld a,(curuser)
+cp 255
+jr z,mfsowhat
+cp (hl)
+jp nz,mfnope
+
+mfsowhat:
+;and check it's a 0th dir. entry if (only0th)=1
+;(or if 'ex' (fcbcurblk) is '?')
+;(otherwise we might get phantom duplicate files reported)
+exquesop: ld a,0	;modified above - zero if ex='?'
+and a
+jr z,mf3a		;skip if ex='?'
+
+ld a,(only0th)
+and a
+jr z,mf3a		;if not (only0th), skip
+
+;check for 0th part
+;(we know hl is in cardbuf, which is page-aligned, so...)
+ld a,dentpart
+or l
+ld e,a
+ld d,h
+ld a,(de)
+and a
+jp nz,mfnope
+
+mf3a:
+inc hl
+ld de,(mfde)
+inc de
+
+ld b,8		;check name field
+
+mfnmlp:
+ld a,(de)
+;uppercase it
+cp 'a'
+jp c,mfskp1	;most will match this, so this is a jp for speed
+cp '{'
+jr nc,mfskp1
+res 5,a
+mfskp1:
+wildtmp1: and a  ;modified above - 'scf'=wildok is 1, else 'and a'
+jr nc,mfnowld1
+
+cp '?'
+jr z,mfcm1	;char matches
+cp '*'
+jr z,mfam1	;all (rest of in field) chars match
+;otherwise compare
+mfnowld1:
+cp (hl)
+jp nz,mfnope
+
+mfcm1:
+;ok, that char matched, keep going.
+inc l		;hl is page-aligned
+inc de
+djnz mfnmlp
+
+mfam1:
+;if we're here, the name field matched ok. now check extension.
+;much the same, but handles the 066h problem as needed.
+;fix hl and de up in case we jumped here because of '*'
+ld hl,(mfde)
+ld bc,9
+add hl,bc
+ex de,hl
+ld hl,(mfdptr)
+add hl,bc
+
+ld b,3		;check extension
+
+mfextlp:
+ld a,(de)
+and 07fh
+cp 077h
+jr nz,mf4
+ld a,(real66)
+mf4:
+;uppercase it
+;(not bothered so much about speed here as above, hence a call;
+; most matches which are going to fail will have done so by now.)
+call islower
+jr nc,mfskp2
+res 5,a
+mfskp2:
+wildtmp2: and a  ;modified above - 'scf'=wildok is 1, else 'and a'
+jr nc,mfnowld2
+
+cp '?'
+jr z,mfcm2	;char matches
+cp '*'
+jr z,mfdone	;all (rest of in field) chars match
+;otherwise compare
+mfnowld2:
+cp (hl)
+jp nz,mfnope
+
+mfcm2:
+;ok, that char matched, keep going.
+inc l		;hl is page-aligned
+inc de
+djnz mfextlp
+
+mfdone:
+;right, it matches.
+;update FCB.
+ld hl,(mfde)
+ld de,fcbdblk
+add hl,de
+ex de,hl
+ld hl,mfdblk
+ld bc,6
+;use usrmfd as dest if a user search.
+ld a,(usrsrch)
+and a
+jr z,mfdn1
+ld de,usrmfd
+mfdn1:
+ldir	;copy stuff to 'internal' bit of FCB
+
+;create FCB at DMA if wanted.
+ld a,(mfmkfcb)
+and a
+jr z,mfdone2
+
+ld hl,(mfdptr)
+ld de,(dmapos)
+ld c,32		;b still zero from ldir above
+ldir
+
+;only put drive num. in fcb if dr!='?'
+;(this is usually the case, in fact)
+ld de,(mfde)
+ld a,(de)
+cp '?'
+jr z,mfdone2
+
+ld hl,(dmapos)
+ld (hl),a	;must be same drive as search fcb
+
+mfdone2:
+xor a
+ld (mfmkfcb),a	;reset fcb-create flag
+ld (usrsrch),a
+xor a	;success
+ret
+
+
+;delete file - de=fcb
+;allows wildcards
+;exit: a=0 if ok else 255
+bfdel:
+ld (tmpde),de
+
+ld a,(de)
+call bchkdrv
+ld a,255
+ret nc
+
+xor a
+ld (only0th),a
+ld de,(tmpde)
+call intfirst
+ld b,a
+ld a,1
+ld (only0th),a
+ld a,b
+cp 255
+ret z		;return with a=255 if none match
+bfd1:
+inc a
+ret z		;note that this zeroes a before returning
+;delete it
+ld hl,(mfdptr)
+ld a,0e5h
+ld (hl),a
+call tmpde2d
+call mfwrite
+;look for more
+ld de,(tmpde)
+xor a
+ld (only0th),a
+call intnext
+ld b,a
+ld a,1
+ld (only0th),a
+ld a,b
+jr bfd1
+
+
+;write modified dir. record at cardbuf after it was searched for
+;with the findfirst/findnext stuff.
+;entry: d=drive num. 0-3
+;blasts af/bc/de/hl
+mfwrite:
+ld a,(mfdrcd)
+ld c,a
+ld a,(mfdblk)
+ld b,a
+ld hl,cardbuf
+jp writeblkrcd
+
+
+;get d=drive num. in range 0-3 from fcb at (tmpde).
+;blasts a/hl
+tmpde2d:
+ld hl,(tmpde)
+ld a,(hl)
+and a
+jr nz,tde1
+ld a,(curdrive)
+inc a
+tde1:
+dec a
+ld d,a
+ret
+
+
+;create file
+;de=fcb
+;handles 066h
+bfmde:	defw 0	;for temp. de
+bfmake:
+ld (bfmde),de
+
+;see if drive is ok
+ld a,(de)
+call bchkdrv
+ld a,255
+ret nc
+
+;abort if in user 255, as it's read-only
+call chk255a
+
+;if it exists, delete it.
+xor a
+ld (wildok),a
+ld de,(bfmde)
+call bfdel
+ld a,1
+ld (wildok),a
+
+ld hl,(bfmde)
+ld (tmpde),hl
+
+;find blank dir. entry
+call emptydir
+cp 255
+ret z		;error - no dir. entries left
+
+;fix fcbdrive if it equals 0 (current).
+ld hl,(bfmde)
+ld a,(hl)
+and a
+jr nz,bfm0
+ld a,(curdrive)
+inc a
+ld (hl),a
+
+bfm0:
+;set user num.
+ld de,(mfdptr)
+ld a,(curuser)
+cp 16
+jr c,bfmnormu
+xor a		;write to user 0 if >=16 usernum somehow
+bfmnormu:
+ld (de),a
+;copy name to dir. entry, uppercasing as we go
+inc hl
+inc de
+ld b,11		;8+3 = filename+ext
+bfm1:
+ld a,(hl)
+and 07fh
+cp 077h		;equals 'rst 030h'? (should be a good enough check)
+jr nz,bfm1a
+ld a,(real66)
+bfm1a:
+and 07fh	;remove any meta bit
+call islower
+jr nc,bfm2
+res 5,a
+bfm2:
+ld (de),a
+inc hl
+inc de
+djnz bfm1
+
+;de now pointing at dir entry. part number
+;zero the rest of the entry
+ex de,hl
+ld bc,20
+call zeroblk
+;now write the dir. rcd back
+call tmpde2d
+call mfwrite
+
+;setup relevant fields in fcb, ready for sequential writing
+push ix
+ld ix,(tmpde)
+ld a,080h
+ld (ix+fcbrcdsiz),a
+xor a
+ld (ix+fcbcurblk),a
+ld (ix+fcbcurrcd),a
+pop ix
+
+;all done
+xor a
+ret
+
+
+
+seqmode: defb 1		;used to tell whether read/write are sequential
+			;or random
+
+;sequential read
+;de=fcb
+;this is stupidly hard
+bfrbc:	defw 0		;temp var. for holding old bc val.
+
+bfread:
+ld a,1
+ld (seqmode),a
+gbfread:	;entry for random
+ld (tmpde),de
+call fexist
+cp 255
+ld a,2
+ret z		;error - file doesn't exist. but we can't report this,
+		;so we say 'reading random data'.
+
+ld de,(tmpde)
+call fcbposcv	;convert fcb position in file to block/rcd
+
+;now convert block returned (really offset into blocklist in dir.
+;entry or entries) into real block number.
+ld (bfrbc),bc
+;find correct dir. entry - keep going until it's right (or return some
+;error if reqd. direntry not found).
+;we've already done a successful 'findfirst' (the fexist call), so we
+;can just keep on doing 'findnext'.
+
+;divide 'block' by 16 to get direntry num. we need
+ld a,b
+rrca
+rrca
+rrca
+rrca
+and 15
+ld b,a
+
+bfrlp1:
+;does b match the direntry num.?
+ld hl,(mfdptr)
+ld de,dentpart
+add hl,de
+ld a,(hl)
+cp b
+jr z,bfrdok	;if so, we've got it
+
+;otherwise get another
+ld de,(tmpde)
+xor a
+ld (only0th),a	;want to look for all parts, not just 0th
+push bc
+call intnext
+pop bc
+push af
+ld a,1
+ld (only0th),a	;set the 0th flag to normal
+pop af
+cp 255
+ld a,1
+ret z		;error - reqd. dir. entry missing. but can't return
+		;that, so return 'read past eof' for seq., or
+		;'reading unwritten data' for rand.
+
+jr bfrlp1	;check if *this* is the right one
+
+bfrdok:
+;got the right dir. entry, now get the real block number etc.
+ld bc,(bfrbc)
+ld a,b
+and 15
+ld e,a
+ld d,0
+ld hl,(mfdptr)
+add hl,de
+ld de,16
+add hl,de
+ld a,(hl)	;wow! finally got the block number.
+ld b,a
+and a		;is it zero?
+ld a,1
+ret z		;if so, dir. block is in file! obviously wrong,
+		;return 'read past eof' (likely cause) for seq.
+		;or 'reading unwritten' for rand.
+
+;check if we're reading past the end of written records in extent
+ld hl,(mfdptr)
+ld de,dentsiz
+add hl,de
+ld de,(bfrbc)
+ld a,d
+and 15
+rlca
+rlca
+rlca		;*8
+and 0f8h
+add a,e		;a=record offset in extent
+cp (hl)
+ld a,1
+ret nc		;past written records - 'read past eof' or
+		;'reading unwritten'
+
+;so now b is right, and c was already right - rcd. num in block
+call tmpde2d
+ld hl,(dmapos)
+call readblkrcd
+
+;point to next rcd in FCB, if really sequential
+ld a,(seqmode)
+and a
+jr z,bfrdone
+
+ld hl,(tmpde)
+ld de,fcbcurrcd
+add hl,de
+ld a,(hl)
+inc a
+ld (hl),a
+cp 128
+jr nz,bfrdone
+
+xor a
+ld (hl),a
+
+ld hl,(tmpde)
+ld de,fcbcurblk
+add hl,de
+inc (hl)
+
+bfrdone:
+xor a		;happy happy happy, joy joy joy
+ret
+
+
+;make 128-record fcbcurblk (not in blocks!) and fcbcurrcd (0-127)
+;into block, and record within block, as offset from start of file.
+;...or converts from rand. pos. if (seqmode)=0.
+;entry: de=fcb
+;returns b=offset in dir. entries blocklist, c=rcd within block
+fcbposcv:
+ld a,(seqmode)
+and a
+jr z,rfcbpos
+;so tmp=fcbcurblk*128+fcbcurrcd,
+;and block=tmp/block_size_in_rcds
+;and record=tmp mod block_size_in_rcds
+push ix
+push de
+pop ix
+ld a,(ix+fcbcurrcd)
+ld e,a
+ld d,0
+ld a,(ix+fcbcurblk)
+pop ix
+ld h,a
+ld l,0
+;hl=fcbcurblk*256
+and a
+rr h
+rr l
+;hl=fcbcurblk*128
+add hl,de
+;hl=fcbcurblk*128+fcbcurrcd
+
+fcbjmpbk:	;rand. routine jumps back here
+ld a,l
+and 7
+ld c,a
+ld b,log2blk	;div by 2^3
+fpclp1:
+and a
+rr h
+rr l	;/2
+djnz fpclp1
+ld b,l
+;now  b=tmp/8, and c=tmp mod 8
+;i.e. b=block (with start-of-file=0), c=rcd within block
+ret
+
+rfcbpos:
+;get rand. pos pointer
+;only least significant two bytes matter to us
+ld hl,fcbrand
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+jr fcbjmpbk
+
+
+;sequential write record
+;de=fcb
+bfwbc:	defw 0		;bc sav.
+bfwblk:	defb 0		;block to write data to
+
+bfwrite:
+ld a,1
+ld (seqmode),a
+gbfwrite:
+;convert fcb file pos. into offset block/record in block
+ld (tmpde),de
+call fexist
+cp 255
+ld a,1
+ret z		;error - file doesn't exist. but we can't report this,
+		;so we say 'error extending'.
+
+call chk255	;abort if in user 255, as it's read-only.
+
+ld de,(tmpde)
+call fcbposcv	;convert fcb position in file to block/rcd
+
+;now convert block returned (really offset into blocklist in dir.
+;entry or entries) into real block number.
+ld (bfwbc),bc
+;see if the dir. entry matching the position in the file we need
+;to write to exists. If it doesn't, we'll create it.
+
+;divide 'block' by 16 to get direntry num. we need
+ld a,b
+rrca
+rrca
+rrca
+rrca
+and 15
+ld b,a
+
+bfwlp1:
+;does b match the direntry num.?
+ld hl,(mfdptr)
+ld de,dentpart
+add hl,de
+ld a,(hl)
+cp b
+jr z,bfwdok	;if so, we've got it
+
+;otherwise get another
+ld de,(tmpde)
+xor a
+ld (only0th),a	;want to look for all parts, not just 0th
+push bc
+call intnext
+pop bc
+push af
+ld a,1
+ld (only0th),a	;set the 0th flag to normal
+pop af
+inc a
+jr nz,bfwlp1	;got a match ok, see if this is the one
+
+;couldn't find right one, so make directory entry
+push bc
+call emptydir
+pop bc
+cp 255
+ret z		;error - 'no more dir. space'
+;got some empty space, make blank dir. ent.
+push bc
+ld hl,(mfdptr)
+ld bc,32
+call zeroblk
+pop bc
+ld hl,(mfdptr)
+ld de,dentpart
+add hl,de
+ld (hl),b
+ld hl,(tmpde)
+inc hl
+ld de,(mfdptr)
+ld a,(curuser)
+cp 16
+jr c,bfwnormu
+xor a		;write to user 0 if >=16 usernum somehow
+bfwnormu:
+ld (de),a
+inc de
+ld bc,11
+ldir
+;check for 0f7h
+ex de,hl
+dec hl
+dec hl
+ld a,(hl)
+and 07fh
+cp 077h
+jr nz,bfwra
+ld a,(real66)
+ld (hl),a
+bfwra:
+call tmpde2d
+call mfwrite	;write updated dir. entry block rcd.
+
+bfwdok:
+;got the right dir. entry, now get the real block number etc.
+ld bc,(bfwbc)
+ld a,b
+and 15
+ld hl,(mfdptr)
+ld de,16
+add hl,de
+ld e,a		;d is still 0, of course
+add hl,de
+
+;so now hl points to the block alloc. byte referencing the block
+;which contains the record we're writing to.
+;I hope you're following this at the back... :-)
+
+;see if there's already a block allocated
+ld a,(hl)
+ld (bfwblk),a
+and a
+jr nz,bfwurcd
+
+;ok, there isn't. look for a free block, and insert that.
+push hl
+call tmpde2d
+call findfblk
+pop hl
+;free block number in a
+ld e,a
+and a
+ld a,2
+ret z	;error - no free disk blocks left, 'end of disk data'
+
+ld a,e
+push hl
+push af
+;restore old dir. entry block record
+call tmpde2d
+ld a,(mfdrcd)
+ld c,a
+ld a,(mfdblk)
+ld b,a
+ld hl,cardbuf
+call readblkrcd
+pop af
+pop hl
+ld (hl),a	;fill in block alloc. byte with free block number
+ld (bfwblk),a
+
+;update record count
+bfwurcd:
+ld bc,(bfwbc)
+ld a,b
+and 15
+;a=sub-part block
+
+;need to do:
+;if sub-part_block*blksiz_in_rcds+rcd_in_blk>file_part_size,
+;  update file_part_size
+ld b,rcds2blk	;blocksize in records
+ld d,a		;sub-part block
+xor a
+bfwmlp:
+add a,d
+djnz bfwmlp
+
+add a,c	;add sub-block record num.
+inc a	;make it base val. 1 not base val. 0
+
+;so now a=sub-part_block*blksiz_in_rcds+rcd_in_blk
+;see if it's greater than file_part_size
+ld hl,(mfdptr)
+ld de,dentsiz
+add hl,de
+cp (hl)
+jr c,bfwwrt	;skip if a is less than file_part_size
+
+ld (hl),a	;update file_part_size
+
+bfwwrt:
+;write dir. entry record
+call tmpde2d
+call mfwrite
+
+;block allocated etc, now write data record.
+ld bc,(bfwbc)
+;c is sub-block record
+ld a,(bfwblk)
+ld b,a
+call tmpde2d
+ld hl,(dmapos)
+call writeblkrcd
+cp 255
+ld a,1
+ret z		;error - no card, so 'error extending'
+
+ld a,(seqmode)
+and a
+jr z,bfwdone
+
+;point to next rcd in FCB
+ld hl,(tmpde)
+ld de,fcbcurrcd
+add hl,de
+ld a,(hl)
+inc a
+ld (hl),a
+cp 128
+jr nz,bfwdone
+
+xor a
+ld (hl),a
+
+ld hl,(tmpde)
+ld de,fcbcurblk
+add hl,de
+inc (hl)
+
+bfwdone:
+xor a		;success
+ret
+
+;find free block
+;entry: d=drive num. in range 0-3 (0=A:)
+;exit: a=next free block number, or zero if none,
+;      and (ffbndat)=num, of data blocks on drive, whether free or not.
+;blasts all normal regs (except a) as usual
+ffbsav:	defw 0,0,0,0	;for saving 'mf' vars
+ffbdrv: defb 0
+ffbndat: defb 0
+findfblk:
+ld a,d
+ld (ffbdrv),a
+push de
+;save 'mf' vars
+ld hl,mfdblk
+ld de,ffbsav
+ld bc,8
+ldir
+
+;zero out buffer
+ld hl,ffreebuf
+call zero256
+
+;mark all blocks as available, i.e. give them non-zero value
+;well, all data blocks on drive, anyway
+ld a,(ffbdrv)
+ld b,a
+xor a
+ld hl,cf1sysb
+call creadone
+ld c,a		;num. sys blocks
+push bc
+ld a,(ffbdrv)
+ld b,a
+xor a
+ld hl,cf1size
+call creadone	;this is right as we want size mod 256
+pop bc
+sub c
+dec a		;allow for boot block
+ld c,a
+
+;so c (and a)=num. data blocks, whether used or free.
+ld (ffbndat),a
+
+ld hl,ffreebuf
+ld de,ffreebuf+1
+dec c		;to allow for ldir'ing
+ld b,0
+ld (hl),1
+ldir
+
+;zero out the blocks used by the directory
+pop de
+push de
+ld b,d
+call dirblks
+;c=num. dir. blocks. we know it's at least one.
+ld b,c
+xor a
+ld hl,ffreebuf
+ffbxdir:
+ld (hl),a
+inc hl
+djnz ffbxdir
+
+;now search for '*.*' (and all file parts), zeroing out used
+;blocks as we go.
+;we reuse the 'comfcb' fcb buffer for the '*.*'.
+
+;first set drive
+pop de
+ld a,d
+inc a		;should be in range 1-4 for this
+ld (comfcb),a
+
+;blank out FilenameExt
+ld hl,comfcb+1
+ld de,comfcb+2
+ld bc,10
+ld (hl),32
+ldir
+
+ld a,'*'
+ld (comfcb+1),a
+ld (comfcb+9),a
+
+ld a,(curuser)
+ld (olduser),a
+xor a
+ld (only0th),a
+dec a
+ld (curuser),a
+ld de,comfcb
+call intfirst
+
+ffbrdlp:
+inc a
+jr z,ffbdone
+
+ld hl,(mfdptr)
+ld de,16
+add hl,de
+ex de,hl
+ld b,16
+ffb2:
+ld a,(de)
+ld hl,ffreebuf
+push de
+ld d,0
+ld e,a
+add hl,de
+xor a
+ld (hl),a
+pop de
+inc de
+djnz ffb2
+
+ld de,comfcb
+call intnext
+jr ffbrdlp
+
+ffbdone:
+;restore (only0th) to normal.
+ld a,1
+ld (only0th),a
+;and curuser
+ld a,(olduser)
+ld (curuser),a
+
+;restore 'mf' vars
+ld hl,ffbsav
+ld de,mfdblk
+ld bc,8
+ldir
+
+;find the first free block.
+ld hl,ffreebuf
+ld bc,256
+ld a,1
+cpir
+ld a,0
+ret nz	;no match
+
+;get block number
+ld de,ffreebuf
+and a
+sbc hl,de
+ld a,l
+dec a	;block in a
+ret
+
+
+
+;*** aux: device ***
+
+;aux: is currently fixed to the serial port.
+
+;aux input
+bauxin:
+ei
+call sgetbyte
+jr nc,bauxin
+pwroffrs:
+;reset auto-poweroff timeout if there was a byte there
+ld hl,(pwrofftm)
+ld (potimout),hl
+ret
+
+
+;like bauxout, but filter out F7h first
+bauxout2:
+ld a,e
+cp 0f7h
+jr nz,bauxout
+ld a,(real66)
+ld e,a
+;FALLS THROUGH
+
+;aux output
+bauxout:
+ei
+call sputbyte
+jr nc,bauxout
+;reset auto-poweroff timeout if sent ok
+jr pwroffrs
+
+
+;aux input status
+bauxinp:
+call scanget
+ld a,255
+ret c
+xor a
+ret
+
+
+;aux output status
+bauxoutp:
+call scanput
+ld a,255
+ret c
+xor a
+ret
+
+
+;like blstout, but filter out F7h first
+;mustn't modify e (well, apart from the filtering effect which is ok :-))
+blstout2:
+ld a,e
+cp 0f7h
+jr nz,blstout
+ld a,(real66)
+ld e,a
+;FALLS THROUGH
+
+;lst output
+;mustn't modify e (so redirection-to-printer call from term.z is ok)
+blstout:
+ei
+call pputbyte
+jr nc,blstout
+;reset auto-poweroff timeout if sent ok
+jr pwroffrs
+
+
+;compute file size
+;returned in rand. rec. field
+;this will actually work for wildcards, and doesn't require the file
+;to be open - these features (?) are both highly non-standard!
+
+bfscount:	defw 0		;rcd count
+
+bfsize:
+ld (tmpde),de
+xor a
+ld (only0th),a	;look for all parts
+ld h,a
+ld l,a
+ld (bfscount),hl
+
+call intfirst
+cp 255
+jr z,bfsdone	;return with zero length if none match
+
+bfs1:
+inc a
+jr z,bfsdone
+
+;add num. rcds in dir. entry to total
+ld hl,(mfdptr)
+ld de,dentsiz
+add hl,de
+ld e,(hl)
+ld d,0
+ld hl,(bfscount)
+add hl,de
+ld (bfscount),hl
+
+;look for more dir. entries
+ld de,(tmpde)
+call intnext
+jr bfs1
+
+bfsdone:
+ld hl,(tmpde)
+ld de,fcbrand
+add hl,de
+ld de,(bfscount)
+ld (hl),e
+inc hl
+ld (hl),d
+inc hl
+xor a
+ld (hl),a	;zero last byte of rand. rec. field
+ld a,1
+ld (only0th),a
+ret
+
+
+;set random record from sequential file position
+bsetrand:
+push ix
+push de
+pop ix
+ld a,(ix+fcbcurblk)
+ld l,a
+ld h,0
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+;now hl=fcbcurblk*128 (i.e. fcbcurblk in records)
+ld a,(ix+fcbcurrcd)
+ld c,a
+ld b,0
+add hl,bc
+ld a,l
+ld (ix+fcbrand),a
+ld a,h
+ld (ix+fcbrand+1),a
+xor a
+ld (ix+fcbrand+2),a
+pop ix
+ret
+
+
+;select disk
+bseldisk:
+ld a,e
+ld (curdrive),a
+ret
+
+
+;get free space
+;this is internal only, not the cpm3-style function
+;entry: d=drive number (0=A:)
+;exit:  a=num. free blocks (i.e. kilobytes)
+diskfree:
+call findfblk
+ld a,(ffbndat)
+ld b,a		;total num. data blocks, whether used or free
+ld c,0		;count of num. free
+ld hl,ffreebuf
+diskflp:
+ld a,(hl)
+and a
+jr z,diskf1
+inc c
+diskf1:
+inc hl
+djnz diskflp
+ld a,c
+ret
+
+
+;and for my next trick, I shall pull two random-access functions out
+;of this simple hat.
+
+;I was so paranoid and cynical when writing the sequential read/write
+;functions that it turns out I can use them almost unchanged as random
+;read/write! The only routine I'll need to write some other time is
+;'write with zero fill' which is currently mapped to (XXX!!)
+;brwrite.
+
+;random read
+;de=fcb
+brread:
+call chk255
+xor a
+ld (seqmode),a
+jp gbfread
+
+
+;random write
+;de=fcb
+brwrite:
+;the call to chk255 is in bfwrite, as user 255 is read-only.
+xor a
+ld (seqmode),a
+jp gbfwrite
+
+
+;pop num and ret with a=1 (error extending) if (curuser)=255
+chk255:
+ld h,1
+jr chk255main
+
+;as chk255, but returns with a=255 if (curuser)=255
+chk255a:
+ld h,255
+
+chk255main:
+ld a,(curuser)
+cp 255
+ld a,h
+pop hl
+ret z
+jp (hl)
+
+
+;rename file - de=fcb
+;exit: a=0 if ok else 255
+bfrename:
+ld (tmpde),de
+
+call chk255a	;disallow in user 255
+
+ld a,(de)
+call bchkdrv
+ld a,255
+ret nc
+
+ld hl,(tmpde)
+ld de,16
+add hl,de
+ld (hl),d	;drive is ignored, since it isn't (can't be) changed
+ex de,hl
+call fexist
+and a
+ld a,255
+ret z
+
+xor a
+ld (only0th),a
+ld (wildok),a
+;act like user search
+inc a
+ld (usrsrch),a
+
+ld de,(tmpde)
+call intfirst
+ld b,a
+ld a,1
+ld (only0th),a
+ld (wildok),a
+ld a,b
+cp 255
+ret z		;return with a=255 if none match
+bfren1:
+inc a
+ret z		;note that this zeroes a before returning
+;rename it
+ld hl,(tmpde)
+ld de,17
+add hl,de
+ld de,(mfdptr)
+inc de
+ld bc,11
+ldir
+call tmpde2d
+call mfwrite
+;look for more
+ld de,(tmpde)
+xor a
+ld (only0th),a
+ld (wildok),a
+inc a
+ld (usrsrch),a
+call intnext
+ld b,a
+ld a,1
+ld (only0th),a
+ld (wildok),a
+ld a,b
+jr bfren1
+
+
+;move filespec to new user num. de=fcb, a=new usernum.
+;WARNING: this does not check for file(s) of the same name in the
+; dest. user. If such a file is there, both the new file and the
+; original are effectively corrupted! So be sure to test that before
+; using this...
+;(the `umv' internal command does, see that for an example)
+;exit: a=0 if ok else 255
+;not actually part of bdos but here for convenience
+moveuser:
+ld (tmpde),de
+ld (olduser),a	;might as well use that
+
+ld a,(de)
+call bchkdrv
+ld a,255
+ret nc
+
+xor a
+ld (only0th),a
+ld de,(tmpde)
+call intfirst
+ld b,a
+ld a,1
+ld (only0th),a
+ld a,b
+cp 255
+ret z		;return with a=255 if none match
+bfmu1:
+inc a
+ret z		;note that this zeroes a before returning
+;change user num.
+ld hl,(mfdptr)
+ld a,(olduser)
+ld (hl),a
+call tmpde2d
+call mfwrite
+;look for more
+ld de,(tmpde)
+xor a
+ld (only0th),a
+call intnext
+ld b,a
+ld a,1
+ld (only0th),a
+ld a,b
+jr bfmu1
+
+
+;return login vector
+;login vector is a bitmap indicating which drives have been accessed
+; and have valid buffer info etc. In ZCN, there are no buffers, so
+; it is sensible to instead indicate all valid drives.
+;since 
+blogvec:
+;check them one by one
+ld b,4		;drive to check (start with D:) and counter
+ld c,0		;we build up the drive bitmap in c
+blogvlp:
+ld a,b
+push bc
+call bchkdrv
+pop bc
+rl c		;this pulls in the 1 or 0 from carry flag
+djnz blogvlp
+
+ld a,c
+;HL will be set from A on ret
+ret
+
+
+;get read-only vector
+;no concept of write-protecting a disk in ZCN via software yet, so
+;this is dead easy ;-)
+brovec:
+xor a
+;HL will be set to zero on ret
+ret

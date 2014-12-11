@@ -1,0 +1,3 @@
+;end of man proper, pmexe2.com is catted onto end of this
+dephase		;so manmc_end is back relative to 100h
+manmc_end:

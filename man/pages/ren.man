@@ -1,0 +1,8 @@
+NAME
+	ren - rename file
+
+SYNOPSIS
+	ren filename new_filename
+
+DESCRIPTION
+	Rename a file. Wildcards are not permitted.

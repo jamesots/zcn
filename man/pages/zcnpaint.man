@@ -1,0 +1,137 @@
+NAME
+	zcnpaint - a mouse-based paint program
+
+SYNOPSIS
+	zcnpaint
+
+DESCRIPTION
+	A mouse-based paint program. You need a microsoft-compatible
+	serial mouse to use it.
+
+	BEWARE! Zcnpaint is incomplete, and there are still bugs (see
+	the BUGS section below), though to the best of my knowledge
+	there are no unknown bugs. :-)
+
+	Zcnpaint works in a fairly similar fashion to most paint
+	programs on 8-bit machines, except that the pointer is
+	obviously controlled by the mouse and not the keyboard.
+
+THE ICON PANEL
+	All the controls are on the "icon panel", which you can drag to
+	another position onscreen by click-and-dragging the "title
+	bar". The icons are rather small and nondescript, so here's a
+	guide to the icon panel:
+
+	+-----------------------------------------------------+
+	|     Z   C   N   P   A   I   N   T                   |
+	|                                                     |
+	+--------+--------+--------+--------+-----------------+
+	| single |freehand| eraser |flood-  |start new file   |
+	|  pixel |  line  |        |  fill  |(i.e. clear scrn)|
+	+--------+--------+--------+--------+-----------------+
+	| rubber |multi-  | undo   |hide    |load file        |
+	|bandline|  line  |        |  panel |                 |
+	+--------+--------+--------+--------+-----------------+
+	|hollow  |filled  |window  |text    |save file        |
+	|rectangl|rectangl|   (NYI)|   (NYI)|                 |
+	+--------+--------+--------+--------+-----------------+
+	|hollow  |filled  |choose  |brshsize|exit program     |
+	|circle  |circle  |pattern |   (NYI)|(does NOT prompt)|
+	+--------+--------+--------+--------+-----------------+
+
+	The icons marked "(NYI)" above do nothing, as the feature is
+	not yet implemented (and, to be honest, is unlikely to be).
+
+	Note also that exit program does *not* prompt you whether you
+	want the save the current file - if you haven't saved the
+	picture and you exit, you've lost it. (Not quite entirely true
+	- a complicated recovery method is covered in `zcn.txt'.)
+
+	There are only two keyboard shortcuts in zcnpaint at the
+	moment. Esc, which acts like `exit', and Menu, which toggles
+	the icon panel on/off.
+
+THE TOOLS
+	The way the tools work is that the icon most recently clicked
+	on sets the drawing mode. The default mode, active when you
+	start zcnpaint, is the `single pixel' mode.
+
+	Now, to cover each of the tools (drawing modes) in turn:
+
+	Single pixel	This draws a pixel whenever the left button is
+			pressed or held down. You might think this
+			would result in a line being drawn when you
+			hold down the button and move the mouse - it
+			doesn't, since the mouse can easily move large
+			distances between samples. If you want a
+			continuous freehand line, use...
+
+	Freehand line	This draws a continuous line when the left
+			button is pressed/held. Note that the line
+			gets rather ragged when the mouse is moved
+			slowly, due to the way the tool is
+			implemented. For these kind of slow movements,
+			`single pixel' mode may give better results.
+
+	Rubber-band line
+			This lets you click-and-drag to draw a line.
+
+	Multi-line	This lets you draw a long series of connected
+			lines by clicking the left button at each
+			start/end point. To start a new series of
+			lines, select the multi-line icon again.
+
+	Hollow/filled rectangle/circle
+			These work like rubber-band line by dragging
+			the shape out. With circles there is a certain
+			maximum size allowed.
+
+	Eraser		This works like `single pixel' but rubs out a
+			3x3 block rather than drawing a 1x1 one.
+
+	Undo		This undoes all operations performed since a
+			tool was last selected. (It does not undo undo!)
+
+	Choose pattern	This lets you choose the pattern which all
+			operations (except the eraser and flood-fill)
+			use to draw with. To select a pattern, click
+			on it. To avoid selecting any pattern, click
+			outside all the various pattern boxes that
+			appear. Only a few patterns are defined in
+			zcnpaint itself; eventually there'll be a
+			pattern editor, but for now you're stuck with
+			the five pre-defined ones.
+
+	Flood-fill	This fills in the surrounding shape, which
+			must have a solid outline. Click somewhere
+			inside the shape to fill it.
+
+	New file	Clears the screen.
+
+	Load file	Lets you load a previously-saved file. You can
+			also load screendumps produced by
+			Ctrl-Shift-S, though since these are slightly
+			smaller than the full 64 lines saved by
+			zcnpaint, you should do `new' beforehand.
+
+	Save file	Lets you save the current image. The file
+			format used is a simple binary dump of the
+			screen - all 64 lines. You can load a saved
+			file direct from ZCN with `get f000 filename'.
+
+	Exit		Exits the program.
+
+BUGS
+	Flood-fill always fills in black, whatever the currently
+	selected pattern is.
+
+	If you press return at the save or load file prompt without
+	typing any name in, it'll save a file which has a filename
+	consisting entirely of spaces; you can spot this by there
+	being a blank space in the file listing given by `ls' or
+	`dir'. You can't do much with this file, but you *can* delete
+	it - just type `era' (with no filename) at the ZCN prompt.
+
+	The mouse pointer can be easy to lose track of, given the
+	NC100's rather persistent LCD screen, so you may want to turn
+	up the intensity to try and avoid this problem.

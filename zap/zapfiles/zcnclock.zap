@@ -1,0 +1,27 @@
+progname Zcnclock
+progfile zcnclock.com
+# no filetype
+bmphex 7ffffffe
+bmphex 55555556
+bmphex 7ffffffa
+bmphex 5d555556
+bmphex 7a000012
+bmphex 5c000016
+bmphex 78306312
+bmphex 5d089496
+bmphex 79089492
+bmphex 5d0a9496
+bmphex 78300012
+bmphex 5d409496
+bmphex 79429492
+bmphex 5d409496
+bmphex 78306312
+bmphex 5c000016
+bmphex 78000012
+bmphex 5ffffff6
+bmphex 6aaa900a
+bmphex 7ffffffe
+bmphex 034015c0
+bmphex 1ffffff8
+bmphex 150155f8
+bmphex 3ffffffc

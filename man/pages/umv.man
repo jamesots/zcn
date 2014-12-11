@@ -1,0 +1,17 @@
+NAME
+	umv - move files to another user area
+
+SYNOPSIS
+	umv filespec area_num
+
+DESCRIPTION
+	Move files to user area `area_num'. If any files with the same
+	names as those to be moved exist there already, the error
+	"File exists" is given and *none* of the files are moved.
+
+EXAMPLES
+	An easy way to move all files to user 0 is `user 255' then
+	`umv *.* 0'.
+
+SEE ALSO
+	user, usernums, zselx, pipe

@@ -1,0 +1,25 @@
+;main.z - include the actual assembly :-)
+;this itself is included from minclock.z and zcnclock.z,
+;which are the files that are assembled.
+
+include clock.z
+include digits.z
+include graph_zc.z
+include ../zcnlib/maths.z
+include ../zcnlib/conio.z
+
+
+;if we have the full clock with analogue display and world time,
+;include the stuff necessary for that.
+
+if fullclock
+
+include readmrf.z
+include circ60.z
+include citydat.z
+
+;must be last
+;used to find the mrf catted onto the end
+citymrf:
+
+endif	;fullclock

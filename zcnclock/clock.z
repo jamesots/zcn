@@ -1,0 +1,876 @@
+;clock code
+;this is common to both dclock and zcnclock; fullclock is true if
+;being assembled as part of zcnclock, else false.
+
+;uses ZCN's rst 28h call in places for convenience - fairly nasty I
+;s'pose, but hey, it's my OS and I'll write crocks if I want to. :-)
+
+;NB: dclock is a VERY tight fit into 1k, so think before making
+;changes which will affect both programs!
+
+
+org 0100h
+
+jr start
+
+
+if fullclock
+
+;XXX zcnclock assumes the clock is set to GMT; two bytes are reserved
+;here (103/4h) so we can have a flag to deal with this (perhaps local
+;time's offset from GMT? bear in mind would want to support .5 ones
+;too) in future.
+
+defb 0,0
+
+;cities.mrf (384x64) is expanded here into a 512x64 bitmap (it's that
+;size so it matches the screen memory, which simplifies things).
+;this contains 12 partial globes rendered by xearth (6 across by 2
+;down) with one of the 12 world-time cities centered in each.
+citybmp		equ 08000h
+
+curcity: defb 0
+
+endif	;fullclock
+
+
+timebuf1	equ 09000h
+timebuf2	equ timebuf1+6
+timebuf3	equ timebuf2+6		;previous second (used by gettime)
+timebuf4	equ timebuf3+6		;previous second (used by aclockoff)
+timebuf		equ timebuf1		;current second
+
+;timebuf3 is *really* the previous second, but timebuf4 records which
+;second was last drawn on the analogue clock, which can sometimes
+;differ (notably when power is cycled, as we then aren't
+;synchronised with the RTC's seconds).
+
+;addr in memory of digi clock onscreen
+timeloc		equ 0f000h+64*14+23
+
+quit: defb 0
+
+
+;---------------------------------------------------
+; main routine
+
+start:
+;must be ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+call init
+
+call mainloop
+
+call uninit
+
+;all done, warm boot
+rst 0
+
+
+
+;start up
+init:
+if fullclock	;dclock skips this test to save space
+;give error if on serial/parallel console
+ld c,132	;console in/out assignments
+call 5
+ld a,l
+and a
+jr z,initskip2
+
+rst 028h
+defb 'Console is redirected - try "|" first.',0
+rst 0
+
+initskip2:
+endif	;fullclock
+
+;stop them running it again with '!!'; it isn't re-entrant
+ld a,0c9h
+ld (0100h),a
+
+;abort if time isn't set
+call gettime
+ld a,(timebuf)
+and a
+jr z,notime
+
+if fullclock
+call readmrf	;read cities.mrf
+endif
+
+;turn off cursor and clear screen
+rst 028h
+defb 4,1,0
+
+if fullclock
+
+;draw the panels
+call scrnframe
+
+xor a
+ld (curcity),a	;city 0 = london
+
+call showcity
+
+endif	;fullclock
+
+ret
+
+
+notime:
+rst 028h
+if fullclock
+defb 'Time not set - use "timeset" to set the time.',0
+endif
+if not fullclock
+defb 'Time not set.',0
+endif
+rst 0
+
+
+
+;uninit screen etc.
+uninit:
+;clear screen and home cursor
+rst 028h
+defb 1,0
+ret
+
+
+
+mainloop:
+call gettime
+call do_colons	;draw digi clock's colons
+call disptime	;draw digital for this second
+if fullclock
+call aclockfrm	;do static analogue clock stuff
+call aclockon	;and analogue for this second
+endif
+
+call waitsec	;wait for next second, get time, check for input
+
+loop:
+call disptime	;display as digital
+if fullclock
+call aclockoff	;undraw old analogue
+call aclockon	;draw new
+endif
+call waitsec
+
+ld a,(quit)	;set on esc
+and a
+jr z,loop
+
+ret
+
+
+
+
+do_colons:
+;draw the digital clock's colons.
+ld hl,timeloc+4+3*64
+call colon
+ld hl,timeloc+9+3*64
+;FALLS THROUGH
+
+colon:
+call colondot
+ld de,10*64
+add hl,de
+;FALLS THROUGH
+
+colondot:
+ld de,64
+ld b,4
+cdotlp:
+ld (hl),00011100b
+add hl,de
+djnz cdotlp
+ret
+
+
+;get current time into timebuf.
+;lifted from time.z
+gettime:
+ld c,085h
+ld de,timebuf1
+call 5
+
+ld c,085h
+ld de,timebuf2
+call 5
+
+;now, if t1<t2 then t1:=t2
+
+ld ix,timebuf1
+ld b,6
+tchklp:
+ld a,(ix)
+cp (ix+6)
+jr c,uset2
+inc ix
+djnz tchklp
+
+jr tchkdone
+
+uset2:
+ld hl,timebuf2
+ld de,timebuf1
+ld bc,6
+ldir
+
+tchkdone:
+ret
+
+
+;display time (and date)
+disptime:
+;put cursor in place for local date/time
+rst 028h
+if not fullclock
+defb 16,32+8,32+55,0
+endif
+if fullclock
+defb 16,32+7,32+48,'(local: ',0
+endif
+
+ld hl,timebuf
+ld a,(hl)
+add a,090h
+daa
+ld (hl),a
+;insert '20' or '19' as appropriate to give a four-digit year like
+; '1994'.
+push hl
+push af
+call c,prefix20
+pop af
+call nc,prefix19
+pop hl
+
+ld b,2
+datelp:
+ld a,(hl)
+call dispbcd
+ld a,'-'
+call putchar
+inc hl
+djnz datelp
+
+ld a,(hl)
+call dispbcd
+inc hl
+
+if fullclock
+
+;now the time
+ld a,32
+call putchar
+ld a,(hl)
+call dispbcd
+inc hl
+ld a,':'
+call putchar
+ld a,(hl)
+call dispbcd
+ld a,')'
+call putchar
+
+call fixtime		;fix the time (also converts from BCD)
+
+endif	;fullclock
+
+;now do the world time using big digits.
+;dclock still has BCD time at timebuf+3, but that's ok as it has a
+;fake divide routine which sorts things out. :-)
+ld hl,timeloc
+ld de,timebuf+3
+ld b,3
+timelp:
+push bc
+push de
+push hl
+ld a,(de)
+ld h,0
+ld l,a
+ld de,10
+call divide
+ld a,e
+ld (timedigit2op+1),a
+ld a,l
+pop hl
+push hl
+call bigwrite
+pop hl
+ld de,2
+add hl,de
+push hl
+timedigit2op: ld a,0	;modified
+call bigwrite
+pop hl
+ld de,3
+add hl,de
+pop de
+pop bc
+inc de
+djnz timelp
+ret
+
+
+if not fullclock
+
+;here's dclock's fake divide routine which converts BCD...
+;returns most significant digit of L in L, and the other in E.
+divide:
+ld a,l
+and 15
+ld e,a
+
+ld a,l
+and 0f0h
+rrca
+rrca
+rrca
+rrca
+ld l,a
+ret
+
+endif	;not fullclock
+
+
+
+;display BCD in a as decimal
+dispbcd:
+push af
+rrca
+rrca
+rrca
+rrca
+and 15
+add a,48
+call putchar
+pop af
+and 15
+add a,48
+call putchar
+ret
+
+prefix20:
+rst 028h
+defb '20',0
+ret
+
+prefix19:
+rst 028h
+defb '19',0
+ret
+
+
+;wait for next second
+;also checks for input and deals with it (this cuts short the wait).
+waitsec:
+call gettime
+ld hl,timebuf
+ld de,timebuf3
+ld bc,6
+ldir
+
+wslp:
+call gettime
+
+call kbhit
+jr c,wskey
+
+;loop if timebuf[5]==timebuf3[5]
+ld a,(timebuf+5)
+ld b,a
+ld a,(timebuf3+5)
+cp b
+jr z,wslp
+ret
+
+wskey:
+;key was pressed, read it
+call getch
+cp 27		;exit on Esc
+jr nz,wsskip1
+
+ld a,1
+ld (quit),a
+ret
+
+wsskip1:
+if fullclock
+
+cp 'S'-040h	;^S
+jr nz,wsskip2
+
+ld a,(curcity)
+dec a
+cp 255
+jr nz,wsskip1a
+ld a,numcities-1
+wsskip1a:
+ld (curcity),a
+jp showcity	;ret via that
+
+wsskip2:
+cp 'D'-040h	;^D
+jr nz,wsskip3
+
+ld a,(curcity)
+inc a
+cp numcities
+jr nz,wsskip2a
+xor a
+wsskip2a:
+ld (curcity),a
+jp showcity	;ret via that
+
+wsskip3:
+;that's all
+
+endif	;fullclock
+
+ret
+
+
+;write 16x24 digit in a at hl (with hl=screen addr)
+bigwrite:
+push hl
+;each char bitmap takes 48 bytes
+ld l,a
+ld h,0
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+ld d,h
+ld e,l
+add hl,hl	;*32
+add hl,de	;*48
+ld de,bigdigits
+add hl,de
+pop de
+
+;hl=addr of font data, de=screen addr
+
+ld bc,62
+ld a,24
+bwlp:
+inc c
+ldi
+inc c
+ldi
+ex de,hl
+add hl,bc
+ex de,hl
+dec a
+jp nz,bwlp
+
+ret
+
+
+;putchar - put char in a
+;preserves all regs
+putchar:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;getch - get char into a (without echo)
+;preserves all but f
+getch:
+push bc
+push de
+push hl
+getchlp:
+call kbhit
+jr nc,getchlp
+ld e,0ffh
+ld c,6
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+
+;kbhit - like the common DOS C function
+;returns c if key pressed, nc if not
+kbhit:
+ld c,11
+call 5
+rra
+ret
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;; rest of file is zcnclock-specific ;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+if fullclock
+
+
+;fix time (not date!) for current city.
+;XXX assumes RTC is set to GMT
+;entry:	time to fix in timebuf
+;exit:	time in timebuf modified and now *NOT IN BCD*!
+;	af/de/hl/ix corrupt
+fixtime:
+ld a,(curcity)
+call a2cityent
+push hl
+pop ix
+
+;first do hours (and put in e)
+ld a,(timebuf+3)
+call bcd2dec
+ld e,(ix+20)
+add a,e
+bit 7,a
+jr z,fixt1
+;we went below zero, compensate.
+sub 256-24
+
+fixt1:
+;now check for >=24
+cp 24
+jr c,fixt2	;skip if less
+sub 24
+
+fixt2:
+ld e,a
+
+;now onto the minutes (put in d)
+ld a,(timebuf+4)
+call bcd2dec
+ld d,a
+ld a,(ix+21)
+and a
+jr z,fixt3
+ld a,30
+fixt3:
+add a,d
+ld d,a
+cp 60
+jr c,fixt4
+;compensate for minutes >=60
+sub 60
+ld d,a
+;and incr hours
+inc e
+;but fix *that* if it now equals 24
+ld a,e
+cp 24
+jr nz,fixt4
+ld e,0
+
+fixt4:
+;finally, write hours/minutes back
+ld (timebuf+3),de
+
+;and convert seconds from BCD
+ld a,(timebuf+5)
+call bcd2dec
+ld (timebuf+5),a
+ret
+
+
+;turn bcd in a to dec.
+;bc corrupt
+bcd2dec:
+;XXX there MUST be an easier way to do this...!
+ld b,a
+rra
+rra
+rra
+rra
+and 15
+add a,a		;*2
+ld c,a
+add a,a		;*4
+add a,a		;*8
+add a,c		;*10
+ld c,a
+ld a,b
+and 15
+add a,c
+ret
+
+
+;draw the frame which surrounds all the stuff
+scrnframe:
+ld de,4
+ld c,8
+ld hl,123
+ld b,55
+call shadowrect
+
+ld de,168
+ld c,6
+ld hl,168+143
+ld b,55
+call shadowrect
+
+ld de,352+4
+ld c,8
+ld hl,352+123
+ld b,55
+call shadowrect
+
+ret
+
+
+;draw rectangle at (de,c)-(hl,b) with shadow.
+shadowrect:
+push bc
+push de
+push hl
+call rect
+pop hl
+pop de
+pop bc
+push bc
+push de
+push hl
+
+;draw rectangles from:
+; (de+2,b+1)-(hl+2,b+2)  and
+; (hl+1,c+2)-(hl+2,b+2)
+;...to get the shadow.
+
+inc de
+inc de
+inc b
+ld c,b
+inc b
+inc hl
+inc hl
+call rect
+
+pop hl
+pop de
+pop bc
+inc hl
+ld d,h
+ld e,l
+inc hl
+inc c
+inc c
+inc b
+inc b
+call rect
+ret
+
+
+;analogue clock stuff
+
+;draw static bits
+aclockfrm:
+ld hl,face12
+ld b,12
+acfrmlp:
+push bc
+ld e,(hl)
+inc hl
+ld c,(hl)
+inc hl
+ld d,0
+ld a,(hl)
+inc hl
+ld b,(hl)
+inc hl
+push hl
+ld h,0
+ld l,a
+call drawline
+pop hl
+pop bc
+djnz acfrmlp
+ret
+
+
+;draw time
+aclockon:
+;copy current time to timebuf4 for when we want to undraw it
+ld hl,timebuf
+ld de,timebuf4
+ld bc,6
+ldir
+
+ld ix,timebuf
+jr aclockint
+
+;undraw time
+aclockoff:
+ld ix,timebuf4
+;FALLS THROUGH
+
+;draw analogue time according to timebuf at ix.
+aclockint:
+ld hl,pxor
+call pixstyle
+
+;hour hand - want this to be (hour%12)*5+min/12
+;get hour*5
+ld a,(ix+3)
+ld l,a
+ld h,0
+ld de,12
+call divide
+ld hl,5
+call multiply
+push hl
+;get min/12
+ld a,(ix+4)
+ld l,a
+ld h,0
+ld de,12
+call divide
+pop de
+add hl,de
+ld a,l		;finally!
+ld hl,hour60
+call drawhand
+
+;minute hand
+ld a,(ix+4)
+ld hl,min60
+call drawhand
+
+;second hand is a special case, as it's not a hand as such -
+;we just draw a dot where it would end. This saves the main
+;hour/minute display from getting too confusing, I think (hope :-)).
+
+ld a,(ix+5)
+ld h,0
+ld l,a
+add hl,hl
+ld de,sec60
+add hl,de
+ld e,(hl)
+ld d,0
+inc hl
+ld c,(hl)
+call pxor
+
+ret
+
+
+
+;draw a clock hand from 64,32 to x,y pos at hl[a*2].
+;af/bc/de/hl corrupt
+drawhand:
+ex de,hl
+ld h,0
+ld l,a
+add hl,hl
+add hl,de
+ld e,(hl)
+inc hl
+ld b,(hl)
+ld d,0
+ex de,hl
+ld de,64
+ld c,32
+call drawline
+ret
+
+
+
+;world time stuff
+
+
+;show current city name/bitmap.
+;entry:	none
+;exit:	af/bc/de/hl/ix corrupt
+showcity:
+ld a,(curcity)
+call a2cityent
+;now hl is pointer to entry in citydat
+push hl
+pop ix		;for later
+
+;draw city name
+push hl
+rst 028h
+defb 16,32+2,32+104-9,0
+pop hl
+call strprint
+
+;draw bitmap showing where city is on partial globe
+ld l,(ix+22)
+ld h,(ix+23)
+ld de,0f000h+64*23+48
+;we only copy the middle 28 lines, as it's too cramped otherwise :-(
+ld bc,128
+add hl,bc
+ld b,28
+cbmplp:
+push bc
+ld bc,8
+ldir
+ld bc,64-8
+add hl,bc
+ex de,hl
+add hl,bc
+ex de,hl
+pop bc
+djnz cbmplp
+
+ret
+
+
+;leave hl pointing to citydat[a].
+;entry:	a=index
+;exit:	f/de corrupt
+a2cityent:
+ld h,0
+ld l,a
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+ld d,h
+ld e,l
+add hl,hl	;*16
+add hl,de	;*24
+ld de,citydat
+add hl,de
+ret
+
+
+;from zcnlib:
+
+;strprint - print asciiz at hl
+;entry:	hl=addr of string
+;exit:	none
+;af/hl corrupt
+strprint:
+ld a,(hl)
+and a
+ret z
+call putchar
+inc hl
+jr strprint
+
+
+endif	;fullclock

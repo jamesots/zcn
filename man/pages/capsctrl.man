@@ -1,0 +1,17 @@
+NAME
+	capsctrl - disable/enable using caps lock as control key
+
+SYNOPSIS
+	capsctrl [0|1]
+
+DESCRIPTION
+	Turn off (0) or on (1) use of caps lock as a control key
+	(instead of the key labelled "Control", which then behaves
+	like caps lock).
+
+	"Function" behaves as a control key whether this is enabled or
+	not.
+
+	NB: Internal ZCN features which require use of the key
+	labelled "Control" (pause output, and screen dump) need you to
+	use the "Caps Lock" key instead if this is enabled.

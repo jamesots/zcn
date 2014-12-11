@@ -1,0 +1,62 @@
+                                  VDE266.UPD
+                                  ----------
+                        Update Information - VDE 2.66
+                               E. Meyer - 06/88
+
+
+                               ***** NOTE *****
+
+           Version 2.66 is expected to be the last release of CP/M 
+      VDE.  Rash as that claim may sound, consider that:
+          (1) All known bugs have now been fixed;
+          (2) As many new features have been added as memory 
+             limitations will reasonably allow;
+          (3) Many people (myself included!) are using CP/M ever less 
+             often.
+      So: while the MSDOS version will continue to develop, I think 
+      CP/M VDE is about finished.  Thanks to all who've helped.
+
+                               ***** **** *****
+
+     This is a quick guide to changes in VDE since version 2.65.  Please read 
+VDE.DOC and VINST.DOC for full details.  These changes are relatively minor; 
+version 2.66 is being released now in order to tie up some loose ends, and 
+wrap up the development of CP/M VDE.  Enjoy!
+
+
+VDE/VDM:
+
+     Two new Print (^KP) options allow setting the printer top and left 
+margin.  At the "Options" prompt, type "T" followed by the number of lines to 
+skip, and/or "L" followed by the columns to skip:
+              Options: T4L12
+will skip 4 lines at the top and 12 columns at the left.  See PRINTING.
+
+
+VINSTALL:
+
+     You can choose a default setting for the new printer left margin, 
+originally 0.  See PRINTER INSTALLATION.
+
+
+MINOR CHANGES:
+
+     Several small problems have been fixed.  In addition:
+
+     1.  You can now mark the end of a block (^KK) before the start (^KB) has 
+been marked.
+
+     2.  ^QT can now be used repeatedly; it does not stall on the specified 
+character.  (If the cursor is on a ".", "^QT." will delete to the NEXT one.)
+
+     3.  Tab Set (^OI) "@n" sets tabs at column n+1, 2n+1... (not n, 2n...)
+
+
+
+
+     NOTE: If you also use MSDOS, look for VDE121.ARC.  The DOS version of VDE 
+includes powerful new features such as dual-file editing and DOS commands, and 
+is fully compatible with the CP/M version.
+
+
+       ----- Eric Meyer, 427 N. Washington, Bloomington IN 47401 -----

@@ -1,0 +1,703 @@
+;code for *CAT, used by bbcbas.z - based on ls, via rrxfer
+
+alldir		equ 0b010h	;overall dir. of files
+alldirend	equ alldir+0400h
+
+;that's enough for 63 files, which should cover all but one file unless
+;they've hand-hacked the boot block. (If there's more, they're simply
+;ignored when we reach alldirend.)
+
+
+dirptr:		defw 0
+dirend:		defw 0
+numfiles:	defb 0
+
+;[an entry in alldir takes 16 bytes and formatted like this:
+;offset	desc
+;0-12	asciiz name, 12 chars max. plus NUL (13 total)
+;13	unused
+;14-15	size in K]
+
+
+bdos		equ 5
+
+bdprint		equ 9
+bretdsk		equ 25
+bsetdma		equ 26
+bfsize		equ 35
+
+
+idnum:		defb 6	;num. of files listed horizontally
+idhcount:	defb 0	;horiz. file pos. count
+idfirst:	defb 1	;first time around?
+diradd:	defw 0	;skip in bytes to next horiz. entry onscreen
+
+lineslft:	defb 0	;num. horiz lines left
+numlines:	defb 0	;number of horiz lines
+hrizcols:	defb 0	;number of horiz columns
+
+
+allfcb:
+defb 0,'???????????', 0,0,0,0
+swapbuf:  ;part of fcb (16 bytes) doubles up as tmp buf used in sorting
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defb 0,0,0,0
+
+
+
+
+
+;show files on ZCN drive (current drive/user only).
+dozcndir:
+call zcnon
+
+call fixser
+
+call scanzcn
+ld a,(numfiles)
+and a
+jr nz,dzd1
+
+;no files found
+call ilprint
+defb 'No files',10,0
+jr dzdfin
+
+dzd1:
+call sortlist
+call displist
+ld a,10
+call putchar
+
+dzdfin:
+;show K free on drive.
+ld de,080h
+ld c,bsetdma
+call bdos
+ld c,bretdsk
+call bdos
+ld e,a
+ld c,46		;get free disk space
+call bdos
+ld hl,(080h)
+ld bc,7
+add hl,bc	;make sure division rounds up
+;div by 8
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+call k_print
+call ilprint
+defb ' free on drive',10,0
+
+call zcnoff
+ret
+
+
+fixser:
+ld a,(serial)
+and a
+ld a,6
+jr z,scskip
+ld a,4
+scskip:
+ld (idnum),a
+ret
+
+
+;read in list of files in current drive/user on ZCN drive
+scanzcn:
+ld hl,alldir
+ld (dirptr),hl
+xor a
+ld (numfiles),a
+
+ld de,080h
+ld c,bsetdma
+call bdos
+
+ld de,allfcb
+call bsfirst
+
+idirlp:
+inc a
+ret z		;all done
+
+;skip if we already have max number of files we can cope with
+ld de,(dirptr)
+ld hl,alldirend
+and a
+sbc hl,de
+jr z,szskip
+
+;add filename, from fcb created at DMA, to list
+ld hl,080h
+ld de,(dirptr)
+call fcb2array
+
+;get file size in K
+ld de,080h	;use fcb created by bsfirst/next
+ld c,bfsize	;get file size
+call bdos
+ld hl,(080h+33)
+ld bc,7
+add hl,bc	;make sure division rounds up
+;div by 8
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ld ix,(dirptr)
+ex de,hl
+ld (ix+14),e
+ld (ix+15),d
+
+;move dirptr on to next entry
+ld hl,(dirptr)
+ld de,16
+add hl,de
+ld (dirptr),hl
+ld (dirend),hl	;in case there's no more after this one
+
+ld hl,numfiles
+inc (hl)
+
+szskip:
+;look for more
+call bsnext
+jr idirlp
+
+
+;display files in list.
+;we know there was at least one file found.
+displist:
+;work out stuff for vertical sorted display
+;if there are N files, there are L=(N+(idnum)-1)/(idnum) lines of
+; output. We have to display horizontally, so the list ptr
+; must start at filelist and skip over L entries each time before
+; display. For the next line, we start at the entry after the one
+; at filelist, and do the same, etc.
+;ok, first get number of lines.
+ld a,(numfiles)		;no. of files
+ld l,a
+ld h,0
+ld a,(idnum)
+dec a
+ld e,a
+ld d,0
+add hl,de		;hl=N+(idnum)-1
+inc e
+call divide		;hl=(N+(idnum)-1)/(idnum)
+ld a,l
+ld (numlines),a
+
+;now we want that in terms of bytes to add to the list ptr,
+; so multiply by 16.
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+ld (diradd),hl
+
+;get max. horiz width in columns (used to tell when to cr/lf)
+ld a,(numfiles)
+ld l,a
+ld h,0
+ld a,(numlines)
+dec a
+ld e,a
+ld d,0
+add hl,de
+inc e
+call divide
+ld a,l
+ld (hrizcols),a
+
+
+;now init stuff
+xor a
+ld (idhcount),a
+inc a
+ld (idfirst),a
+ld hl,alldir
+ld (dirptr),hl
+ld a,(numlines)
+ld (lineslft),a
+
+idirlp2:
+ld a,(idhcount)
+and a
+jr nz,idir1a
+ld a,(idfirst)
+and a
+jr nz,idir1b
+ld a,10
+call putchar
+jr idir1b
+idir1a:
+call ilprint
+defb '  ',0
+idir1b:
+xor a
+ld (idfirst),a
+
+;print the filename
+ld hl,(dirptr)
+push hl
+call strprint
+pop de
+and a
+sbc hl,de		;so hl=len of filename
+;want to print 13-hl spaces
+ld a,13
+sub l
+ld b,a
+spclp:
+ld a,32
+call putchar
+djnz spclp
+
+;now show file size in K
+ld hl,(dirptr)
+ld de,14
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+call showflsz
+
+ld hl,hrizcols
+ld a,(idhcount)
+inc a
+cp (hl)
+jr nz,idir3
+;end of line
+xor a
+idir3:
+ld (idhcount),a
+
+;advance list ptr etc.
+ld hl,(dirptr)
+ld de,(diradd)
+add hl,de
+ld (dirptr),hl
+ld de,(dirend)
+and a
+sbc hl,de
+jr c,idirlp2	;if not past end, do more
+
+;see if there's another horiz line to go
+ld a,(lineslft)
+dec a
+ld (lineslft),a
+ret z		;nope, all done
+
+;there is, so re-init (dirptr) appropriately,
+; i.e. (dirptr)=filelist+((numlines)-(lineslft))*16
+ld a,(numlines)
+ld hl,lineslft
+sub (hl)
+ld hl,0
+ld d,h
+ld e,a
+ld b,16
+idirlp3:
+add hl,de
+djnz idirlp3
+ld de,alldir
+add hl,de
+ld (dirptr),hl
+xor a
+ld (idhcount),a		;make sure horiz. pos count is set to 0
+jp idirlp2
+
+
+;copy FCB-style filename to array, removing spaces and any trailing
+;dot, and making asciiz.
+;entry: hl=fcb addr, de=addr of entry in array
+;af/bc/de/hl corrupt
+fcb2array:
+inc hl
+ld b,8
+call cpylcase
+ld a,'.'
+ld (de),a
+inc de
+ld b,3
+call cpylcase
+ex de,hl
+ld (hl),0
+dec hl
+ld a,(hl)
+cp '.'
+ret nz
+ld (hl),0
+ret
+
+
+;for b bytes at hl, copy to de smashing case to all-lower and
+; removing spaces.
+;NB: hl can equal de if needed.
+;exit:	hl points to first bute past end of source,
+;	de points to first byte past end of copy.
+;af/b corrupt, c preserved
+cpylcase:
+ld a,(hl)
+call tolower
+cp 32
+jr z,pfn3
+ld (de),a
+inc de
+pfn3:
+inc hl
+djnz cpylcase
+ret
+
+
+;search first
+bsfirst:
+ld c,17
+jp bdos
+
+;search next
+bsnext:
+ld c,18
+jp bdos
+
+
+;returns carry set if uppercase alpha char. in a
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+tolower:
+call isupper
+ret nc
+xor 020h
+ret
+
+
+;show file size in K.
+;hl=file size in K. :-)
+showflsz:
+;this effectively does printf("%3dk",hl).
+;af/bc/de/hl corrupt
+k_print:
+ex de,hl
+ld a,e
+cp 100
+call c,printspc
+cp 10
+call c,printspc
+call dispdec
+ld a,'k'
+call putchar
+ret
+
+
+printspc:
+push af
+ld a,32
+call putchar
+pop af
+ret
+
+
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+push ix
+ld ix,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+add ix,ix
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+sbc hl,de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+;this is like OR IX,1 - there is a *really* hairy way to do this which
+;goes like push ix/dec sp/pop af/or 1/push af/inc sp/pop ix, but it's
+;4 clock cycles slower. Pity. :-)
+
+push ix
+pop hl
+ld a,1
+or l
+ld l,a
+push hl
+pop ix
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+push ix
+pop hl
+pop ix
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp: defb '00000$'	;16 zeroes and '$'
+
+;display number in de in decimal
+;exit: af/bc/de/hl corrupt
+dispdec:
+ld b,10
+ld hl,numtmp+5
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ld c,bdprint
+jp bdos
+
+
+;sort the list of files (exchange sort)
+tmpc:	defw 0
+sortlist:
+ld hl,alldir
+ld (dirptr),hl
+
+sortlp:
+ld hl,(dirptr)
+ld (tmpc),hl
+ex de,hl
+
+sortlp2:
+ld hl,(tmpc)
+call nodecmp
+jr nc,sort1
+ld (tmpc),de
+
+sort1:
+;move de to next node.
+ld hl,16
+add hl,de
+
+;see if we're at end of list yet.
+push hl
+ld de,(dirend)
+and a
+sbc hl,de
+pop de
+jr nz,sortlp2
+
+;ok, (tmpc) is the node to swap. won't matter if it's the same one.
+ld hl,(tmpc)
+ld de,(dirptr)
+call nodeswap
+
+;next node.
+ld hl,(dirptr)
+ld de,16
+add hl,de
+ld (dirptr),hl
+
+ld de,(dirend)
+and a
+sbc hl,de
+jr nz,sortlp
+
+;done.
+ret
+
+
+;compare two nodes in list
+;de=(addr of) 1st node, hl=2nd node
+;returns carry set if node at de < node at hl, else carry false
+;a corrupt
+nodecmp:
+push hl
+push de
+push bc
+
+ld b,12		;compare 12 bytes to check filenames
+nslp:
+ld a,(de)
+call tolower
+ld c,a
+ld a,(hl)
+call tolower
+cp c
+ccf		;compensate for comparison being wrong way around
+jr nz,ncmpdone
+inc hl
+inc de
+djnz nslp
+
+and a	;completely equal, so not less than.
+
+ncmpdone:
+;restore regs
+pop bc
+pop de
+pop hl
+ret
+
+
+;swap nodes in hl and de
+;flags corrupt, other preserved
+nodeswap:
+push hl
+push de
+push bc
+
+push de
+push hl
+push de
+ld de,swapbuf
+ld bc,16
+ldir
+pop hl
+pop de
+ld bc,16
+ldir
+ld hl,swapbuf
+pop de
+ld bc,16
+ldir
+
+pop bc
+pop de
+pop hl
+ret
+
+
+;from zcnlib:
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+call putchar
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)
+
+
+;strprint - print asciiz at hl
+;entry:	hl=addr of string
+;exit:	hl points to NUL of string
+;af corrupt
+strprint:
+ld a,(hl)
+and a
+ret z
+call putchar
+inc hl
+jr strprint
+
+
+;putchar - put char in a
+;puts CR before any LF output
+;f corrupt, others preserved
+putchar:
+cp 10
+jr nz,ls_putbyte
+ld a,13
+call ls_putbyte
+ld a,10
+;FALLS THROUGH
+
+;putbyte - put char in a without translation
+;preserves all regs
+ls_putbyte:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret

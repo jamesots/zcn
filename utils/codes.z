@@ -1,0 +1,26 @@
+;show ZCN control codes (as of 94/10/8)
+
+org 0100h
+
+jp start
+
+defb 13
+
+mcodes:
+defb 5,'Code Hex Dec Description			Code Hex Dec Description',2,15,'		      ZCN'
+defb 14,13,10
+defb '^A   01h  1  clear screen			^R   12h 18  insert line		',15,'terminal driver',14,13,10
+defb '^B   02h  2  bold off				^T   14h 20  delete line		',15,' control codes'
+defb 14,13,10
+defb '^C   03h  3  cursor on				^U   15h 21  scroll up',13,10
+defb '^D   04h  4  cursor off				^W   17h 23  scroll down',13,10
+defb '^E   05h  5  bold on				^X   18h 24  true video',13,10
+defb '^N   0Eh 14  italics off			^Y   19h 25  reverse video',13,10
+defb '^O   0Fh 15  italics on				^^   1Eh 30  home cursor',13,10
+defb '^P   10h 16  move cursor (then 20h+y and 20h+x) ^_   1Fh 31  clear to end of line'
+defb '$',26
+
+start:
+ld de,mcodes
+ld c,9
+jp 5

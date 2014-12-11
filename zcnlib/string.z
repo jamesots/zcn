@@ -1,0 +1,278 @@
+;asciiz string routines.
+;mostly based on C's string functions, where appropriate
+;needs conio (for putchar, used in the output routines)
+
+;has strlen, strstr, strcmp, strncmp, strcpy, strncpy,
+; strchr, strrchr, strcat.
+;also, strprint, to print an asciiz string, ilprint to print an
+; inline string, and strchop, to chop any trailing LF off a string
+; (e.g. one read with stdio's fgets).
+
+
+;XXX not done yet:
+;important ones:
+; strcasecmp.
+;non-standard but important:
+; strrepl - replace all occurances of one substring with another string.
+;(quite hard though)
+
+;less important:
+; strn{cat,casecmp}
+; strspn, strcspn, strpbrk
+; strsep, strtok
+
+
+;for cpm zmac:
+;ZZglobal strlen
+;ZZglobal strstr
+;ZZglobal strcmp
+;ZZglobal strncmp
+;ZZglobal strcpy
+;ZZglobal strncpy
+;ZZglobal strchr
+;ZZglobal strrchr
+;ZZglobal strprint
+;ZZglobal ilprint
+;ZZglobal strchop
+;ZZglobal strcat
+
+
+;get len of asciiz string at hl, and retn len in bc
+;entry: hl=addr of string
+;exit:	bc=length of string, excluding the trailing NUL
+;	hl=addr of trailing NUL
+;af corrupt
+strlen:
+ld bc,0
+strlnlp:
+ld a,(hl)
+and a
+ret z
+inc hl
+inc bc
+jr strlnlp
+
+
+;find one string in another
+;entry: hl=needle, de=haystack
+;exit:	hl=addr of first occurance of needle, or 0 if none
+strstrnd: defw 0	;copy of needle addr
+strstr:
+ld (strstrnd),hl
+
+strstrlp:
+ld hl,(strstrnd)
+ld a,(de)
+and a
+jr z,strstr2
+ld b,d
+ld c,e
+strstrl2:
+inc de
+cp (hl)
+jr nz,strstrlp
+inc hl
+ld a,(hl)
+and a
+jr z,strstr1
+ld a,(de)
+jr strstrl2
+
+strstr1:
+;got it, at bc
+ld h,b
+ld l,c
+ret
+
+strstr2:
+;none found
+ld hl,0
+ret
+
+
+;compare strings at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2
+;exit:	c if they match, nc otherwise
+;af/de/hl corrupt
+strcmp:
+ld a,(de)
+cp (hl)
+jr nz,strcmp2
+and a
+jr z,strcmp1
+inc hl
+inc de
+jr strcmp
+
+strcmp1:
+;they matched ok
+scf
+ret
+
+strcmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+;compare bc bytes at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2, bc=num. to compare
+;exit:	c if they match, nc otherwise
+;af/bc/de/hl corrupt
+strncmp:
+ld a,(de)
+cp (hl)
+jr nz,strncmp2
+inc hl
+inc de
+dec bc
+ld a,b
+or c
+jr nz,strncmp
+;they matched ok
+scf
+ret
+
+strncmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+;strcpy(hl,de)
+;entry:	hl=dest, de=src
+;exit:	hl and de both point to the NUL in each copy
+;af corrupt
+strcpy:
+ld a,(de)
+ld (hl),a
+and a
+ret z
+inc hl
+inc de
+jr strcpy
+
+
+;strncpy(hl,de,bc)
+;entry:	hl=dest, de=src, bc=len
+;exit:	nothing
+;f/bc/de/hl corrupt
+strncpy:
+ex de,hl
+ldir
+ret
+
+
+;strchr(hl,e)
+;entry: hl=string, e=char
+;exit:  hl=pointer to first occurrence of char in string, or 0 if
+;	none.
+;af corrupt
+strchr:
+ld a,(hl)
+cp e
+ret z
+inc hl
+and a
+jr nz,strchr
+ld hl,0
+ret
+
+
+;strrchr(hl,e)
+;entry: hl=string, e=char
+;exit:  hl=pointer to rightmost occurrence of char in string, or 0 if
+;	none.
+;af corrupt
+;XXX this is bloody slow
+strrchr:
+push hl
+;find end of string
+ld a,0
+ld bc,0ffffh
+cpir
+dec hl	;back to zero
+dec hl	;point to last char in string
+pop bc
+strrclp:
+ld a,(hl)
+cp e
+ret z
+;if that was first char in string, stop
+and a
+sbc hl,bc
+ret z		;and hl=0, of course
+add hl,bc
+dec hl
+jr strrclp
+
+
+;strprint - print asciiz at hl
+;entry:	hl=addr of string
+;exit:	none
+;af/hl corrupt
+strprint:
+ld a,(hl)
+and a
+ret z
+call putchar
+inc hl
+jr strprint
+
+
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+call putchar
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)
+
+
+;strcat(hl,de)
+;entry:	hl=dest, de=src
+;exit:	hl and de both point to the relevant NUL
+;af/bc corrupt
+strcat:
+call strlen	;hl=end of str at hl
+jp strcpy
+
+
+;chop any trailing LF off a string;
+; this is like the Perl `chop' command.
+;entry: hl=string
+;exit:  none (but string `chopped')
+;af/bc/hl corrupt
+strchop:
+call strlen
+ld a,b
+or c
+ret z	;if zero-len, abort
+
+dec hl	;point to last char
+ld a,(hl)
+cp 10
+ret nz
+
+ld (hl),0
+ret

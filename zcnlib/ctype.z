@@ -1,0 +1,139 @@
+;ctype - clones of C's ctype routines (islower, toupper, etc.)
+
+;these routines work in the sanest possible way - i.e. the 'toupper'
+; only tries to uppercase lowercase chars. If you're thinking, "well
+; wtf else would it do?" you haven't seen some of the more
+; 'interesting' C library implementations. :-/
+
+;note that these only work for ascii. If you're expecting 'toupper'
+; to work with umlauts, say... well, dream on. :-)
+
+;all routines work on the char in a. the conversion routines ('to*')
+; return the modified char in a, too. the testing routines ('is*')
+; return nc if the test failed, else c. all registers not used for
+; returning results are preserved by all routines.
+
+;for cpm zmac:
+;ZZglobal isalpha
+;ZZglobal isupper
+;ZZglobal islower
+;ZZglobal isdigit
+;ZZglobal isxdigit
+;ZZglobal isalnum
+;ZZglobal isspace
+;ZZglobal isprint
+;ZZglobal isgraph
+;ZZglobal iscntrl
+;ZZglobal isascii
+;ZZglobal toupper
+;ZZglobal tolower
+;ZZglobal toascii
+;ZZglobal ispunct
+
+
+
+isalpha:
+call isupper
+ret c
+jr islower
+
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+islower:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+
+isdigit:
+cp '0'
+ccf
+ret nc
+cp ':'
+ret
+
+isxdigit:
+call isdigit
+ret c
+call isxdlowr
+ret c
+cp 'A'
+ccf
+ret nc
+cp 'G'
+ret
+isxdlowr:
+cp 'a'
+ccf
+ret nc
+cp 'g'
+ret
+
+isalnum:
+call isalpha
+ret c
+jr isdigit
+
+isspace:
+;this tests for space, FF, CR, LF, HT, and (strangely) VT.
+;while we have to test for space separately...
+cp 32
+jr nz,isspno
+scf
+ret
+isspno:
+;...all the rest happen to be a contiguous range. How fortuitous. ;-)
+cp 9
+ccf
+ret nc
+cp 14
+ret
+
+isprint:
+cp 32
+ccf
+ret nc
+cp 127
+ret
+
+isgraph:
+cp 32
+ret z	;and nc
+jr isprint
+
+iscntrl:
+cp 32
+ret
+
+isascii:
+cp 128
+ret
+
+toupper:
+call islower
+ret nc
+xor 020h
+ret
+
+tolower:
+call isupper
+ret nc
+xor 020h
+ret
+
+toascii:
+and 07fh
+ret
+
+ispunct:
+call isgraph
+ret nc
+call isalnum
+ccf
+ret

@@ -1,0 +1,10 @@
+NAME
+	serial - disable/enable serial line driver
+
+SYNOPSIS
+	serial [0|1]
+
+DESCRIPTION
+	Turn off (0) or on (1) the serial line driver, which must be
+	enabled for RS232 serial I/O to work. It's enabled by default,
+	but disabling it should prolong battery life.

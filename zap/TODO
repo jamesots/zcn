@@ -1,0 +1,45 @@
+MUST make makezapd AND ZAP ITSELF only accept .com files as files to
+run. Otherwise the `get' mechanism may try to run a SUB file or
+something, with nasty results.
+
+
+Make it try writing sub to d:/c:/b:/a: in turn until it succeeds
+(deleting any failed attempts at writing it as it goes). This will
+need a new `subdrv' var, as the ccp only looks for $$$.sub on the
+current drive. (But the sub-writing bit need only change the drive in
+the FCB (to 4/3/2/1) each time. In fact, `subdrv' can just be an equ
+for the sub FCB if it's done this way.)
+
+
+Make extension `int' mean "run internal command". Test for this before
+rejecting as not-a-com-file, of course. :-) You really might want to
+run internals - sertest is an obvious choice, and there are probably
+others.
+
+
+It would also be nice if there were some way of running SUB files, but
+I suspect this is basically impossible, so don't worry about it too
+much. Do be sure to document the fact when I write the zap docs
+though.
+
+
+Have a nicer display to replace the "working..." thing.
+
+
+Make zap.z an outline, it's too huge to make sense of without!
+
+
+Check for card removal. (getch_time can check for it. If card removed,
+offer to rescan or quit - don't allow rescan until new card is in. To
+allow rescan will have to make sure everything can cope with being run
+more than once.)
+
+
+Show users with files in in italics (in the user number prompt bit).
+That would be tough-ish, mind, so I may well not do it. (OTOH, could
+do this during find_matching_files almost for free, I expect, in speed
+terms at least.)
+
+
+Make makezapd.com fit in 3k. Shouldn't be too hard. (Well, er,
+actually it might be now I'm afraid. :-} Worth a shot though.)

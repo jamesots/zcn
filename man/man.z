@@ -1,0 +1,552 @@
+;man - man-style help command for ZCN, working via pma file.
+;man.z+view.z assembled must stay under 3.5k due to loc of data (see equs)
+
+;this is explicitly public domain (all *my* code for `man' is, I mean)
+;to avoid copyright problems in using pmexe2.com (which is catted onto
+;the end of the output binary). `man' therefore falls under the pmarc
+;copyright, whatever that is. :-)
+
+org 0100h
+
+pmexe2_len equ 05e8h	;real length of pmexe2.com (up to just after
+			;last `$')
+
+;stop it being run under wade, and silly things like that
+;(this makes sure we have up to at least b000h)
+ld a,(7)
+cp 0b0h
+ret c
+
+;move this up to a000h
+ld hl,manmc_start
+ld de,0a000h
+ld bc,manmc_end-manmc_start
+ldir
+jp 0a000h
+
+manmc_start:
+phase 0a000h
+
+;copy pmexe2.com down to 100h
+ld hl,manmc_end
+ld de,0100h
+ld bc,pmexe2_len
+ldir
+
+;patch it
+
+;remove pmexe messages (which would look odd for a man program!)
+ld a,'$'
+ld (010ch),a	;startup banner
+ld (025dh),a	;"restoring"
+ld (06cch),a	;"ok"
+xor a
+ld (02d8h),a	;}
+ld (02d9h),a	;}- filename
+ld (02dah),a	;}
+
+;fix program proper so it doesn't screw up
+;a is still zero
+ld (01dah),a	;always `restore', don't just display it
+ld (0614h),a	;}
+ld (0615h),a	;}- same here
+ld (0616h),a	;}
+
+ld hl,0a03eh	;i.e. ld a,0a0h
+ld (0203h),hl	;make it think bdos starts at a000h (and is top of TPA)
+;a is still zero
+ld (0205h),a	;nop out the last byte of the original ld a,(7) instr.
+		;(not actually necessary, but what the hell)
+ld hl,backhere	;jump back to us rather than 100h
+ld (0667h),hl	;return rather than jumping to 100h
+
+;definitely not re-entrant
+;(well, I s'pose pmexe might be, but it's not man, is it!? :-))
+ld a,0c9h
+ld (0100h),a
+
+jr start
+
+
+
+files equ 04000h	;up to ~5k for list of filenames
+dmabuf equ 07000h	;384 bytes needed by stdio.z
+			;(using equ like this saves space in the man.com file)
+junk equ 08000h		;somewhere to fread junk to, to skip it easily
+			;(only needs 13 bytes!)
+filedat equ 0100h	;32k (minus 256 bytes) for man page contents
+			;(can overlay files/junk with no probs)
+lineptrs equ 08000h	;8k needed for line-pointers by view.z
+maxlines equ 4096	;max no. of lines allowed by view.z
+			;XXX it doesn't check that yet!
+
+
+numfiles: defb 0
+filenm: defb 'a:manpages.pma',0
+hndl: defw 0
+curaddr: defw 0
+savuser: defb 0
+spsav: defw 0
+
+
+start:
+;save old user and go to user 0
+ld e,255
+ld c,32		;get/set user
+call 5
+ld (savuser),a
+ld e,0
+ld c,32		;get/set user
+call 5
+
+
+ld a,(05dh)
+cp 32
+jr nz,skip0
+call ilprint
+defb 'ZCN man - main program PD by RJM, PMA reader (C) 1990 Yoshihiko Mino'
+defb 13,10,13,10,'usage: man <page>   (try "man man" for help)',0
+jp exit
+
+skip0:
+;make command name into "FOO",NUL
+ld a,32
+ld (05dh+8),a
+ld e,32
+ld hl,05dh
+call strchr
+ld (hl),0
+
+;open pma file
+ld hl,filenm
+call fopenrb
+jr c,skip1
+call ilprint
+defb 'man: error opening manpages.pma.',0
+jp exit
+
+skip1:
+ld (hndl),hl
+
+call ilprint
+defb 'Reading man page, please wait...',0
+
+;get file names/offsets/sizes
+call files_init
+
+;look for man page
+ld a,(numfiles)
+ld b,a
+ld c,0
+searchlp:
+push bc
+ld a,c
+call farrpos
+;remove any extension before comparing
+push hl
+ld e,'.'
+call strchr
+ld a,h
+or l
+jr z,skip3
+ld (hl),0
+skip3:
+pop hl
+ld de,05dh
+call strcmp
+pop bc
+jr c,got_it
+inc c
+djnz searchlp
+
+;couldn't find it.
+call ilprint
+defb 13,'No manual entry for ',0
+ld hl,05dh
+call strprint
+;get rid of any remaining chars from the "Reading man page" message
+ld b,32
+ld a,b	;ouch :-)
+spclp:
+call putchar
+djnz spclp
+jp exit
+
+got_it:
+;it's at array index c.
+ld a,c
+call farrpos
+push hl
+pop ix
+
+;seek to start of pma header for compressed man page
+ld e,(ix+13)
+ld d,(ix+14)
+ld c,(ix+15)
+ld hl,(hndl)
+push ix
+call fseek
+pop ix
+
+;read it in - but limit to 32k max.
+;(this would be dodgy but isn't too bad as CRC error will be detected
+;if this cuts short a file)
+ld c,(ix+16)
+ld b,(ix+17)
+bit 7,b
+jr z,skip4
+ld bc,32768
+skip4:
+ld hl,(hndl)
+ld de,0100h+pmexe2_len
+push de
+call fread
+pop hl
+add hl,bc
+ld (hl),0	;end our faked pma file :-)
+
+;restore original user no. - we do it early in case pmexe gives an error.
+ld a,(savuser)
+ld e,a
+ld c,32		;get/set user
+call 5
+
+;decompress file
+ld (spsav),sp
+ld hl,0
+push hl
+jp 0154h	;real start of pmexe2.com
+
+;jumps back to here if it worked ok, ready for the ldir to copy
+;text to 100h.
+backhere:
+ld sp,(spsav)
+
+;copy it
+ldir
+ex de,hl
+inc hl
+;check it hasn't gone past lineptrs
+ld de,lineptrs
+and a
+push hl
+sbc hl,de
+pop hl
+jr c,skip5
+
+call ilprint
+defb 'man: man page too big!',0
+jr exit_with_retpoke
+
+skip5:
+dec hl
+ld (hl),26	;put ^Z on the end just in case
+
+
+;view it
+call view
+
+;all done
+exit_with_retpoke:
+;stop re-entrance
+ld a,0c9h
+ld (0100h),a
+rst 0
+
+
+exit:
+;restore original user no.
+ld a,(savuser)
+ld e,a
+ld c,32		;get/set user
+call 5
+rst 0
+
+
+
+;index into files array
+;entry: a=offset in files[] array
+;exit:	hl=ptr to element
+;de corrupt
+farrpos:
+ld l,a
+ld h,0
+add hl,hl
+ld d,h
+ld e,l
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,de
+ld de,files
+add hl,de
+ret
+
+
+ftellpos: defw 0,0	;saved file pos used below
+
+;read list of files
+files_init:
+;clear files list
+ld hl,files
+ld de,files+1
+ld bc,17*256-1
+ld (hl),0
+ldir
+
+xor a
+ld (numfiles),a
+
+ld hl,0
+ld (ftellpos),hl
+ld (ftellpos+2),hl
+
+ld hl,(hndl)
+call fgetc
+
+fileloop:
+;loop ending conditions:
+jp nc,flpend
+cp 01ah		;this is a bit horrible but actually ok
+jp z,flpend
+and a
+jp z,flpend
+
+push af
+
+ld a,(numfiles)
+call farrpos
+ld (curaddr),hl
+
+;skip 6
+ld hl,(hndl)
+ld de,junk
+ld bc,6
+call fread
+
+;next word is num bytes in compressed data - entry overall
+;is pushed_a+2+this_word.
+ld hl,(hndl)
+call fgetc
+ld c,a
+push bc
+ld hl,(hndl)
+call fgetc
+pop bc
+ld b,a
+
+pop af
+push af
+
+ld h,0
+ld l,a
+add hl,bc
+inc hl
+inc hl
+
+ld ix,(curaddr)
+ex de,hl
+ld (ix+16),e
+ld (ix+17),d
+
+;skip 13
+ld hl,(hndl)
+ld de,junk
+ld bc,13
+call fread
+
+;read filename
+pop af
+sub 22
+ld c,a
+ld b,0
+ld de,(curaddr)
+ld hl,(hndl)
+call fread
+
+;skip CRC
+ld hl,(hndl)
+call fgetc
+ld hl,(hndl)
+call fgetc
+
+;set offset field in array, and skip file
+ld de,(ftellpos)
+ld bc,(ftellpos+2)
+ld ix,(curaddr)
+ld (ix+13),e
+ld (ix+14),d
+ld (ix+15),c
+;seek past the file
+ld a,(ix+16)
+ld l,a
+ld a,(ix+17)
+ld h,a
+;so hl now = size
+add hl,de
+jr nc,seekok
+inc c
+seekok:
+ex de,hl
+ld hl,(hndl)
+call fseek
+
+ld a,(numfiles)
+inc a
+ld (numfiles),a
+
+ld hl,(hndl)
+call ftell
+ld (ftellpos),de
+ld (ftellpos+2),bc
+
+
+ld hl,(hndl)
+call fgetc
+jp fileloop
+
+flpend:
+ret
+
+
+
+;stuff from zcnlib, included here to save space
+
+
+;putchar - put char in a
+;puts CR before any LF output
+;f corrupt, others preserved
+putchar:
+cp 10
+jr nz,putbyte
+ld a,13
+call putbyte
+ld a,10
+;FALLS THROUGH
+
+;putbyte - put char in a without translation
+;preserves all regs
+putbyte:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;getchar - get char into a (without echo)
+;preserves all but f
+getch:		;same
+getchar:
+push bc
+push de
+push hl
+getchlp:
+call kbhit
+jr nc,getchlp
+ld e,0ffh
+ld c,6
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+
+;kbhit - like the common DOS C function
+;returns c if key pressed, nc if not
+kbhit:
+ld c,11
+call 5
+rra
+ret
+
+
+
+;compare strings at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2
+;exit:	c if they match, nc otherwise
+;af/de/hl corrupt
+strcmp:
+ld a,(de)
+cp (hl)
+jr nz,strcmp2
+and a
+jr z,strcmp1
+inc hl
+inc de
+jr strcmp
+
+strcmp1:
+;they matched ok
+scf
+ret
+
+strcmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+;strchr(hl,e)
+;entry: hl=string, e=char
+;exit:  hl=pointer to first occurrence of char in string, or 0 if
+;	none.
+;af corrupt
+strchr:
+ld a,(hl)
+cp e
+ret z
+inc hl
+and a
+jr nz,strchr
+ld hl,0
+ret
+
+
+;strprint - print asciiz at hl
+;entry:	hl=addr of string
+;exit:	none
+;af/hl corrupt
+strprint:
+ld a,(hl)
+and a
+ret z
+call putchar
+inc hl
+jr strprint
+
+
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+call putchar
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)

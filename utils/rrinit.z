@@ -1,0 +1,220 @@
+;rrinit - format ZCN drive a: and write snapshot to it.
+;requires a card of at least 128k.
+
+org 0c210h
+
+txtoutput	equ 0b833h
+kmwaitkbd	equ 0b80fh
+cf1size		equ 6
+
+jp start
+defb 'RRINIT',0,0,0,0,0,0,0
+
+;c220h
+start:
+;make sure we can't be run again
+xor a
+ld (0c200h),a
+
+call do_snap
+
+;say it worked
+;can't use textout, do it char-by-char instead :-/
+ld hl,mworked
+displp:
+ld a,(hl)
+and a
+jr z,dispdone
+call txtoutput
+inc hl
+jr displp
+dispdone:
+
+keylp:
+call kmwaitkbd
+ld hl,02fch	;ESC (stop or function)
+and a
+sbc hl,bc
+jr nz,keylp
+
+;return to ROM main menu
+ret
+
+
+mworked: defb 'Snapshot written - press Stop',0
+
+btblock:
+defb 0c9h,07eh,'ZCN1'
+defw 0		;size of card - must be filled in
+defb 0		;0 system blocks
+defb 2		;2 dir. blocks
+
+
+do_snap:
+di
+ld hl,066h
+ld a,(hl)
+ld (hl),0c9h
+ld (nmisav),a
+ld (spsav),sp
+
+;page in screen for a sec
+ld a,043h
+out (011h),a
+
+ld hl,2		;compensate for call to here
+add hl,sp
+ld (07000h),hl	;screen starts at 7000h
+
+ld sp,0c3feh
+
+ld a,(nmisav)
+ld (07002h),a
+
+;page card in
+ld a,080h
+out (011h),a
+
+;zero out first half of boot block
+;(not second half 'cos that's where we are :-))
+ld hl,04000h
+ld de,04001h
+ld bc,01ffh
+ld (hl),l
+ldir
+
+;copy skeletal boot block
+ld hl,btblock
+ld de,04000h
+ld bc,10
+ldir
+
+;(size-calculating code below based on `format' from ZCN's internal.z)
+
+;we now need to find out how big it is.
+;this is not fun. it seems that the PCMCIA memory ports allocated
+;(80h-BFh) all map to real memory on the card - any size card ends
+;up looking like a 1024k card, with the contents repeating every
+;<card size>. we have to use this to find out how big it is.
+;
+;we have a particularly convenient way of checking the card size,
+;since our code (at least the bit at c200h) should be unique.
+
+ld c,1		;port num. offset
+ld b,64		;max. possible size in 16k chunks
+ifmtlp2:
+push bc
+ld a,c
+and 63
+or 080h
+out (011h),a
+ld hl,04200h
+ld de,0c200h
+ld b,0
+ifmtlp3:
+ld a,(de)
+cp (hl)
+jr nz,ifmt4
+inc hl
+inc de
+djnz ifmtlp3
+;it matched ok
+pop bc
+ld a,c
+jr ifmt5
+
+ifmt4:
+pop bc
+inc c
+djnz ifmtlp2
+;no match - must be a 1024k card
+ld a,64
+
+ifmt5:
+;size of card in 16k chunks is now in a
+ld l,a
+ld h,0
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+
+ld (0c000h+cf1size),hl
+
+;blank out non-preset dir entries.
+ld hl,dirblank
+ld de,dirblank+1
+ld bc,2048-128-1
+ld (hl),0e5h
+ldir
+
+;now actually copy the memory.
+ld c,0
+ld b,4
+pagelp:
+push bc
+call pagecopy
+pop bc
+inc c
+djnz pagelp
+
+;finished with slots at 4000h/8000h now.
+;restore 8000h-bfffh first, so we can read b001h to find the other
+;page out! :-)
+ld a,042h
+out (012h),a
+ld a,(0b001h)
+out (011h),a
+
+ld sp,(spsav)
+ld a,(nmisav)
+ld (066h),a
+ei
+ret
+
+nmisav: defb 0
+spsav:  defw 0
+
+;copy page C
+pagecopy:
+ld a,c
+or 040h
+out (012h),a	;source is at 8000h
+
+ld a,c
+add a,081h	;81h because we start from second 16k of card, of course
+out (011h),a	;dest is at 4000h
+
+ld hl,08000h
+ld de,04000h
+ld bc,04000h
+ldir
+ret
+
+
+;use up remaining space until first dir block (at c400h)
+defs 0c400h-$
+
+dirblks:
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,000h,000h,000h,080h
+defb 00Fh,010h,011h,012h,013h,014h,015h,016h
+defb 017h,018h,019h,01Ah,01Bh,01Ch,01Dh,01Eh
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,001h,000h,000h,080h
+defb 01Fh,020h,021h,022h,023h,024h,025h,026h
+defb 027h,028h,029h,02Ah,02Bh,02Ch,02Dh,02Eh
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,002h,000h,000h,080h
+defb 02Fh,030h,031h,032h,033h,034h,035h,036h
+defb 037h,038h,039h,03Ah,03Bh,03Ch,03Dh,03Eh
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,003h,000h,000h,080h
+defb 03Fh,040h,041h,042h,043h,044h,045h,046h
+defb 047h,048h,049h,04Ah,04Bh,04Ch,04Dh,04Eh
+
+;1920 bytes of E5h's are written here.
+dirblank:
+;this crock is needed to stop xmodem otherwise screwing last packet up
+defs 128
+defb 01ah

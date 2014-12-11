@@ -1,0 +1,13 @@
+NAME
+	du - disk usage
+
+SYNOPSIS
+	du [filespec]
+
+DESCRIPTION
+	Show how much disk space is used in total by the files
+	matching the specified wildcard (or all files in the current
+	user area, if you don't specify one).
+
+SEE ALSO
+	df

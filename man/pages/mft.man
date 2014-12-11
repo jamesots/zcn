@@ -1,0 +1,32 @@
+NAME
+	mft - copy one or more files from one card to another
+
+SYNOPSIS
+	mft filespec [filespec ...]
+
+DESCRIPTION
+	Mft copies files from one disk to another using a single
+	drive. In ZCN, this translates as copying from one memory card
+	to another.
+
+	The program prompts you when a `disk' change is required, and
+	the messages are pretty verbose and self-explanatory. The only
+	point which may be unclear is that when mft says "^C to
+	reboot" it really means "^C to quit". (The reason it says
+	`reboot' is due to awkward CP/M terminology regarding the
+	`warm boot' function often used to exit a program.)
+
+BUGS
+	Mft overwrites existing files on the destination disk without
+	warning, which may be considered a bug of sorts.
+
+	You have to copy from one logical drive to the same logical
+	drive on the destination card (this is ZCN's fault, not
+	mft's).
+
+AUTHOR
+	L.E. Hughes, with changes by Lewis Moseley Jr., Les Freed,
+	Charles H. Strom, and Dave Mabry
+
+SEE ALSO
+	pipe, umv, zselx

@@ -1,0 +1,317 @@
+NAME
+	wade - symbolic Z80 debugger
+
+SYNOPSIS
+	wade [file [symfile]]
+
+DESCRIPTION
+	WADE is an interactive symbolic Z80 debugger with full
+	assembly and disassembly using standard ZILOG mnemonics.
+
+	Up to eight conditional and/or unconditional breakpoints plus
+	a temporary breakpoint may be defined. Full tracing with or
+	without list and with real-time execution of subroutines on
+	command or automatically (using protected areas) is provided.
+	Tracing may be controlled by instruction count or a
+	conditional expression. A full set of operators provides for
+	arithmetic, logical, shift, and relational operations on hex,
+	decimal, binary, and character data, and on registers,
+	variables, and symbols, including embedded assignments to
+	registers and variables.
+
+	When WADE runs, it relocates to just below the BDOS and loads
+	any specified file.
+
+	You can use `h expr' to show the value of an expression
+	(mentioned here as `h' is perversely non-mnemonic).
+
+	To exit WADE, do `g0'.
+
+OPTIONS
+	file		the file to load at 100h.
+
+	symfile		a symbol file for the file.
+
+COMMAND SUMMARY
+	A  {addr}	      Assemble
+				(use `.' to end, define syms with `foo:')
+
+	B		      Display Breakpoints
+	B  adr {adr..}	      Set Breakpoints
+	BI mexpr ;adr {adr..} Set Conditional Breakpoints
+	BX		      Clear all Breakpoints
+	BX adr {adr..}	      Clear specified Breakpoints
+	BXI		      Clear Break Condition
+
+	C  {N}{J} {count}     Trace over calls {Nolist}{Jumps}
+	C  {N}{J} W mexpr     ..While
+	C  {N}{J} U mexpr     ..Until
+				(see note under `T' command below)
+
+	D  {from {to}}	      Dump memory
+
+	E  mexpr ;command     Execute command conditionally
+
+	F  {command line}     Specify Filename & command line
+
+	G  {to} {; breakadr}  Go {with temp breakpoint}
+
+	H		      Display Low and High addr of file
+	H  expr {expr..}      Display result of expression(s)
+
+	I  {port}	      Input from port
+
+	J  file {params}      Jump to macro file
+
+	K		      Kill macro file
+
+	L  {from {to}}	      List disassembled code
+
+	M  begin end dest     Move memory
+				(overlaps are allowed and dealt with)
+
+	N		      Name (Symbol) list
+	N  expr symname ...   Define Names
+	NF filename	      Define Symbol File Name
+	NS num		      Reserve Space for symbols
+	NX		      Delete all Names
+	NX symname ...	      Delete specified Names
+	NR {offset}	      Read Symbol File
+	NW		      Write Symbol File
+
+	O  {byte {port}}      Output a byte to port
+
+	P		      Display protect condition
+	P  mexpr	      Define protect condition
+	PX		      Delete protect condition
+				(see the `PROTECT CONDITION' section below)
+
+	Q  {J} begin end str  Query {justified} for bytes
+				(`J' means start dump 8 bytes before
+				first matching byte)
+
+	R  {offset}	      Read a File
+
+	S  {addr}	      Substitute memory
+	S  addr bytestring    Substitute immediate
+				(`Set' memory might be a better name,
+				it writes specified data at addr. Use
+				`.' to end interactive version (the
+				former))
+
+	T  {N}{J} {count}     Trace {Nolist} {Jumps only}
+	T  {N}{J} W mexpr     ..While
+	T  {N}{J} U mexpr     ..Until
+				(N = don't show instructions as
+				they're executed, J = only
+				display/count/eval-mexpr when PC is
+				modified)
+
+	U		      User input trap
+				(prompts for char. If char is CR,
+				disables input trap - otherwise,
+				enables searching of console input for
+				char (except for read-buffer BDOS
+				func), and if char is found a break
+				results.)
+
+	V  begin end begin2   Verify (compare) memory
+
+	W  start end {offset} Write a file to disk
+
+	X		      Examine CPU state
+	X'		      Display alternate Registers
+	X  regname	      Display & Change Register
+	X  regname expr	      Change Register
+
+	Y		      Display Y-Variables
+	Y  n		      Display & Change Y-Variable n
+	Y  n  expr	      Change Y-Variable n
+				("Y-Variables" are 10 variables
+				reserved for the user's use. They can
+				be used/set with `y0', `y1' etc. in
+				expressions)
+
+	Z  begin end bytestr  Zap (fill) memory with a string
+
+PROTECT CONDITION
+	The protect condition is evaluated on each trace. The
+	instruction will be executed in real-time, with a break set to
+	the current return address, if the protect expression
+	evaluates to a TRUE (nonzero) value.
+
+	CAUTION: If the value at the current stackpointer is NOT a
+	return address when the protect expression is true, the
+	breakpoint will be set at an invalid address, and the program
+	may fail, or it may not return to the debugger.
+
+	The default value of the protect expression is 'RPC >= xxxx',
+	where xxxx is the starting address of the debugger. This
+	results in BDOS-calls being executed in real time. Be careful
+	when changing the protect expression, since tracing into the
+	BDOS will most likely not work (the debugger also uses
+	BDOS-calls, and the BDOS is not re-entrant).
+
+EXPRESSIONS
+	An expression has the general form
+
+	   factor { operator factor ...}
+
+	where operator is one of the following:
+
+	   +	   addition
+	   -	   subtraction
+	   *	   multiplication
+	   /	   integer division
+	   %	   remainder of integer division (modulus)
+
+	   &	   bitwise AND
+	   !	   bitwise OR
+	   |	   bitwise OR  (alternate representation)
+	   #	   bitwise XOR
+	   ^	   bitwise XOR (alternate representation)
+
+	   <<	   circular 16-bit left shift
+	   >>	   circular 16-bit right shift
+
+	   <	   less than
+	   <=	   less than or equal to
+	   >	   greater than
+	   >=	   greater than or equal to
+	   =	   equal
+	   <>	   not equal
+
+	   &&	   boolean AND
+	   ||	   boolean OR
+	   !!	   boolean OR (alternate representation)
+
+	   :=	   assignment (word)
+	   ==	   assignment (byte)
+		   where the factor which is assigned to may be an
+		   unsigned register or variable specification, or an
+		   address value. The result of this operator is the
+		   value on the right-hand side of the assignment
+		   operator, which is at the same time assigned to the
+		   register, variable or address specified on the
+		   left-hand side. Size adjustment is automatic for
+		   variables and registers. If an address is used as
+		   the destination, a word is stored. To store a byte
+		   only, use the operator '=='. Note that to assign to
+		   a register or variable, no sign or expression may
+		   be used with the register or variable name, i.e.
+		   the expression RHL := 1234 will assign 1234 to
+		   register HL, whereas +RHL := 1234 will assign 1234
+		   to the address contained in register HL.
+
+	A factor has the form
+
+	   { sign } number
+
+	where sign is
+
+	   + (plus), - (minus), or ~ (not)
+
+	and number is
+
+	   (expression)	   the byte at the memory location 
+			   addressed by "expression"
+
+	   (expression).   the word at the memory location
+			   addressed by "expression"
+
+	   [expression]	   the value of the expression
+
+	   hhhh	   hex number
+	   dddd.   decimal number
+	   bbbb"   binary number
+	   'c'	   character
+	   string  character string (only the last 2 characters
+		   are significant)
+	   Rx	   contents of CPU-Register x
+	   Yn	   contents of Variable Y0..Y9
+	   H	   special variable H(igh)
+	   L	   special variable L(ow)
+	   M	   special variable M(ax)
+	   T	   special variable T(op)
+	   $	   CPU-register PC
+	   .symbol Value of the symbol
+
+	   The variable L contains the standard load address (100h for
+	   CP/M) and is not changed by the debugger, but may be user
+	   assigned to a different value.
+
+	   The variable H contains the highest address read on the
+	   last file. It is updated each time an R-command is
+	   executed.
+
+	   The variable M contains the highest address read on all
+	   previous R-commands.
+
+	   The variable T contains the top address of the user TPA. It
+	   is updated if symbol table space is expanded.
+
+	   The short-form '$' for PC may only be used in expressions,
+	   not in an X-command.
+
+	   The character '_' (underline) may be used in numbers to
+	   enhance readability. It is completely ignored.
+
+	String:
+
+	   Any number of characters delimited by quotes ('). Use a two
+	   quotes ('') to represent a single quote within a string:
+	   'It''s a quote'.
+
+	Register names:
+
+	   primary:    A, F, AF, B, C, BC, D, E, DE,
+		       H, L, HL, IX, IY, SP, PC
+
+	   alternate:  A', F', AF', B', C', BC', D', E', DE',
+		       H', L', HL'
+
+	   control:    IFF  (interrupt enable flip flop)
+		       I    (interrupt register)
+		       R    (refresh register, read only)
+
+	Symbols:
+
+	   Any number of characters, of which only the first eight
+	   characters are significant (the significant length of
+	   symbols can be changed by reassembling). The first
+	   character must be non-numeric. Symbols may consist of
+	   letters, digits, and the special characters @, ?, _, and $.
+	   Lowercase letters are translated to uppercase. Any
+	   underlines (_) are stripped.
+
+MULTIPLE EXPRESSIONS
+
+	All commands expecting a condition will accept multiple
+	expressions in sequence. Only the value of the last expression
+	is used as the condition result. The general form for this
+	"mexpr" is
+
+	   expression  { {,} expression ... }
+
+BYTE-STRINGS
+
+	The commands Q(ery), S(ubstitute), and Z(ap) expect a
+	byte-string as operand. In a byte-string, character strings
+	are significant over their full length. The general form is
+
+	   expression-or-string { {,} expression-or-string ... }
+
+	only the lower byte is significant for expressions in byte
+	strings. Note that a string is evaluated first, so to enter
+	the expression 'N'-40 in a byte-string, you have to use
+	brackets:
+
+	   'N'-40  1+2*3  'A'+2	     => 'N', -40, 7, 'A', 2
+	   ['N'-40] [1+2]*3 ['A'+2]  => '^N', 9, 'C'
+
+AUTHOR
+	Thomas Wagner. This man page is a modified and abridged
+	version of his `wade.doc'.
+
+SEE ALSO
+	z8e

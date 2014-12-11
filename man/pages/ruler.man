@@ -1,0 +1,9 @@
+NAME
+	ruler - display a (cm) ruler at the top of the screen
+
+SYNOPSIS
+	ruler
+
+DESCRIPTION
+	Display a ruler onscreen. The top two pixel lines stay
+	onscreen until you do `cls'.

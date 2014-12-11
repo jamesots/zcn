@@ -1,0 +1,8 @@
+NAME
+	k3 - show available memory
+
+SYNOPSIS
+	k3
+
+DESCRIPTION
+	Shows size of TPA in kilobytes.

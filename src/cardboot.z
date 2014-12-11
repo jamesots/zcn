@@ -1,0 +1,65 @@
+;ZCN v0.3 - a CP/M clone for the Amstrad NC100 Notepad.
+;Copyright (C) 1994,1995 Russell Marks. See 'zcn.txt' for license details.
+
+;cool feature update!
+;having got the low-level docs from Cliff, it should be possible
+;to boot just by doing function-X. Bit hairy supporting it though...
+;the code to do this is in the section cboot2st...cboot2end,
+;which is written at offset 512 (0200h) on the card.
+
+;the card boot program put at offset 128 in boot block on bootable
+; cards.
+;this is part of ZCN, not separate, since 'sys' writes it to the card.
+;system cannot be >15k
+
+;the code should currently be running in bank0.
+;this will be running directly from the card.
+;(must be relocatable)
+
+cstart	equ 0400h	;address of 1st system block in memory
+
+cbootst:
+di
+ld sp,08000h
+ld a,043h
+out (013h),a
+
+;copy system
+ld hl,cstart
+ld de,(cstart+9)	;main assemble address (see main.z)
+ld bc,(cstart+11)	;length of code, similarly
+ldir
+
+;copy font
+ld hl,cstart
+ld de,(cstart+11)
+add hl,de
+ld de,0eac0h
+ld bc,96*6
+ldir
+
+;boot system
+ld hl,(cstart+9)
+ld de,250
+add hl,de
+jp (hl)			;go to start+250 - init, and start ccp
+
+cbootend:
+
+
+cboot2st:
+;this bit is needed for card to be bootable with Fn-X.
+defb 'NC100PRG'
+defb 0,0,0,0, 0,0,0,0
+jp 0c220h
+defb 'ZCN',0,0
+defb 0,0,0,0, 0,0,0,0
+
+;this runs at address 0c220h, so disable ints, page it in at 0,
+;and jump to 066h like the NMI boot method.
+di
+ld a,080h	;zeroth page of card
+out (010h),a
+jp 066h
+
+cboot2end:

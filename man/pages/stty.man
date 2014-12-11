@@ -1,0 +1,15 @@
+NAME
+	stty - set baud rate used by serial port
+
+SYNOPSIS
+	stty baud_rate
+
+DESCRIPTION
+	Set baud rate used by serial port. Supported speeds are 150,
+	300, 600, 1200, 2400, 4800, 9600, and 19200 baud. ZCN's
+	default speed is 2400 baud.
+
+BUGS
+	See last sentence above. :-) Generally you'd have an stty
+	command in your `autoexec.sub' to set the speed to 9600 or
+	19200 baud.

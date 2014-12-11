@@ -1,0 +1,1010 @@
+;spell - spellcheck a file (based on spellwd.z)
+;usage: spell file
+;uses ROM spellchecker
+
+org 08000h	;runs here as 200-7fff will get blasted
+
+wlookup equ 0a8ach	;the list of alternatives starts here
+
+;format of list at 'wlookup' is mword1^@mword2^@...
+;where 'm' is non-zero (can be 'm', 'q', etc., don't know *why*...)
+;actually, I think 'm' means 'likely' and 'q' means 'less likely',
+; or it might be a scale from 'm' to 'q'. whatever.
+
+
+tempfcb equ 0101h	;100h area is re-usable after we've moved up in mem
+			;(100h itself is reserved for holding a `ret' though)
+
+;various buffers
+oldline	equ eof		;256 bytes - previous line (as output)
+linebuf equ oldline+256	;256 bytes - current line
+tmpword equ linebuf+256	;128 bytes - used by do_replace to read repl. text in
+tmpline equ tmpword+128	;384 bytes - used temp. when linebuf has to be changed
+			;(must be sizeof(linebuf)+sizeof(tmpword))
+
+
+start:
+;must be zcn
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;not even close to being reentrant
+ld a,0c9h
+ld (0100h),a
+
+;use new stack we can use the whole time
+ld sp,0a000h
+ld hl,0
+push hl
+
+;copy to real place to run
+ld hl,0100h
+ld de,08000h
+ld bc,eof-start
+ldir
+jp start2
+
+start2:
+ld a,(05dh)
+cp 32
+ld de,musage
+jp z,die
+
+ld c,132	;console in/out assignments
+call 5
+ld a,l
+and a
+jr z,start3
+
+;running via serial, use square brackets as `highlight' (rev. vid.)
+ld a,'['
+ld (hlit_on),a
+ld a,']'
+ld (hlit_off),a
+
+start3:
+;check for NC200
+ld c,144
+call 5
+and a
+jr nz,start4
+
+ld a,044h	;NC200 ZCN uses page 44h at top
+ld (pageop+1),a
+
+start4:
+;initialise spellchecker (put in place, etc.)
+call initchkr
+
+;make cmdline asciiz
+ld a,(080h)
+ld hl,081h
+ld e,a
+ld d,0
+add hl,de
+ld (hl),d
+
+;get FCB so we can fiddle with extension more easily
+ld hl,082h	;XXX should look for start of filename properly
+		;(best way would be via getopt, so I could have opts too)
+ld de,tempfcb
+call makefn83	;part of stdio.z
+
+;the idea is to rename the existing filename.ext to filename.bak,
+;then write a new filename.ext as we go along. But if ext is
+;*already* .bak, that's a Bad Idea. So we quit if that's the case.
+;(isn't completely ideal, but should be quite reasonable in practice.)
+ld hl,tempfcb+9
+ld a,(hl)
+cp 'B'
+jr nz,notbak
+inc hl
+ld a,(hl)
+cp 'A'
+jr nz,notbak
+inc hl
+ld a,(hl)
+cp 'K'
+jr nz,notbak
+;it is, so quit.
+ld de,misbak
+jp die
+
+notbak:
+;check file exists (by opening it)
+ld de,tempfcb
+ld c,15		;open file
+call 5
+ld de,mbadopenin
+inc a
+jp z,die
+
+;before doing renaming etc., see how big the file is, and how much
+;disk space we have left on the current drive. If it's less, we
+;give a warning and let them choose whether to go on or not.
+;it's important to delete any existing .bak *first*, otherwise we
+;have a screwy idea of how much disk space we really have available.
+;so set fcb up for deleting the .bak (and also for later renaming).
+call renamefix		;copy name to tempfcb+16 with ".bak" ext
+;delete any currently existing .bak
+ld de,tempfcb+16
+ld c,19		;delete file
+call 5
+
+;first get file size.
+ld de,tempfcb
+ld c,35
+call 5
+ld hl,(tempfcb+33)
+ld (filesize_rcds),hl
+;it's in records, so divide by 8 (rounding up)
+ld bc,7
+add hl,bc
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+push hl
+
+;get disk space free on specified/current drive.
+;(I say `specified' as if the file on the cmdline is on a different
+;drive, so will the new file be.)
+;the file open we did earlier must have set the drive byte to
+;a valid non-zero one, so...
+ld a,(tempfcb)
+dec a
+ld e,a
+ld c,46		;cpm3/ZCN get free space
+call 5
+;it's put at dma addr, which will still be 80h as stdio hasn't been
+;used yet.
+ld hl,(080h)
+;annoyingly, also in records!
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+pop de
+and a
+sbc hl,de	;is the free space (hl) >= orig. file size (de)?
+jr nc,df_ok	;if so, skip the warning
+
+;ask if they want to carry on
+ld de,mspcwarn
+ld c,9
+call 5
+call getchar_echo
+cp 'y'
+jp nz,0
+
+ld a,10
+call putchar
+
+df_ok:
+;need to copy fcb to fcb+16 again, as fcb will have been
+;`corrupted' :-) by get-file-size.
+call renamefix		;copy name to tempfcb+16 with ".bak" ext
+;rename the file to .bak.
+ld de,tempfcb
+ld c,23		;rename file
+call 5
+
+;open the input file (the .bak)
+ld hl,tempfcb+16
+ld a,0		;"r"
+call fopenfcb
+ld de,mbadopenin
+jp nc,die
+ld (in_hndl),hl
+
+ld hl,tempfcb
+ld a,1		;"w"
+call fopenfcb
+ld de,mbadopenout
+jp nc,die
+ld (out_hndl),hl
+
+
+;right, we have input/output files now.
+;read in one line at a time from the input, and check each word.
+
+xor a
+ld (oldline),a
+
+linelp:
+ld hl,(in_hndl)
+ld de,linebuf
+push de
+ld bc,256
+call fgets
+pop hl
+ld a,(hl)
+and a
+jp z,linelp_done
+
+call strchop	;remove trailing LF
+
+;skip all the word stuff if just copying
+;(it does still show progress indicator, but that's fine)
+ld a,(autopilot)
+and a
+jp nz,wordlp_done
+
+;check each word in the line
+ld hl,linebuf
+wordlp:
+;find next non-whitespace char (i.e. next word)
+;stdio's `isblank' is ideal for this, returns z set if tab/spc/NUL
+findnwlp:
+ld a,(hl)
+and a
+jp z,wordlp_done
+call isblank
+inc hl		;flags unaffected
+jr z,findnwlp
+dec hl
+
+;now we have the problem of punctuation. The ROM spellchecker doesn't
+;seem to deal with punctuation other than that embedded in `words'
+;such as you've and half-hour, so we skip any non-alpha chars
+;on either side of our word. (not alphanum, as it can't seem to handle
+;numbers either!)
+;
+;first then, skip non-alpha on this side.
+;(we bear in mind, however, that this may not be a `word' as such,
+;so we may find the end of the `word' first. If so, we go to wordlp.
+findalp:
+ld a,(hl)
+call isalpha
+jr c,findalp_done
+call isblank
+jr z,wordlp
+inc hl
+jr findalp
+
+findalp_done:
+ld (wpos_start),hl
+
+;so we do have at least one letter here, then.
+;to preserve punctuation in mid-word, we need to find end of all
+;chars in word (alpha or otherwise), then search backwards for first
+;alpha to find end of word as far as spellchecker should be concerned.
+
+;so, find end of all chars in word.
+findwlp:
+inc hl
+ld a,(hl)
+call isblank
+jr nz,findwlp
+ld (wpos_end),hl
+
+;now search backwards for first alpha (we know there's at least one)
+findlastalp:
+dec hl
+ld a,(hl)
+call isalpha
+jr nc,findlastalp
+inc hl			;we want to point to char *after* it
+ld (wpos_chkend),hl
+
+
+;get length of word (or rather, for word as it's to be checked)
+;hl still (wpos_chkend)
+ld de,(wpos_start)
+push de
+and a
+sbc hl,de
+ld a,l
+;if >=32, cut it short
+;(XXX might be better at some point to just completely ignore it...?)
+cp 32
+jr c,len_now_ok
+ld a,31
+len_now_ok:
+ld (wordlen),a
+ld b,0
+ld c,a
+pop hl		;(wpos_start)
+ld de,wordbuf
+ldir
+xor a
+ld (de),a	;make it asciiz
+
+;check word, but skip if <=(minlen)
+;(this option is inspired by ispell's `-W' - it defaults to accepting
+;all one-letter words too.)
+ld a,(minlen)
+ld b,a
+inc b
+ld a,(wordlen)
+cp b
+jr c,wordlp	;don't check if less than (minlen)+1
+
+call chkword
+ld hl,(wpos_end)
+jr c,wordlp	;if ok, do next
+
+;wasn't there, get it fixed (or ignored, or whatever :-))
+call fixword
+
+;autopilot could have been set, and we want to skip to wordlp_done if so.
+ld a,(autopilot)
+and a
+jr nz,wordlp_done
+
+;do next word
+ld hl,(wpos_end)
+jp wordlp
+
+
+wordlp_done:
+;output (possibly modified) line to file
+ld hl,(out_hndl)
+ld de,linebuf
+call fputs
+ld de,mbadwrite
+jp nc,die
+
+;...and CR/LF
+ld hl,(out_hndl)
+ld a,10
+call fputc
+ld de,mbadwrite
+jp nc,die
+
+
+;copy current line to oldline
+;(quicker to just copy the lot than bother checking true length etc.)
+ld hl,linebuf
+ld de,oldline
+ld bc,256
+ldir
+
+;say how much is done (easiest to do this in records; doing in lines
+;would be difficult, and doing as percentage could be very inaccurate
+;for short-ish files).
+ld a,13
+call putchar
+ld hl,(in_hndl)
+call ftell
+and a
+rl e
+rl d
+rl c
+ld e,d
+ld d,c
+inc de
+call dispdec
+ld a,'/'
+call putchar
+ld de,(filesize_rcds)
+call dispdec
+ld a,32
+call putchar
+
+jp linelp
+
+
+linelp_done:
+;reached eof, so close files and we're done.
+ld hl,(out_hndl)
+call fclose
+ld hl,(in_hndl)
+call fclose
+
+call ilprint
+defb 13,'          ',13,'done - orig file saved with ".bak" extension.',0
+
+;all done
+rst 0
+
+
+
+gotlkup: defb 0		;non-zero if have lookup info at wlookup
+
+
+fixword:
+xor a
+ld (gotlkup),a
+ld (wlookup),a
+
+;auto-lookup if, er, autolkup :-)
+ld a,(autolkup)
+and a
+jr z,fixw1
+
+call getsuggest
+ld a,1
+ld (gotlkup),a
+
+fixw1:
+
+fixlp:
+call showlines
+call showsuggest	;show suggestions if we have them
+getinplp:
+call ilprint
+defb '[L]ookup, [A]uto-lookup (toggle), [R]eplace (edit), SPC - ignore ',0
+call getchar
+push af
+ld a,10
+call putchar
+call putchar
+pop af
+cp ' '
+ret z		;ignore is fairly easy :-)
+cp 'l'
+jp z,do_lookup
+cp 'a'
+jp z,do_autolkup
+cp 'r'
+jp z,do_replace
+cp 3		;^C
+jp z,do_quit
+cp 'R'-040h	;^R
+jr z,fixlp	;redraw
+cp 'L'-040h	;^L
+jr z,fixlp	;same
+
+;finally, check any lookup keypresses
+ld c,a		;put key in c
+ld a,(gotlkup)
+and a
+jr z,getinplp	;not got any, so get input again
+ld a,(wlookup)
+and a
+jr z,getinplp	;ditto :-)
+
+;got at least one, check them.
+ld hl,wlookup
+ld de,lkupkeys
+ld a,(numlkup)
+ld b,a
+lkeylp:
+inc hl
+ld a,(de)
+cp c
+jr z,lkeygot
+
+;move to after word
+push bc
+call strlen
+pop bc
+inc hl
+inc de		;check next key
+djnz lkeylp
+jp getinplp	;couldn't find it, so get another key
+
+lkeygot:
+;got the key, so they've selected the word at hl.
+;just a matter of using the `replace' code, then...
+jp repl_gotstr
+
+
+do_quit:
+call ilprint
+defb 'Quitting will just copy the rest unmodified - sure (y/n)? ',0
+call getchar_echo
+push af
+ld a,10
+call putchar
+call putchar
+pop af
+cp 'y'
+jp nz,fixlp
+ld a,1
+ld (autopilot),a
+ret		;ret since this `fixes' line (and all future ones :-))
+
+
+do_autolkup:
+ld a,(autolkup)
+xor 1
+ld (autolkup),a
+jp z,fixlp
+;FALLS THROUGH
+
+do_lookup:
+ld a,(gotlkup)
+and a
+jp nz,fixlp
+call ilprint
+defb 'Looking for alternatives...',0
+call getsuggest
+ld a,1
+ld (gotlkup),a
+ld a,10
+call putchar
+jp fixlp
+
+
+do_replace:
+;read string in 128-byte buf at tmpword
+;first prompt for input
+call ilprint
+defb 'Type replacement text (or Esc to abort) >',0
+
+;^C also aborts nicely, but esc is more sensible :-)
+
+ld a,1
+ld (wasctrlc),a
+
+ld hl,tmpword
+ld (hl),125
+ex de,hl
+ld (spsav),sp
+call bgetbuf
+
+;not ^C'd if we got here
+xor a
+ld (wasctrlc),a
+
+repl_ctrlc:
+ld sp,(spsav)
+
+ld a,10
+call putchar
+
+;if ^C'd, go back to fixlp
+ld a,(wasctrlc)
+and a
+jp nz,fixlp
+
+;otherwise make asciiz and leave hl pointing at it.
+ld hl,tmpword+2
+push hl
+ld a,(tmpword+1)	;len
+ld c,a
+ld b,0
+add hl,bc
+ld (hl),b
+pop hl
+
+repl_gotstr:
+;hl now points to the string to replace the existing string with.
+;so copy three strings to tmpline:
+;linebuf..(wpos_start)-1,
+;string at hl,
+;(wpos_chkend) onwards.
+push hl
+;save length of new string for later
+call strlen
+push bc
+
+ld hl,(wpos_start)
+ld a,(hl)
+push hl
+push af
+ld (hl),0
+ld hl,tmpline	;dest
+ld de,linebuf	;src
+call strcpy
+pop af
+pop hl
+ld (hl),a	;restore char nuked to make substring asciiz
+
+pop bc
+pop hl		;the new string
+push bc
+ex de,hl
+ld hl,tmpline
+call strcat
+
+ld hl,tmpline
+ld de,(wpos_chkend)
+call strcat
+
+;make sure it's no more than 255 chars
+xor a
+ld (tmpline+255),a
+;copy back to linebuf
+ld hl,tmpline
+ld de,linebuf
+ld bc,256
+ldir
+
+pop hl	;length of replacement string
+ld de,(wordlen)
+
+;now compensate (wpos_end) for change in line.
+;the difference in position is new_len-old_len, or hl-de.
+and a
+sbc hl,de
+ld de,(wpos_end)
+add hl,de
+ld (wpos_end),hl
+
+;this dealt with fixing the word, so ret.
+ret
+
+
+renamefix:
+ld hl,tempfcb
+ld de,tempfcb+16
+ld bc,16
+ldir
+ld hl,bakext
+ld de,tempfcb+16+9
+ld c,3	;b still zero
+ldir
+ret
+
+
+;bgetbuf, ripped from ZCN and slightly hacked
+;
+;read buffer from console - similar to dos int21 func. 10.
+;checks for ^C (esc does same)
+;only editing supported is delete backwards
+;temp vars:
+bgbpos:	defb 0	;position, where 0 = at (bgbbuf)+2
+bgbbuf:	defw 0	;buffer being filled - from de
+bgblen: defb 0  ;current length of string
+bgbchar: defb 0	;last char. input
+
+bgetbuf:
+ld (bgbbuf),de
+
+;give up now if max. len. is zero
+ld a,(de)
+and a
+ret z
+
+xor a
+ld (bgbpos),a
+ld (bgblen),a
+
+bgbloop:
+call getchar
+cp 3		;is it ctrl-c?
+jp z,repl_ctrlc	;if so, ret oddly :-)
+cp 27		;same for esc
+jp z,repl_ctrlc
+ld (bgbchar),a
+
+;if it was backspace, print a backspace/space/backspace
+cp 8
+jr z,bgbbksp
+;same for DEL
+cp 127
+jr nz,bgb1
+
+bgbbksp:
+;delete char onscreen and in buffer if pos!=0
+ld a,(bgbpos)
+and a
+jr z,bgbagain
+
+dec a
+ld (bgbpos),a
+ld a,(bgblen)
+dec a
+ld (bgblen),a
+
+ld a,8
+call putchar
+ld a,32
+call putchar
+ld a,8
+ld (bgbchar),a	;make DEL look like backspace
+call putchar
+
+bgb1:
+;now echo and add, but only if printable
+ld a,(bgbchar)
+call isprint
+jr nc,bgbagain
+
+;add char to string
+ld hl,(bgbbuf)
+inc hl
+inc hl
+ld a,(bgblen)
+ld b,0
+ld c,a
+add hl,bc
+ld a,(bgbchar)
+ld (hl),a
+
+;incr. len of string
+ld hl,bgbpos
+inc (hl)
+ld hl,bgblen
+inc (hl)
+
+;echo char
+ld a,(bgbchar)
+call putchar
+
+;end of loop bit
+bgbagain:
+;check for size - if bgblen=bufsiz then buffer is full
+ld hl,(bgbbuf)
+ld a,(bgblen)
+cp (hl)
+jr z,bgbfin
+
+;check for CR
+ld a,(bgbchar)
+cp 13
+jr nz,bgbloop
+
+bgbfin:
+;finished - echo a CR and return length in bgbbuf+1
+ld a,13
+call putchar
+
+ld hl,(bgbbuf)
+inc hl
+ld a,(bgblen)
+ld (hl),a
+ret
+
+
+
+
+
+
+
+showlines:
+;clear any pos indicator
+call ilprint
+defb 13,'          ',13,0
+
+;show word in context by showing last line
+;and current one, with word highlighted.
+ld a,10
+call putchar
+ld hl,oldline
+call strprint
+ld a,10
+call putchar
+
+ld hl,linebuf
+ld de,(wpos_start)
+ld bc,(wpos_chkend)
+contextlp:
+push hl
+and a
+sbc hl,de	;start of word?
+ld a,(hlit_on)
+call z,putchar
+add hl,de
+;that won't have carried
+sbc hl,bc	;end of word?
+ld a,(hlit_off)
+call z,putchar
+pop hl
+ld a,(hl)
+and a
+jr z,context_done
+call putchar
+inc hl
+jr contextlp
+
+context_done:
+ld a,10
+call putchar
+call putchar
+ret
+
+
+showsuggest:
+ld a,(gotlkup)
+and a
+ret z
+
+ld a,(wlookup)
+and a
+jr nz,ssugg1
+
+;none found
+call ilprint
+defb '<no alternatives found>',13,10,0
+ret
+
+ssugg1:
+;found at least one alternative - report all with keypresses
+ld hl,wlookup
+ld de,lkupkeys
+ld a,(numlkup)
+ld b,a
+ssugglp:
+push bc
+ld a,(de)
+and a		;if run out of keys, stop here
+jr nz,ssugg2
+ld a,36
+ld (numlkup),a	;lose the rest :-)
+pop bc
+jr ssugglp_done
+
+ssugg2:
+inc hl
+;a still (de)
+call putchar
+push de
+push hl
+call ilprint
+defb ') ',0
+pop hl
+push hl
+call strprint
+pop hl
+;move to after word
+call strlen
+inc hl
+pop de
+ld a,32
+call putchar
+call putchar
+inc de		;next key
+pop bc
+djnz ssugglp
+
+ssugglp_done:
+ld a,10
+call putchar
+ret
+
+
+
+die:
+ld c,9
+jp 5
+
+
+musage: defb 'usage: spell filename$'
+misbak: defb 'sorry, file to spellcheck must not be ".bak".$'
+bakext: defb 'BAK'
+mbadopenin: defb 'file not found.$'
+mbadopenout: defb 'error opening output file.$'
+mbadwrite: defb 'error writing to output file - disk full?$'
+
+mspcwarn:
+defb 'It appears there will probably not be enough disk space to write',13,10
+defb 'the spellchecked file. Carry on anyway (y/n)? $'
+
+;keys used for lookups - if more than 36, 37th onwards are ignored.
+;asciiz to make that check easier :-)
+lkupkeys:
+defb '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',0
+
+
+getchar_echo:
+call getchar
+cp 32
+ret c
+cp 128
+ret nc
+call putchar
+ret
+
+
+;initialise spellchecking stuff. call once, before using chkword.
+;leaves spellchecker code in 0200h-7fffh.
+initchkr:
+call runspl_start
+
+;put roms in top 16k and copy them down
+
+;put rom8 in
+ld a,8
+out (013h),a
+;copy most of it (c200-ffff) to RAM in low 16k
+ld hl,0c200h
+ld de,0200h
+ld bc,03e00h
+ldir
+
+;now rom9
+ld a,9
+out (013h),a
+
+ld hl,0c000h
+ld de,04000h
+ld bc,04000h
+ldir
+
+call 0200h
+ld bc,0		;this means no user dict, I think (hope :-))
+call 0203h
+
+call runspl_end	;restores ram at top (i.e. port 13h)
+ret
+
+
+
+;entry: nothing (asciiz word in wordbuf, length in wordlen)
+;exit: c if spelling ok, else nc
+chkword:
+call runspl_start
+
+ld de,wordbuf
+call 0206h	;check word
+;now hl=0 if word not found
+push hl
+call runspl_end
+pop hl
+
+;return nc if word not found, else c
+ld a,h
+or l
+ret z	;and nc
+
+scf
+ret
+
+
+;get suggestions for spellings for incorrectly-spelled word.
+;NB: you should only call this for a word which returned nc from chkword.
+getsuggest:
+call runspl_start
+
+;if not found...
+ld de,wordbuf
+call 0209h	;lookup alternatives
+ld a,l
+ld (numlkup),a	;the number found
+
+call runspl_end
+ret
+
+
+
+
+runspl_start:
+di
+
+;disable poweroff
+ld a,0c9h
+ld (066h),a
+ret
+
+
+runspl_end:
+;put ram back
+pageop: ld a,043h	;modified on NC200
+out (013h),a
+
+;re-enable poweroff
+ld a,0f7h
+ld (066h),a
+
+ei
+ret
+
+
+
+in_hndl: defw 0
+out_hndl: defw 0
+
+minlen: defb 1
+autolkup: defb 0
+numlkup: defb 0
+autopilot: defb 0	;if non-zero, don't interact at all just copy file
+
+wordbuf:
+;copy (asciiz) word into this 32-byte block
+;max 32 chars long, obviously :-)
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0         ; }
+defb 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0         ; }- 32 zeroes
+defb 0
+wordlen: defb 0         ;put length of word (not inc. the NUL) here
+defb 0			;so we can read/write it as a word too
+
+wpos_start: defw 0	;ptr to start of (alphabetics in) word
+wpos_chkend: defw 0	;ptr to end (byte past end of) of alpha word
+wpos_end: defw 0	;ptr to real end of word (next whitespace)
+
+filesize_rcds: defw 0	;size of orig file in records
+
+spsav: defw 0
+wasctrlc: defb 0
+
+hlit_on: defb 25
+hlit_off: defb 24

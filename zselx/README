@@ -1,0 +1,201 @@
+* -*- outline -*-
+
+		 Zselx v1.0 - (c) 1996 Russell Marks
+
+	   A (5k) file manager for Z80-based CP/M machines.
+
+
+* License
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or (at
+your option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+
+[The GNU GPL is in the file `COPYING'.]
+
+
+* About zselx
+
+Zselx lets you pick files from a certain drive/user and do one of
+these things:
+
+- copy or move them to another drive/user;
+- delete them;
+- view them.
+
+Like cpmtris, zselx works as is on VT52s (PCW and +3) and ZCN boxes,
+works with VT100s with `zselx 1', and is patchable for other machines
+and terminals. (It uses the same patch area layout, so you can use a
+cpmtris patch with zselx.)
+
+It's a conversion of my original Unix version, modified to use
+internal cp/mv/rm/more-like `commands'. Unix zselx is free too (public
+domain in fact, as writing it on Unix was considerably simpler) and
+available on request.
+
+Zselx was inspired by a useful little program for MS-DOS called `co'.
+Zselx is essentially a clone of `co', with certain details modified to
+suit CP/M.
+
+* User numbers
+
+The term `user' in this file means `user area' or `user number'. If
+you don't know what that means, check your CP/M manual. They're a
+little bit like directories on other OS's. For those people without a
+CP/M manual, here's the definition from the CP/M 2.2 manual:
+
+"user number: Number assigned to files in the disk directory so that
+different users need only deal with their own files and have their own
+directories, even though they are all working from the same disk. In
+CP/M, files can be divided into 16 user groups."
+
+On a single-user system, then, they can be used rather like
+directories. They're numbered from 0 to 15, with 0 the default user.
+You can use the `user n' command to switch to user n. Drive/user
+specifications are far from standard, and different forms are used by
+different programs, among them (for, say, drive B: user 4) 4/B:, 4B:,
+and B4:. Zselx uses the last one, as that seems to be the most
+popular.
+
+
+* Using zselx
+
+Running zselx gives you a list of files in a given drive/user.
+(Normally the current drive/user - see `Command-Line Options' below
+for how to use another drive/user.) You can then choose files to
+copy/move/delete/view, etc. The keys are:
+
+[Below, ^x means control-x. Many operations can be obtained with more
+than one key, and each key is listed. Where I say `the files', I'm
+referring to the tagged (selected) files. If none are tagged, the
+currently-pointed-to file is used. I also list keys used in the Unix
+version which aren't supported in this CP/M version.]
+
+Esc x q		quit
+h k ^p ^e	move cursor up
+l j ^n ^x	move cursor down
+0 <		go to top of file list
+$ G >		go to end of file list
+^b ^u ^r	move cursor back a page
+^f ^v ^c	move cursor forward a page
+c 1		copy the files to a given drive/user
+d 2		delete the files, prompting for confirmation
+m 3		move the files to a given drive/user
+a 4		untag all files
+v		view the files (press Esc/q/x to exit file view)
+f		not supported (edit the files)
+o 6		not supported (run a given command on the files)
+n 7		sort file list by name
+e 8		sort file list by extension
+s 9		sort file list by size
+t		not supported (sort file list by `time' (date))
++ =		tag file at cursor
+-		untag file at cursor
+Space		toggle tagged status of file at cursor
+~		not supported (tag files ending in `~')
+
+In short, it supports both vi and Emacs keys (and the wordstar-style
+^E and ^X), and if you have cursor keys, they'll probably work (unless
+you're using a VT100, I'm afraid).
+
+When specifying drive/user to copy/move to, you can use any of the
+forms a:, 0:, or a0:. If you don't give a drive/user, i.e. you just
+press return, then no copy/move is performed.
+
+Some notes on the way the copy, move, etc. commands work:
+
+- copy/move test for copying to the same drive/user, and don't
+copy/move if this is the case.
+
+- move works by copying then deleting, even if you're only moving a
+file from one user to another on the same drive. This means that, if
+you're moving a file between users on the same drive, you temporarily
+need enough room for two copies of any file you want to move. There's
+no such problem when moving between different drives.
+
+[Note to hackers: Why do I implement file move this way when it would
+be quicker to just change the user number in the disk's directory?
+Well, because it's more portable. CP/M emulators translating native
+directories on the fly (like Michael Bischoff's excellent `cpm'
+emulator for Linux) can't possibly handle this kind of thing. Also,
+ZCN doesn't have much of a BIOS, so it wouldn't have worked on that.]
+
+- view is designed only for text files. It strips the high bit (for
+wordstar files), then displays control codes in ^x form, so don't
+count on the control codes necessarily meaning anything in binary
+files. A more serious problem with using it to display binary files is
+that it treats ^Z as EOF; so, as I say, it only really works for text
+files.
+
+
+* Command-Line Options
+
+In Unix terms, the synopsis (usage) is `zselx [termtype] [du:]'.
+
+If `du:' is specified, it must be a drive/user spec. to use instead of
+the current drive/user.
+
+Currently, on some CP/M-like systems, you may not be able to use the
+`u:'-type form for the `du:' arg (i.e. just the user number) unless
+you explicitly specify `termtype'. If you run into this problem, just
+specify the drive too, using the `du:' form.
+
+If `termtype' is specified, it must be a single digit corresponding to
+a terminal type.
+
+To explain this `terminal type' stuff: It's traditional for
+full-screen CP/M programs to either include a configuration program,
+or (more usually) document patches which need to be made to support
+different terminals. Zselx does have a patch area (100h-17fh), but
+also has built-in support for a few terminals. These are:
+
+Type	Terminal
+0	as defined in patch area
+1	VT100
+2	VT52 (PCW, +3, etc.) - this is the default
+3	ZCN (this is auto-detected)
+4	VC404
+
+The idea behind being able to specify terminal type when you run zselx
+is that it's more convenient if you sometimes use your machine via a
+terminal or terminal emulator. With most programs you have to devise
+some method of patching them when you want to use something other than
+the default configuration. With zselx, if (for example) I'm using my
+ZCN box via kermit on my Linux box - not uncommon - then it's just a
+matter of using `zselx 1'.
+
+See the source (zselx.z) for details of the patch area.
+
+
+* Bugs
+
+The screen-redrawing code is pretty much pessimal. :-( In particular,
+scrolling is done `by hand', rather than using any insert/delete line
+capability the terminal might have. This can really hurt on a slow
+serial link.
+
+Doesn't yet support `co' option 5, `mark blank'.
+
+
+* Acknowledgements
+
+The original `co' utility.
+
+Hawkwind's "Warrior on the Edge of Time" and "Hall of the Mountain
+Grill" albums. I listened to them constantly while hacking up zselx.
+Well, one at a time of course, so not *really* constantly, but... :-)
+
+
+* Contacting the Author
+
+You can email me at russell.marks@ntlworld.com.

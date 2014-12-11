@@ -1,0 +1,15 @@
+NAME
+	vinst - vde configuration program
+
+SYNOPSIS
+	vinst vde.com
+
+DESCRIPTION
+	VINST lets you configure many aspects of VDE, such as the
+	terminal type, and many default settings.
+
+	VINST is quite verbose and has online help of sorts, and
+	should be self-explanatory.
+
+SEE ALSO
+	vde

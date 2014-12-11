@@ -1,0 +1,17 @@
+NAME
+	defrag - defragment free space on drive
+
+SYNOPSIS
+	defrag [-q] d:
+
+DESCRIPTION
+	Defragments free space on the specified drive. This does not
+	speed up drive operation (use `optdir' for that), but does
+	mean that `sys' and `bigrun' are then sure to work (if there's
+	sufficient disk space available).
+
+OPTIONS
+	-q	disable the `running commentary'
+
+SEE ALSO
+	optdir

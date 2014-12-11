@@ -1,0 +1,5 @@
+;dclock - small clock program
+
+fullclock	equ 0
+
+include common.z

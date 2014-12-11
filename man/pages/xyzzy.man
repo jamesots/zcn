@@ -1,0 +1,8 @@
+NAME
+	xyzzy - you are in a little maze of twisty passages, all different
+
+SYNOPSIS
+	xyzzy
+
+DESCRIPTION
+	I see no description here.

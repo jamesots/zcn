@@ -1,0 +1,74 @@
+NAME
+	pmarc - efficient file compressor/archiver
+
+SYNOPSIS
+	pmarc archive[=old_arc][/d:] filespec[=entname][/bdhmnt] [filespec ...]
+
+DESCRIPTION
+	Pmarc is an lha-style compressor/archiver, which manages
+	compression rates close to those available on more powerful
+	machines, e.g. zip/gzip's `deflate' algorithm. (Though to be
+	fair, it can't usually compete with bzip2.)
+
+	The PMA files it creates can (as far as I know) only be
+	extracted with `pmext' and associated programs, though ZCN's
+	`support' dir includes C source for a simple extractor which
+	works when the `/n' (no compression) option is used.
+
+OPTIONS
+	archive		name of the archive file to create. If no
+			extension is specified, `.pma' is assumed.
+
+	old_arc		name of an existing archive file to copy into
+			the new one, before any files are added.
+
+	/d:		specify a drive for temporary files (default
+			is the current drive).
+
+	filespec	a file or files to add to the archive.
+
+	entname		lets you store a file with a different name in
+			the archive to its real filename.
+
+	/b		specify that a file to be added is binary
+			(binary is the default, except for files with
+			extensions `.doc' and `.txt').
+
+	/d		delete specified file(s) from archive.
+
+	/h		high-speed mode; this compresses much less
+			effectively.
+
+	/m		add a one-line `memo' for the file. You're
+			prompted after the file is compressed. The
+			memo is displayed by `pmext', but it seems to
+			only do it when listing files in an archive.
+
+	/n		no compression.
+
+	/t		specify that a file to be added is text (see
+			note for `/b' option above).
+
+EXAMPLES
+	pmarc foo bar
+		makes an archive `foo.pma' containing the file `bar'.
+
+	pmarc b:baz.pma *.*
+		makes an archive `baz.pma' containing all files in
+		current drive/user.
+
+	pmarc new=old *.txt autoexec.sub time*.man chapter?.doc
+		makes a great example. :-) And also illustrates how
+		you can add an old archive to a new one, and specify
+		as many files/wildcards to add as you want.
+
+FILES
+	pmatemp*.$$$ - temporary files used by pmarc. Usually you
+		won't see these, but in some circumstances they can be
+		left hanging around.
+
+AUTHOR
+	Yoshihiko Mino
+
+SEE ALSO
+	pmext

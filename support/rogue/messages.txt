@@ -1,0 +1,101 @@
+* What rogue's messages mean		-*- outline -*-
+
+Some people might think of this as a bit of a spoiler, so if you don't
+want to know what messages like "You feel a strange pull downwards"
+mean, you'd better stop reading now.
+
+
+Being a bit of a hardened Nethack player :-), the messages in rogue
+weren't all that familiar to me. I mean, from Nethack I knew that
+armour glowing blue added to the armour's effectiveness (so I call
+that '+ve armr'), but what's this stuff about feeling warm all over?
+And what does fruit juice do?
+
+After a while I decided to look at any Rogue source I could find to
+see what the messages meant. My conclusions here are based on
+experience in CP/M Rogue itself, combined with what an old Rogue 5.3
+clone does for certain messages.
+
+
+Anyway, here goes:
+
+
+"You feel ill for a moment, then it passes"
+It could be "slow digestion" or "hiccups".
+
+"This is great: it makes you feel warm all over"
+Sustain strength.
+
+"This tastes very dull"
+Aggravate monster...?
+
+"You suddenly feel more skillful"
+Dexterity...?
+
+"You feel yourself moving faster"
+Haste.
+
+"You feel a strange pull downwards"
+Tricky to say for sure, but I think this is what you get from a scroll
+of detect gold when there's no gold on the level.
+
+"Your hands start glowing green"
+Confuse monster. The next monster you hit will be confused by your
+hit. Then you get "Your hands stop glowing green". [1996 update - hmm,
+I think I may have green/red the wrong way around. Surely *red* is
+confuse...?]
+
+"Your hands start glowing red"
+Extra damage. The next monster you hit will be damaged more by your
+hit than normal. Then you get "Your hands stop glowing red".
+
+"You feel the presence of gold"
+Detect gold.
+
+"You feel the presence of monsters"
+Detect monsters.
+
+"You feel the presence of magic"
+Detect magic.
+
+"You hear a high-pitched humming noise"
+Detect magic, when there's nothing appropriate on the level.
+
+"Oh, now this scroll has a map on it"
+Magic mapping.
+
+"You feel as if someone is watching over you"
+Scroll of remove curse. This removes curses from *everything* you're
+carrying.
+
+"You feel a strange sense of loss"
+I think you get this if you zap (on yourself) a wand which is intended
+to be used on monsters, with the `p' command.
+
+"Your weapon glows blue for a moment"
+Adds one to the weapon's enchantment.
+
+"Your armour glows blue for a moment"
+Adds one to the armour's enchantment.
+
+"The corridor glows for a moment"
+This happens if you read a scroll of light in a corridor. Corridors
+are always lit, so it has no real effect.
+
+"Hey - what's going on around here, who? what? huh?"
+Confusion. The effects (unpredictable movement, etc.) only last a few
+moves.
+
+"You feel a wrenching sensation in your gut"
+You've got the Amulet and have just gone back up a set of stairs. It
+doesn't seem to mean anything much aside from that.
+
+"My, that tasted good!" and "Yuk, that was awful!"
+The first fends off hunger for up to 20% (I think) longer than the
+second. It seems to be random which you get.
+
+"Hit return to set R.N.G."
+This mysterious message appears in the executable, but I've never seen
+it in the game. It may be for debugging if "R.N.G." stands for random
+number generator, the idea being that you could produce the same
+'random' numbers each time.

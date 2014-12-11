@@ -1,0 +1,60 @@
+NAME
+	cal - display a calendar
+
+SYNOPSIS
+	cal [-h] [-o output_file] [month] [year]
+
+DESCRIPTION
+	Cal shows a simple calendar.
+
+	If no month/year is specified, then the current month (and a
+	month either side) are shown. This requires the RTC's date to
+	have been set previously, with `timeset' say. (You can check
+	if it's set or not by using `time'.)
+
+	If only a month is specified, that month of the current year
+	is shown (again, with a month either side). This also requires
+	the RTC date to have been set.
+
+	If either of the above two options were used and the RTC
+	wasn't set, cal gives usage help. The same happens when
+	running on a generic CP/M box rather than on ZCN. There are
+	two other options, which do not require help from the RTC:
+
+	If only a year is specified, a full calendar for that year is
+	given. (This is too big to display on a single screen, so
+	either be prepared to pause the output with ctrl+symbol, or
+	write the output to a file with `-o' instead.)
+
+	If both a month and year are specified, that month is shown
+	(with a month either side).
+
+OPTIONS
+	-h		give terse usage help.
+
+	-o		output the calendar to `output_file' rather
+			than to the screen.
+
+	Any specified month/year must be numbers in the range 1..12
+	and 1..9999 respectively. The year must be given in full -
+	e.g. 1990 rather than just 90. If the year is greater than 12,
+	you can optionally use the syntax `cal year month' rather than
+	the more usual `cal month year'.
+
+BUGS
+	There is no way to display a full calendar for the years 1 to
+	12. (This is a fault with this Z80 port, not the original
+	program.)
+
+	Cal assumes the switch from Julian to Gregorian calendars
+	happened in September 1752 (hence the strange calendar for
+	that month), which makes things a lot easier but is only
+	correct for certain countries. (For example, it's wrong by
+	over 150 years for Russia and China.)
+
+AUTHOR
+	Martin Minow wrote the original C version.
+	The Z80 m/c port was by Russell Marks.
+
+SEE ALSO
+	timeset

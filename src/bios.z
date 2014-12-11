@@ -1,0 +1,147 @@
+;ZCN v0.3 - a CP/M clone for the Amstrad NC100 Notepad.
+;Copyright (C) 1994,1995 Russell Marks. See 'zcn.txt' for license details.
+
+;bios routines
+;I don't think it's worth doing the disk functions.
+;Besides which, I'm not sure I really *can*. :-(
+
+
+;disk parameter block.
+;a 256k drive acts like a 8 sector/trk, 256-track disk with
+;128-byte sectors and 1k blocks. Smaller drives simply have less
+;tracks. As you may have guessed, this arrangement ensures that
+;each track is 1k (one block) long, and so we can fit ZCN logical
+;drives with a number of reserved blocks onto the CP/M model.
+
+;parts with '(chng)' are changed when seldisk is called.
+
+;dpb:
+;dpbspt: defw 8		;SPT - records per track
+;dpbbsh: defb 3		;BSH - block shift
+;dpbblm: defb 7		;BLM - block mask
+;dpbexm: defb 0		;EXM - extent mask
+;dpbdsm: defw 256	;DSM - size of drive in blocks (K) minus 1 (chng)
+;dpbdrm: defw 63		;DRM - num. of dir. entries minus 1 (chng)
+;dpbal0: defb 0c0h	;AL[01] - directory block bitmap (chng)
+;dpbal1: defb 0
+;dpbcks: defw 0		;CKS
+;dpboff: defw 0		;OFF - num. reserved tracks (blocks) (chng)
+
+;NOTE! cardbuf isn't always set to the last stuff to be used
+;for dir. ops, if some program uses it and writes, it could be nasty!
+;csv's not used, and only one alv used
+;dphbase:
+;defw 0,0,0,0,cardbuf,dpb,0,alv0
+;defw 0,0,0,0,cardbuf,dpb,0,alv0
+;defw 0,0,0,0,cardbuf,dpb,0,alv0
+;defw 0,0,0,0,cardbuf,dpb,0,alv0
+
+;256/8=32 bytes
+;updated on drive select...?
+;alv0:
+;defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+
+
+;*** bios stuff ***
+
+;`wboot' moved to init.z
+
+;setup to use internal stack and restore old one on ret.
+;called by all bios routines, except trivial ones.
+;BTW, trivial = uses no extra stack. :-)
+bisetup:
+ei
+pop hl
+ld (bstksav),sp
+ld sp,intstack	;use internal stack
+ld de,bexitstk	;push addr of stack-restore routine for 'ret'
+push de
+call chksdmp
+jp (hl)		;return to calling BIOS routine
+
+biconin:
+call bisetup
+biclp:
+call bdgetkey
+jr nc,biclp
+ret
+
+biconout:
+call bisetup
+ld e,c
+jp bconout
+
+bicnstat:
+call bisetup
+jp bconstat
+
+
+bilstout:
+call bisetup
+ld e,c
+jp blstout
+
+
+biauxout:
+call bisetup
+ld e,c
+jp bauxout
+
+biauxin:
+call bisetup
+jp bauxin
+
+
+;none of the rest done - give an error if called
+bihome:
+biseldsk:
+bisettrk:
+bisetsec:
+bisetdma:
+biread:
+biwrite:
+bilistst:
+bisectrn:
+call ilprint
+defb 'BIO',_caps+_s_,'err',_or,0
+rst 0
+
+;;disk position
+;track:	defw 0
+;sector: defb 0
+;
+;
+;bihome:
+;xor a
+;ld (sector),a
+;ld hl,0
+;ld (track),hl
+;ret
+;
+;biseldsk:
+;ld hl,0
+;cp 4
+;ret nc
+;ld a,c
+;ld (curdrive),a
+;ld hl,dphbase
+;ret
+
+;bisettrk:
+;ld (track),bc
+;ret
+
+;bisetsec:
+;ld a,c
+;ld (sector),a
+;ret
+
+;bisetdma:
+;ld (dmapos),bc
+;ret
+
+;bisectrn:
+;;no translation
+;ld h,b
+;ld l,c
+;ret

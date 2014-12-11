@@ -1,0 +1,196 @@
+;a simple 'du' clone
+;simple because there's no subdirs under CP/M :-)
+
+org 0100h
+
+jp start
+
+bdos equ 5
+
+bsfirst         equ 17
+bsnext          equ 18
+bfilesiz        equ 35
+
+;vars
+total: defw 0
+
+;messages
+mnofiles: defb 'No files match$'
+
+
+bdprint:
+ld c,9
+jp bdos
+
+
+start:
+;it's ZCN specific, so...
+ld a,(066h)
+cp 0f7h
+ret nz
+
+ld a,(05dh)
+cp 32
+jr nz,skip1
+
+;look for all in current drv/user then
+ld a,'*'
+ld (05ch+1),a
+ld (05ch+9),a
+
+skip1:
+ld hl,0
+ld (total),hl
+
+ld de,05ch
+ld c,bsfirst
+call bdos
+and a
+ld de,mnofiles
+jp nz,bdprint
+
+loop:
+;get size
+ld de,080h
+ld c,bfilesiz
+call bdos
+
+ld hl,(080h+33)
+ld de,7
+add hl,de
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ld de,(total)
+add hl,de
+ld (total),hl
+
+ld de,05ch
+ld c,bsnext
+call bdos
+and a
+jr z,loop
+
+ld de,(total)
+call dispdec
+
+ld e,'k'
+ld c,2
+call bdos
+ret
+
+
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+push ix
+ld ix,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+add ix,ix
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+sbc hl,de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+;we effectively need to do 'or ix,1'.
+
+ld a,1
+defb 0ddh
+or l		;or ixl
+defb 0ddh
+ld l,a		;ld ixl,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+push ix
+pop hl
+pop ix
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp: defb '0000000000000000$'
+
+;display number in de in decimal
+dispdec:
+ld b,10
+;FALLS THROUGH
+
+;display number in de, in given base (unsigned)
+;entry: de=number to display, b=base (from 2 to 36)
+;exit: af/bc/de/hl corrupt
+dispnum:
+ld hl,numtmp+16
+ld a,'$'
+ld (hl),a
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+jp bdprint

@@ -1,0 +1,11 @@
+NAME
+	df - show free disk space
+
+SYNOPSIS
+	df
+
+DESCRIPTION
+	Report how much space is free on all available drives.
+
+SEE ALSO
+	du

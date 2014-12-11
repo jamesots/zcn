@@ -1,0 +1,197 @@
+;4-bit 8kHz sample player
+;(well, 4-bit via pcm on 1-bit hardware)
+;pressing the on/off switch while playing aborts
+;XXX it plays at slightly under 8kHz
+;XXX the t-state stuff must be *very* wrong, 'cos I had to
+; trial-and-error it into existence... :-(
+
+org 0100h
+
+jp start
+
+musage:		defb 'usage: play4b [filename.4b]$'
+mnofile:	defb 'No file$'
+
+samlen:	defw 0
+
+bdos	 equ 5
+userfcb1 equ 05ch
+userfcb2 equ 06ch
+bconout	 equ 2
+bdprint	 equ 9
+bfopen	 equ 15
+bfread	 equ 20
+bsetdma	 equ 26
+
+
+start:
+ld a,(066h)
+cp 0f7h
+ret nz
+
+ld sp,0100h	;just somewhere to keep it out of the way
+
+ld a,(userfcb1+1)
+cp 32
+jr z,usage
+
+call loadfile
+
+;hl now points to after end of sample
+ld de,samaddr
+and a
+sbc hl,de
+ld (samlen),hl
+
+jp playsam
+
+
+usage:
+ld de,musage
+ld c,bdprint
+call bdos
+jp 0
+
+
+loadfile:
+ld de,userfcb1
+ld c,bfopen
+call bdos
+inc a
+jr nz,lf1
+ld de,mnofile
+ld c,bdprint
+call bdos
+jp 0
+
+lf1:
+ld hl,samaddr
+
+iflp:
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,userfcb1
+ld c,bfread
+call bdos
+pop hl
+and a
+ret nz
+ld de,128
+add hl,de
+jr iflp
+
+
+exit:
+;turn off sound
+ld a,080h
+out (051h),a
+out (053h),a
+
+ei
+jp 0
+
+
+;disp msg at de and exit
+die:
+ld c,9
+call 5
+jp 0
+
+
+
+;play the loaded sample
+playsam:
+;put zero in low byte (which doesn't change)
+xor a
+out (050h),a
+out (052h),a
+
+;some dodgy timing ahead, so ints off...
+di
+
+;hack in nmi button as abort
+ld a,0c3h
+ld (066h),a
+ld hl,exit
+ld (067h),hl
+
+ld hl,samaddr
+ld bc,(samlen)
+
+loop:
+;this does one byte (8 samples) per loop
+
+;each sample must take 750 t-states
+;out (051h),a effectively takes approx 176 t-states (!)
+
+ld a,(hl)
+and 0f0h
+rrca
+rrca
+rrca
+rrca
+call pcma
+
+ld a,(hl)
+and 0fh
+nop
+nop
+nop
+nop
+call pcma
+
+inc hl		;10 (guessing)
+dec bc		;10
+ld a,b		;4
+or c		;7
+jp nz,loop	;10, total 41, to make a grand total of 750
+
+
+;all done
+
+jp exit
+
+
+
+;pcm a 4-bit sample through the speaker.
+;entry: sample in a
+pcma:
+;we play 17; even 0 and 15 do both on and off, for simplicity's sake.
+ld e,a
+
+ld d,a
+inc d
+xor a
+out (051h),a
+out (053h),a
+;do the 'on'
+pcmlp1:
+nop
+nop
+nop
+dec d
+jp nz,pcmlp1
+
+ld a,16
+sub e
+ld d,a
+ld a,080h
+out (051h),a
+out (053h),a
+;do the 'off' for half as long
+;(which may compensate a bit for the long delay between pcma calls)
+pcmlp2:
+nop
+nop
+nop
+dec d
+jp nz,pcmlp2
+
+ret
+
+
+
+;sample is loaded here; must be last thing in program.
+samaddr:

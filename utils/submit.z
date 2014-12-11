@@ -1,0 +1,425 @@
+;submit
+
+;puts args into sub file and writes result to $$$.SUB.
+;then does warm boot, so ZCN runs the new file (and then deletes it).
+
+org 0100h
+
+jp start
+
+bdos		equ 5
+userfcb1	equ 05ch
+userfcb2	equ 06ch
+fcbrand		equ 33
+
+bfopen		equ 15
+bfclose		equ 16
+bfread		equ 20
+bfwrite		equ 21
+bfmake		equ 22
+bretdsk		equ 25
+bsetdma		equ 26
+bsetuser	equ 32
+brread		equ 33
+
+argbuf		equ 01000h	;arg1 here, arg2 at argbuf+256, etc.
+				;(also can use argbuf-256 temporarily)
+outbuf		equ 02000h	;file to be written
+outptr:		defw outbuf
+subtail		equ 0e880h	;old .SUB tail (in ZCN)
+abstart:	defw argbuf-256	;place to start parsing args
+
+strlast:	defb 0		;1 if '$' was the last char
+
+mnotzcn:	defb 'Needs ZCN.$'
+mnofile:	defb 'No file$'
+mopenerr:	defb 'Error opening input file$'
+mopenstr:	defb 'Error opening output file$'
+;margmist:	defb 'Missing argument$'	;this has been diked out
+mnolines:	defb 'EOF before end of first line$'
+mtoobig:
+	defb '"And what will you do when you grow up to be as big as me?" '
+	defb 'asked the father of his little son.',13,10
+	defb '  "Diet."$'
+
+curuser: defb 0		;`current' user, the one $$$.SUB is written to
+
+outfcb:
+defb 0,'$$$     SUB',0,0,0,0
+defw 0,0,0,0, 0,0,0,0
+defb 0
+
+die:
+ld c,9
+call bdos
+jp 0
+
+start:
+;first, refuse to run unless on ZCN
+ld a,(066h)
+cp 0f7h
+ld de,mnotzcn
+jr nz,die
+
+;check they gave a filename
+ld a,(userfcb1+1)
+cp 32
+ld de,mnofile
+jr z,die
+
+;get user num
+ld e,0ffh
+ld c,bsetuser
+call bdos
+ld (curuser),a
+
+;force extension of filename to be SUB, in the FCB at least
+ld hl,outfcb+9
+ld de,userfcb1+9
+ld bc,3
+ldir
+
+;see if we're running from first line of a .SUB file
+ld a,(userfcb2+1)
+cp '?'			;it will have been expanded to `????????'
+jp z,altopen		;use ZCN's com/sub file open
+			;(returns via jump to `opendone' below)
+
+;open the file
+ld de,userfcb1
+ld c,bfopen
+call bdos
+inc a
+ld de,mopenerr
+jr z,die
+
+opendone:
+;parse (and copy) args
+;first, zero out each arg position
+ld hl,argbuf
+ld de,argbuf+1
+ld bc,10*256
+ld (hl),0
+ldir
+
+ld hl,080h
+ld a,(hl)	;size of cmdtail
+and a
+jr z,readst	;skip if no cmdtail
+inc l
+ld de,(abstart)	;make sure we 'lose' the filename if necessary
+ld b,a
+parglp:
+;find next non-space
+ld a,(hl)
+cp 32
+jr nz,pargns
+inc l
+djnz parglp
+jr readst
+
+pargns:
+;copy all up to next space (or end of cmdtail) to next arg
+ld a,(hl)
+cp 32
+jr z,pargs
+ld (de),a
+inc l
+inc e
+djnz pargns
+jr readst
+
+pargs:
+ld e,0
+inc d
+bit 5,d
+jr z,parglp
+;otherwise give up and *fall through* to readst
+
+
+;start reading the file
+readst:
+ld hl,0
+ld (userfcb1+fcbrand),hl
+
+ld a,(userfcb2+1)
+cp '?'
+push af
+
+call readsubr	;start input buffer
+ld hl,080h
+ld de,outbuf
+
+pop af
+jr nz,getsublp	;if not in self-running .SUB mode, *don't* skip first line
+
+;skip the first line
+skip1lp:
+ld a,h
+and a
+call nz,newsubrd	;read more if needed
+
+ld a,(hl)
+inc hl
+and 07fh
+cp 26		;^Z
+jp z,nolines
+cp 10		;LF
+jr nz,skip1lp
+
+
+;now for the rest of the file, substitute the $n thingies
+getsublp:
+ld a,h
+and a
+call nz,newsubrd	;read more if needed
+
+ld a,(strlast)
+and a
+ld a,(hl)
+inc hl		;doesn't affect flags
+jr nz,strgrok
+and 07fh	;strip high bit (for wordstar-style files)
+cp 26		;is it ^Z?
+jp z,writefil	;last line if so
+cp '$'		;look for an arg request
+jr nz,gsl1
+
+ld a,1
+ld (strlast),a
+jr getsublp
+
+;work out what to do with the char after the 1st '$', which is in A
+strgrok:
+cp '$'		;'$$', just a literal '$', jp to gsl1
+jr z,gsl1
+
+cp 26		;^Z
+jp z,writefil
+
+sub '1'
+jr c,gsl2	;less than '$1', ignore it
+;A now in the range 0...8 if valid
+cp 9
+jr nc,gsl2	;greater than '$9', ignore it
+
+;get arg addr
+push hl
+ld hl,argbuf
+add a,h
+ld h,a
+;if the byte at (hl) is 0, no arg was given, so die with error
+ld a,(hl)
+and a
+jr z,argmissd
+;dump asciiz at hl to output
+putarglp:
+call outchar
+inc hl
+ld a,(hl)
+and a
+jr nz,putarglp
+pop hl
+jr gsl2
+
+gsl1:
+call outchar	;put char into output buf
+gsl2:
+xor a
+ld (strlast),a
+jr getsublp
+
+argmissd:
+;this used to be:
+;;replace with 'ld a,32 / jp putarglp' to avoid missing arg err
+;ld de,margmist
+;jp die
+
+;I decided to drop the 'missing arg' business as it's just a pain
+;in the butt. CP/M compatibility can go whistle. ;-)
+ld a,32
+jr putarglp
+
+
+;finished translating input; now write the output file
+writefil:
+ld (outptr),de
+ld h,d
+ld l,e
+inc de
+ld bc,128
+ld (hl),26	;plenty of ^Z's
+ldir
+;now you know what they mean by BFI ;-)
+
+;switch back to original user, the one we want $$$.SUB in.
+ld a,(curuser)
+ld e,a
+ld c,bsetuser
+call bdos
+
+;create $$$.SUB
+ld de,outfcb
+ld c,bfmake
+call bdos
+inc a
+ld de,mopenstr
+jp z,die
+
+;do this: for(ptr=outbuf;ptr<outptr;ptr++) write(*ptr);
+ld de,outbuf
+
+writelp:
+push de
+ld c,bsetdma
+call bdos
+
+ld de,outfcb
+ld c,bfwrite
+call bdos
+pop de
+ld hl,128
+add hl,de
+push hl
+ld de,(outptr)
+and a
+sbc hl,de
+pop de
+;if current_pos<outptr, continue (yes, < not <=)
+jr c,writelp
+
+;not really needed, but...
+ld de,outfcb
+ld c,bfclose
+call bdos
+
+;now, finally (!), exit and let ZCN run $$$.SUB
+jp 0		
+
+
+
+nolines:
+ld de,mnolines
+jp die
+
+
+;stuff for .sub reading
+readsubr:
+ld de,userfcb1
+ld c,brread
+call bdos
+and a
+ret z		;ret if read ok
+
+;if not, end of file
+jp writefil
+
+newsubrd:
+push bc
+push de
+ld hl,(userfcb1+fcbrand)
+inc hl
+ld (userfcb1+fcbrand),hl
+call readsubr
+ld hl,080h
+pop de
+pop bc
+ret
+
+
+;add char to output
+outchar:
+ld (de),a
+inc de
+bit 7,d
+ret z
+ld de,mtoobig
+jp die		;abort if SUB file too big (more than about 28k)
+
+
+
+;the file open used if submit was run with `*'.
+altopen:
+;first we do the other things required for the `*' approach:
+;copy old cmdline
+ld hl,subtail
+ld de,080h
+ld bc,128
+ldir
+;start parsing args from arg1, i.e. at argbuf
+ld hl,argbuf
+ld (abstart),hl
+
+;now open the file
+call opencom
+and a
+jp z,die
+
+;if we could open it ok, then the right user num. is selected
+;and the FCB was modified as needed, so it's all done.
+;we don't ret, instead jumping to after normal open code.
+jp opendone
+
+
+;This is based on the code ZCN uses to open a sub file. returns with
+;a=0 if couldn't open, a!=0 otherwise
+opencom:
+;try in current user
+ld de,userfcb1
+ld c,bfopen
+call bdos
+inc a
+ret nz		;ret if ok
+
+;try user 0 (just in case we didn't then)
+;(no need to save current user as it's already in (curuser))
+ld e,0
+ld c,bsetuser
+call bdos
+ld de,userfcb1
+ld c,bfopen
+call bdos
+inc a
+ret nz		;ret if ok
+
+;restore old user in case of error exit
+ld a,(curuser)
+ld e,a
+ld c,bsetuser
+call bdos
+
+;try A: (user 0) if not on A: and no drive specified.
+ld a,(userfcb1)
+ld d,a
+and a
+ld a,0
+ret nz		;ret if a drive was specified
+
+push de
+ld c,bretdsk
+call bdos
+pop de
+and a
+ret z		;ret if we're on A: (hence A0: already tried)
+
+push de
+ld e,0
+ld c,bsetuser
+call bdos
+ld a,1
+ld (userfcb1),a
+;ok, try again on A: user 0
+ld de,userfcb1
+ld c,bfopen
+call bdos
+pop de
+inc a
+ret nz		;ret if ok
+ld a,d
+ld (userfcb1),a	;restore drive/user if not
+ld a,(curuser)
+ld e,a
+ld c,bsetuser
+call bdos
+xor a
+ret

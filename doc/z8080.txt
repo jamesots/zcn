@@ -1,0 +1,135 @@
+* -*- outline -*-
+
+	     z8080 - a Z80 to 8080-compatible Z80 filter.
+
+			  by Russell Marks.
+
+ This program is public domain. You can do anything you want with it.
+
+
+* Description and Rationale
+
+Z8080 is an awk script which converts normal Z80 assembly to Z80
+assembly which assembles to code which will run on an 8080. This code
+will also run on Z80s (of course!), and on 8085s. You might use it to
+produce an fully portable version of an otherwise Z80-specific CP/M
+program.
+
+It's not meant to be a once-only convertor, nor to necessarily produce
+pretty output. The idea behind z8080 is act as a preprocessor for your
+assembler, converting Z80-isms to 8080-friendly code "on the fly", as
+it were.
+
+Also, it's not designed to convert all Z80 programs to run on an 8080.
+It'll give an error if you attempt to use IX, IY, I, R or the
+alternate register set. Equally, not all instructions are converted
+into 8080-ish code. `rld' and `rrd' are unimplemented, for example,
+and the same is true of many block operations. So z8080 is by no means
+a panacea; there are still limits on how much of the Z80's facilities
+you can use. But it makes writing Z80 code which can also be made to
+run on the 8080 a *practical* possibility, rather than just a
+theoretical one. And since you can assemble this 8080 version
+separately from the true Z80 version, there need be no performance
+penalty for things the Z80 does better than the 8080 (and there's a
+lot of those, that's for sure).
+
+
+* Installation and Usage
+
+You can either keep a copy somewhere to explicitly run with `awk -f
+z8080.awk', or you can install it as a script with `install -m 555
+z8080.awk /usr/local/bin/z8080' or similar. Sorry, there's no man page
+(yet).
+
+This assumes you're using a Unix box. If you're not running Unix,
+you'll probably need to run it on a port of gawk or some such, with
+the `awk -f' form. If you can't get a version of awk for your machine,
+I'm afraid you're stuck.
+
+(I know a C port would be more portable (to non-Unix systems) than the
+current awk version. But it was so much *easier* to write this in awk.
+Maybe I'll write a C version at some point, but I don't plan to at the
+moment. Gawk (GNU awk) has been ported to many machines and is free,
+so it may not be so much of a problem anyway.)
+
+Usage is simple - it takes input on stdin, and outputs on stdout.
+That's it. :-)
+
+
+* Bugs and Problems
+
+Parts of z8080 are untested at the time of writing. While I've been
+extremely careful to try and get things right, and spent inordinate
+amounts of time trying to think up the best and most correct way to
+emulate the effects of various instructions, I can't guarantee it'll
+work for all programs. There may well be bugs I haven't noticed.
+
+In particular, you should bear in mind that I don't actually have an
+8080 to test on. I've been very careful to only use opcodes supported
+on the 8080, but it's possible I could have made a mistake.
+
+The instructions I have tested and know to work are:
+
+	adc hl,rr
+	bit/res/set
+	djnz and other relative jumps
+	ld bc,(NN)/ld de,(NN)/ld (NN),bc/ld (NN),de
+	ldir/lddr
+	rl/rlc/rr/rrc
+	sbc hl,rr
+
+These were tested by converting and running a reasonably non-trivial
+program (my CP/M tetris clone, `cpmtris'). I had to remove the use of
+the refresh register in `srand', but with that done the 8080 version
+worked perfectly.
+
+Given that I've also tested `neg', that leaves only sla/sra/srl
+untested.
+
+
+Unless you're using gawk, you should modify the BEGIN action to define
+`errdest' as "/dev/tty". Search for `gawk' in z8080.awk and it should
+be obvious what to do. One way to test if your awk is gawk is to use
+`awk --version'. If it says it's GNU awk, it's gawk. :-)
+
+
+There are also several known bugs and problems:
+
+Resulting code will be slower and use more stack. Also note that even
+innocent looking ops will need stack, e.g. `rl b'!
+
+Many block ops (and counterparts like `ldi') are not done. The only
+ones currently done are `ldir' and `lddr'.
+
+It assumes the input is valid and that a Z80 assembler would accept it
+without errors - at least, without opcode-related errors etc.
+
+Your assembler must support labels at least 8 chars long.
+
+Input must use lowercase mnemonics. If this is a problem, pipe input
+(and possibly output) through a suitable `tr' invocation. To smash
+case on input, that'd be "tr '[A-Z]' '[a-z]'".
+
+Self-modifying code which modifies Z80-specific opcodes which are
+expanded into inline translations by z8080 (i.e. all opcodes not
+natively supported by the 8080) obviously won't work.
+
+No undocumented Z80 codes are supported.
+
+Shift/rotate ops only give correct results for carry, not other flags,
+due to using rla etc. to do the shift. This should be good enough
+though. (The only readable flags not set correctly are Z and P/V.)
+
+Generally, the H and N flags (not readable directly) don't give
+correct results in the emulated instructions. This shouldn't matter to
+anything other than `daa' really.
+
+Do not expect z8080 to produce ROMmable code! Some ops use
+self-modifying code where the stack isn't sufficient or can't be used.
+(`ld sp,(NN)' is the obvious example.) I've kept it to a minimum, but
+it was still needed for `ld sp,(NN)' and the `bit' instructions.
+
+
+* Contacting the Author
+
+You can email me at russell.marks@ntlworld.com.

@@ -1,0 +1,311 @@
+* README for `support' directory	-*- outline -*-
+
+The files in and below this directory are intended to help support
+your use of ZCN. None of the programs were written by me (other than
+crapmext.c), but they are all freely usable and distributable.
+
+I've found all of these programs useful and/or interesting, and if
+possible you should try them all out.
+
+-Rus.
+
+
+* The subdirectories are (in alphabetical order):
+
+** bs
+(Original version now available from
+ftp://ftp.ibiblio.org/pub/Linux/games/strategy/bs-2.2.tar.gz (the
+version I ported was 2.0), though this version is modified to compile
+with Hitech C and run on CP/M, and the executable is patched to run in
+pseudo 80x24 on ZCN)
+
+A port of a curses-based game for Unix (see the `rogue' section for
+details of how it was ported). This one is a version of Battleships
+played on a 10x10 grid, with you playing against the computer. There's
+a reasonable amount of onscreen help, so you should be able to figure
+out how to work it pretty quickly.
+
+
+** chess
+(Originally from something under ftp://oak.oakland.edu/pub/cpmug/ (it
+was no. 41, anyway))
+
+A chess program. I doubt it'll offer much of a challenge to any
+competent player, since even I can sometimes beat it. :-) I hacked it
+to redraw the board before prompting you for a move (unfortunately
+this means you get it if you make an invalid move etc., and the
+computer's move scrolls off the screen soon after it makes the move),
+and also made it take moves in lowercase, though to castle you still
+must use `O-O' and `O-OO' and to propose a draw you must use `DRAW'.
+To quit a game prematurely, use ^C. The original (unhacked) program is
+`chess.org', the hacked one is `chess.com'.
+
+
+** fish
+(Original version available from
+ftp://ftp.ibiblio.org/pub/Linux/games/bsd-games-2.12.tar.gz, though
+this version is modified to compile with Hitech C and run on CP/M)
+
+[from `fishhelp.txt']
+"This is the traditional children's card game "Go Fish".  We each get seven
+cards, and the rest of the deck is kept to be drawn from later.  The
+object of the game is to collect "books", or all of the cards of a single
+value.  For example, getting four 2's would give you a "book of 2's"."
+
+Although I've tried to make this version well-suited to ZCN - not so
+many line breaks, for example - it should work equally well on any
+other Z80-based CP/M box.
+
+
+** mft
+(Originally from ftp://oak.oakland.edu/pub/cpm/filcpy/mft48.lbr)
+
+Lets you copy files from one disk to another on a single-drive system,
+such as the NC100 running ZCN. (ZCN should probably have an internal
+command to do this, but it doesn't at the moment.)
+
+You must have a copy of `mft.com' on the card you want to transfer
+files *from* (actually, this isn't entirely true; see below). If you
+have multiple cards, it might be worth keeping copies of MFT on each
+one unless they're really small. Of course, you could always copy MFT
+to them with MFT, so I suppose it doesn't matter that much. :-)
+
+There is a way to avoid needing a copy of MFT everywhere. On the card
+you have `mft.com' on, do `get 100 mft.com'. Then put in the card you
+want to copy from. After that change drives, user area, etc. as
+necessary, but *don't run any programs* (even some internal commands
+must be avoided; change drive (e.g. `b:') and `dir' are ok to use
+though, and they should be the most you'll need). Then when you're
+ready to do the copying, run MFT as you would normally, but instead of
+starting the command-line with `mft', start it with `!!'. So to copy
+all COM files, you might use `!! *.com'. This will run the copy of MFT
+you loaded into memory earlier, without requiring it to be on the
+current card.
+
+One extra restriction ZCN unfortunately causes is that (with MFT, at
+least) you have to copy from one logical drive to the same logical
+drive on the other card. If, for example, you have a 512k card and a
+256k card and want to transfer something from `drive B:' on the 512k
+card to `drive A:' on the 256k one, you have to copy the files to A:
+on the 512k card first (with `pipe') and copy them from there.
+
+
+** pipe
+(Originally from ftp://oak.oakland.edu/pub/cpm/sysutl/1kutils3.lbr,
+which contains a couple of other little utils too. A more recent
+version of pipe is on oak, but it doesn't add anything much.)
+
+Pipe copies files from one drive/file to another. This is a must as
+there's no internal (or external, for that matter) ZCN command to do
+this. (And the reason for that, of course, is that I use pipe. :-) One
+of my half-written really-ought-to-finish-this-sometime projects is a
+crude clone of Unix's `cp', but I don't know if I'll ever bother
+finishing it off.)
+
+To copy files from card to card, use `mft'.
+
+
+** pmarc
+(Originally from ftp://ftp.demon.co.uk/pub/cpm/pmautoae.com)
+
+An excellent compressor/decompressor. Fast, efficient, and can unpack
+.LZH files (though not create them). The version here is pre-patched
+with ZCN-friendly defaults for paging, etc. pmext.com is the only file
+which has changed - if you'd prefer to use an unaltered version, the
+original version of pmext.com is present as pmext.org.
+
+Given that you'll generally be using small storage devices in ZCN, pmarc
+and pmext are a must. You can execute (small) programs straight from
+archives, view files straight from archives, create self-extracting .COM
+files, and generally do all shades of wonderous things. :-)
+
+Read the files read.me, pmarcext.doc and addendum.doc for info on how
+to use pmarc and pmext.
+
+PMA archives can't (I believe) be extracted on anything other than
+CP/M, though I've written C source for a simple extractor which works
+for archives made with the `/n' (no compression) option, here as
+`crapmext.c'. (I should mention that there's a bug I've found in it -
+while it copes with any size of archive, it doesn't correctly extract
+files in the archive which are larger than 64k.)
+
+
+** rogue
+(Original version from
+ftp://oak.oakland.edu/pub/cpm/games/rogue17.pma, though the executable
+is patched to run in pseudo 80x24 on ZCN)
+
+This is a very good port of BSD rogue, by David Goodenough (the author
+of QTERM). Rogue, in case you don't know, is essentially an AD&D-style
+game where you fight your way through many levels of dungeons,
+upgrading your armour, weapons etc. as you go, to find a magical
+amulet. Anyway, it's not a bad little game. You should certainly read
+the instructions before playing though, as it can take a bit of
+getting used to.
+
+Since rogue insists on an 80x24 screen, it required a fair bit of
+hacking to get running under ZCN. I adapted part of a generic 80x24
+screen emulator for ZCN that I'd been working on (but never finished),
+fairly successfully. You get the top 12 lines squashed up on the
+left-hand side of the screen, and the bottom 12 on the right-hand
+side. It sounds messy and confusing, but it's reasonably fast and
+works quite well... for rogue, at least. :-)
+
+You may have difficulty seeing where you are, to begin with. This is
+because the block cursor is inverting the `@' character that
+represents you, and only about four pixels are still showing! If you
+move about a bit, you should get a better feel for where you are.
+
+There's also a VT100 version which you can run on any CP/M (including
+ZCN if you use a VT100 or a VT100 terminal emulator as a serial
+console), called roguevt.com. You can also patch this version for
+other terminals according to the instructions in qterm.pat if you so
+wish. You shouldn't patch the rogue.com version as that's been
+rather too hacked-up to work on any other terminal any more. :-)
+
+I've included the source to my changes to rogue to make it work under
+ZCN, as roguehak.z.
+
+
+** sokoban
+(Original version from
+ftp://ftp.ibiblio.org/pub/Linux/games/strategy/sokoban-src.tar.gz,
+though this version is modified to compile with Hitech C and run on
+CP/M, and the executable is patched to run in pseudo 80x24 on ZCN)
+
+This is a port of a port of... :-) a reasonable puzzle game where you
+have to push the blocks which look like `[]' into the `..' area with
+your pusher being `**'. You move with h/j/k/l as with rogue. Other
+keys are described in sokoban.hlp (note that the file save/load
+operation has been dropped, sorry; the in-memory save/load still
+works). You can start on a level other than the first by doing
+something like `sokoban 12'. (The levels are numbered 1 to 50.)
+
+This is another game which assumes an 80x24 screen. After compiling a
+modified version of the program (sokzcn.c) with Hitech C, I patched it
+as described in sokzcn.z in much the same way as I did with rogue.
+
+There's one problem; if you press a key too quickly after the previous
+one (this is likely to happen if you hold a key down), then the key is
+ignored and the ordinary terminal driver displays the character you
+pressed, messing up the screen slightly. This is nothing to worry
+about - just do ^R to redraw the screen and try not to get so carried
+away. :-)
+
+Be sure to copy both `sokoban.com' and the level data file,
+`soklevls.dat'.
+
+
+** wade
+(Originally from ftp://oak.oakland.edu/pub/cpm/debug/wade.lbr)
+
+Wade is a Z80 debugger, supporting disassembly, breakpoints, tracing,
+generally all you'd expect. Wade is also quite handy for patching
+programs. I've removed the WordStar format version of the documentation
+(the ASCII version remains), and removed all but the CP/M 2.2 version,
+which is what you should use under ZCN.
+
+
+** z8e
+(Originally from ftp://oak.oakland.edu/pub/cpm/z8edebug/z8e35.ark)
+
+Z8E is another Z80 debugger. I personally don't like it as much as
+wade, but it does have a very nice `animated single-step' feature (the
+`j' command) - that alone probably makes it worth a look. The
+`z8e.com' here (in the `z8e' dir) is patched to run more reasonably on
+ZCN - notes are in the readme there. `z8eorig.com' is the original
+unpatched version. `z8e.man' is the manual, which has been slightly
+modified to make it a flat ascii file.
+
+
+* The files are:
+
+** lar.c and lar.com
+
+A public domain .LBR archive packer/unpacker/etc. in C for Unix. It's
+slightly modified to compile under Hitech C if `CPM' is defined. The
+resulting lar.com runs ok under ZCN, but of course there's no globbing
+so wildcards are a problem. It's fine for listing and extracting .LBR
+files though, and since pmarc/pmext are much better this is all you
+should be doing with them anyway. ;-) Do `lar t foo.lbr' to find out
+what's in a .LBR, `lar e foo.lbr' to extract all the files in it, and
+plain `lar' for usage help.
+
+Note that often files in .LBRs will be compressed - you can spot these
+easily as they have either a Q, a Z or a Y in the second letter of the
+extension, e.g. `pipe17.dzc'. A tool which can uncompress the Z and Y
+types is `ucrlzh', available as
+ftp://oak.oakland.edu/pub/cpm/squsq/crlzh20.lbr. (Not included here as
+it's rather large.) One for handling the older Q type is usq120.com in
+the same directory. (Not included here as I couldn't be bothered. :-))
+
+There are also C programs to handle the Q and Z types in
+ftp://src.doc.ic.ac.uk/unix/unix-c/cpm/ - look in particular for xusq
+(for the Q type) and uncr (for the Z type). That's also where I
+originally got `lar' from. The modified source to `lar' provided here
+should also compile and run on Unix and DOS systems, though I haven't
+tried it on DOS.
+
+
+** nciospec.doc and nciohw.txt
+(Originally from ftp://ftp.nvg.ntnu.no/pub/cpc/nc100/nciospec.doc, as
+sent to me by Cliff Lawson.)
+
+nciohw.txt is an abridged version of Amstrad's nciospec.doc containing
+only I/O spec; omits the ROM software description. Intended for ZCN
+hackers to keep on their NC100s in case of emergency. :-) (The full
+version is also included here.)
+
+
+** qterm.com and qterm.uue
+(Originally from ftp://oak.oakland.edu/pub/cpm/qterm/qterm43e.lbr, and
+patched to v4.3f with qt43efx2.ark in the same directory)
+
+A pre-patched copy of QTERM v4.3f. `qterm.uue' is a uuencoded copy,
+for sending to your NC100 after booting for the first time, as
+described in `zcn.txt'. `qt-zcn.z' is the ZCN patch file.
+
+The `qterm' directory contains an unmodified copy of the contents of
+qterm43e.lbr.
+
+
+** vde.com
+(Originally from ftp://oak.oakland.edu/pub/cpm/vdoedit/vde266.lbr, and
+the bugfix mentioned in `vde266fx.dzc' in the same dir has been
+applied)
+
+vde.com is a pre-patched version of VDE, one of the best text editors
+for CP/M. Some of the options have also been set (using VINST) to
+behave a little less strangely. :-) Some are to suit it better to ZCN,
+such as not leaving .BAK files since ZCN's drives are small (the VDE
+docs suggest turning it off in such a case); but some others are
+merely my personal preference, e.g. not showing hard CRs with `<' by
+default.
+
+The `vde' directory contains an mostly-unmodified copy of the contents
+of vde266.lbr; that is, it's unmodified apart from the application of
+the bugfix mentioned above.
+
+Note that because of the way ZCN needs to work to allow use of the
+power on/off switch, the detection of file extensions is unreliable,
+so I've not defined any in vde.com. If you want to use another mode -
+the default is mode `A', auto-wrap - you can specify it on the command
+line, e.g. `vde foo.asm n'. You could set up a SUB file to do this -
+see `zcn.txt' for more on SUB files.
+
+If you're unfamiliar with WordStar keys, try ^K H after running it for
+on-line help, then press space to dismiss the help, or one of ^K, ^Q
+or ^O for help on the two-key-long commands which start with those -
+an example being ^K H. The full documentation to VDE is here as
+vde/vde266.doc, and it's well worth a read.
+
+A useful option under ZCN is ^O ^Q, which lets you use all (ten) lines
+for editing. I don't use this much myself, but it can be helpful
+sometimes. If you like it, you can even enable it by default using
+VINST.
+
+
+** ws4patch
+
+An `auto-patch' file for Wordstar 4, which sets it up for use with
+ZCN. See ../doc/zcn.txt for how to use this.

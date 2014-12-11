@@ -1,0 +1,97 @@
+Using ZCN on an NC200
+---------------------
+
+The first thing to note is that you should *not* normally run the
+usual `zcn.bin' on an NC200. You should run `zcn200.bin' instead. See
+zcn.txt's installation guide for more on this.
+
+Ok, with that out of the way, here's what the NC200's variant of ZCN
+(zcn200.bin) supports on the '200:
+
+- a 21-line screen;
+
+- the memory card;
+
+- serial and parallel ports;
+
+- the backlight;
+
+- the keyboard (the layout differs internally);
+
+- turning it off :-) (this also differs).
+
+And it *doesn't* support:
+
+- the disk drive;
+
+- the real-time clock;
+
+- most graphics-using ZCN programs (they run, but the graphics don't
+  appear);
+
+- some of the ROM-using ZCN programs (the non-working ones will
+  crash);
+
+- using the extra RAM as a ramdisk (this may happen at some point, but
+  only 48k of it would be available anyway).
+
+
+So, at the moment, you can't run the following ROM-using programs on
+an NC200:
+
+- bbcbas and bbcmin. They crash it. For now, you're best off using the
+  (freely available) generic CP/M BBC Basic from the same author,
+  which you can get here:
+
+  	http://www.rtrussell.co.uk/products/products.html
+
+- bigrun. Likely to crash when the program exits. (It's not actually a
+  ROM-using program :-), but there are similar issues at work.)
+
+- calc. This is likely to crash.
+
+Note that `runrom', `spell', and `spellwd' *do* work. `rrxfer' is
+working for the most part, but look under the "Problems" heading in
+zcn.txt's section on rrxfer for an important warning.
+
+The graphics-using programs listed below shouldn't crash, but the
+graphics won't appear:
+
+- bs (same problem as rogue)
+- dclock
+- invaders
+- rogue (the text is drawn `graphically', so it doesn't appear)
+- ruler
+- sokoban (same problem as rogue)
+- slide
+- zap (partial display, but it's not really usable)
+- zcnbrot
+- zcnclock
+- zcnpaint
+
+Note that `bmp' and `cpmtris' *do* work, as they use character-based
+graphics rather than writing directly to the display memory. And
+`bigv' is the first graphical program for ZCN to work correctly on
+both machines, so that's ok too.
+
+The programs listed below, while they do work, will currently only use
+10 lines of the display:
+
+- cpmtris
+- dmp2txt (or rather, it only reads 10 lines of a screen dump)
+- vde (the prepatched copy in the `support' dir; use vde200 instead)
+- zdbe
+- zselx
+
+And finally, the following programs/commands behave differently (in a
+good way :-)) on the NC200:
+
+- light (an internal command to control the backlight) only exists on
+  the NC200.
+
+- man uses 21 lines.
+
+- more uses 21 lines.
+
+- vde200 (in the `support' dir) is a prepatched copy of vde, altered
+  to use 21 lines rather than 10.

@@ -1,0 +1,31 @@
+NAME
+	ls - list contents of drives and/or user areas
+
+SYNOPSIS
+	ls [-l] [filespec]
+
+DESCRIPTION
+	`ls' either lists the files which are on the current
+	drive/user area, or the files which match the (optional) file
+	specification.
+
+	`ls' has significant advantages over the internal `dir'
+	command. It (vertically) sorts the listing of files, shows
+	executable files in italics, and allows you to list file
+	sizes. In addition, if you run via a serial console, it will
+	use an 80-column friendly layout, unlike `dir', and it won't
+	use italics.
+
+OPTIONS
+	-l	in addition to the filenames, show the length of the
+		file in kilobytes. This is rounded up to the nearest
+		K, so this is really the amount of room taken up on
+		the drive by the file; its actual length may be
+		slightly less.
+
+BUGS
+	`ls -l' is rather slow. This is due to the slowness of ZCN's
+	`get file size' BDOS call.
+
+SEE ALSO
+	dir

@@ -1,0 +1,1096 @@
+;bigrun - run a generic CP/M program in a near-64k environment,
+;  using 32k from the memory card as extra memory to do this.
+
+org 0100h
+
+jr start
+
+;cardpg[12] location mustn't be changed, brpatch.z depends on it
+cardpg1 equ 0100h
+cardpg2 equ 0101h
+;ditto for these two
+comuser equ 0102h
+memdrive equ 0103h
+
+dmabufsav equ 0b000h	;used to save 80h-ffh temporarily
+
+
+start:
+ld a,(066h)
+cp 0f7h
+ret nz		;needs ZCN
+
+;not even close to being re-entrant...
+ld a,0c9h
+ld (0100h),a
+
+ld c,25		;get drive
+call 5
+ld (curdrive),a
+ld (memdrive),a	;drive to allocate last 32k of
+
+;if (5ch) is 1..4 and (5dh) is a space, they specified a drive,
+;so use that instead.
+ld a,(05dh)
+cp 32
+jr nz,skip2
+
+ld a,(05ch)
+and a
+jr z,skip2	;not specified
+cp 5
+jp nc,baddrv	;this means it was specified but e: or greater
+
+dec a
+ld (memdrive),a
+
+;check it's valid
+inc a
+ld e,a
+ld c,135	;check drive is valid
+call 5
+jp nc,baddrv
+
+;that's enough checking for the time being.
+;now we have to fix the cmdline by copying fcb2 over fcb1,
+;and removing the `d:' bit.
+ld hl,06ch
+ld de,05ch
+ld bc,16
+ldir
+
+;search for first colon in cmdline. we know that it's there,
+;just not exactly where.
+ld hl,081h
+ld bc,128
+ld a,':'
+cpir
+inc hl		;point to following char
+push hl
+ld de,081h
+and a
+sbc hl,de
+ld a,(080h)
+sub l
+ld (080h),a
+ld b,0
+ld c,a
+pop hl
+ld de,081h
+ldir
+
+
+skip2:
+;sort out command-line
+call do_cmdline
+jp nc,usage	;if cmdline is blank
+
+;open com file
+;we don't read from it - just check that it's present and correct.
+;(brpatch.z reads it)
+call getuser
+ld (olduser),a
+
+call opencom
+inc a
+jr nz,skip1
+
+ld de,mbadcom
+ld c,9
+call 5
+rst 0
+
+mbadcom: defb 'Command not found$'
+
+
+skip1:
+;save the required user num for the com file.
+;(we restore the original user after the delete below.)
+call getuser
+ld (comuser),a
+
+;allocate two aligned 16k chunks of the memory card.
+;since we rely on defrag to do the hard work of putting all the free
+;space in one place, we just look at the last 32k of the relevant drive.
+;if they're free we use them - if not, we cough and die. :-)
+
+;delete `$$BIGRUN' on (memdrive) in case it's already there for
+;some reason.
+ld a,(memdrive)
+inc a
+ld (memfcb),a	;set drive in fcb
+
+ld a,15
+call setuser
+ld de,memfcb	;already has correct drive in fcb
+ld c,19		;delete file
+call 5
+;don't care whether it worked or not, particularly.
+
+;restore original user.
+ld a,(olduser)
+call setuser
+
+;save 80h-ffh as it's about to be used as dma buffer
+ld hl,080h
+ld de,dmabufsav
+ld bc,128
+ldir
+
+;this call needed for routines below to work
+call init32
+
+;get the (data) block numbers of last 32k of drive.
+call getlast32
+;see if they're all available (ret nc if not)
+call chklast32
+jp nc,failed32
+
+;ok then, make suitable dir entries (in in-memory copy) for a `$$bigrun' file.
+call dir_read
+call alloc32
+call dir_write
+
+;make a note of which pages we'll be using
+ld a,(memdrive)
+rlca
+rlca
+rlca
+rlca
+and 0f0h
+or 08eh
+ld (cardpg1),a
+inc a
+ld (cardpg2),a
+
+;restore old 80h-ffh
+ld hl,dmabufsav
+ld de,080h
+ld bc,128
+ldir
+
+
+;unplug ZCN
+di
+ld a,0c9h
+ld (066h),a
+
+ld sp,02000h	;temporary (not actually used, come to think of it...)
+
+ld a,(cardpg1)
+out (012h),a
+ld a,(cardpg2)
+out (013h),a
+
+ld hl,brbdos
+ld de,0f800h
+ld bc,2048
+ldir
+jp 0f800h
+
+
+baddrv:
+ld de,mbaddrv
+ld c,9
+call 5
+rst 0
+mbaddrv: defb 'Bad drive$'
+
+failed32:
+ld de,mfail32
+ld c,9
+call 5
+rst 0
+mfail32:
+defb 'Need last 32k of drive to be free (try "defrag")$'
+
+
+getuser:
+push bc
+push de
+push hl
+ld e,0ffh
+ld c,32		;get/set user
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+setuser:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,32		;get/set user
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+
+olduser: defb 0
+
+;open com file in the same way ZCN does.
+;returns with a=0 if couldn't open, a!=0 otherwise
+opencom:
+;try in current user
+ld de,comfcb
+ld c,15
+call 5
+inc a
+ret nz		;ret if ok
+
+;try user 0 (just in case we didn't then)
+call getuser
+ld d,a
+push de
+xor a
+call setuser
+ld de,comfcb
+ld c,15
+call 5
+pop de
+inc a
+ret nz		;ret if ok
+ld a,d
+call setuser	;change unum back
+ld e,d
+
+;try A: (user 0) if not on A: and no drive specified.
+ld a,(comfcb)
+ld d,a
+and a
+ld a,0
+ret nz
+ld a,(curdrive)
+and a
+ret z
+xor a
+call setuser
+inc a
+ld (comfcb),a
+;ok, try again on A: user 0
+push de
+ld de,comfcb
+ld c,15
+call 5
+pop de
+inc a
+ret nz		;exit if ok
+ld a,d
+ld (comfcb),a	;restore drive/user if not
+ld a,e
+call setuser
+xor a
+ret
+
+
+
+;the data block numbers for last 32k of (memdrive)
+dblknums: defs 32
+
+;6000h-8fffh is (kind of) used by ccp stuff, so we have to avoid that.
+dirblks equ 02000h
+freeblkmap equ 09000h
+
+numdirblks: defb 0	;number of dir. blocks (usually 2)
+dirblksiz: defw 0	;size of dirblks in bytes (usually 2048)
+numdatblks: defb 0	;number of data blocks on drive
+numfreeblks: defb 0	;number of free blocks on drive
+
+
+
+;this table is for reading the first 128 bytes of the drive's boot block
+initblk:
+defb 0		;drive (modified)
+defw 0		;offset from start of drive
+defw 080h	;address to read bytes to
+
+
+init32:
+ld a,(memdrive)
+ld (initblk),a
+
+ld de,initblk
+ld c,138	;read for boot/sys blocks
+call 5
+
+ld a,(089h)
+ld (numdirblks),a
+
+;multiply by 1024 and put in (dirblksiz)
+ld h,a
+ld l,0		;*256
+add hl,hl	;*512
+add hl,hl	;*1024
+ld (dirblksiz),hl
+
+;now we need to figure out the number of data blocks on the drive.
+;First we figure out how big the drive is overall, minus the boot
+;block. If the card size is 256 or over (i.e. if the low byte of the
+;size is zero) then it'll be 255k, otherwise it's the low byte minus 1.
+;in fact, using 8-bit maths, low_byte-1 works for both cases. :-)
+ld a,(086h)
+dec a
+
+;subtract the number of system blocks then, and we've got our number.
+ld hl,088h
+sub (hl)
+ld (numdatblks),a
+
+;find out how many blocks are free
+;we *could* do this later by looking at the free-blocks map later,
+;but it's easier to do it this way now. :-)
+ld a,(memdrive)
+ld e,a
+ld c,46		;get free disk space
+call 5
+
+ld hl,(080h)
+;div by 8 (it's in records)
+srl h
+rr l
+srl h
+rr l
+srl h
+rr l
+ld a,l
+ld (numfreeblks),a
+
+;if there are <32 free blocks, complain.
+cp 32
+ret nc
+
+ld de,mlt32
+ld c,9
+call 5
+rst 0
+mlt32:
+defb 'Need at least 32k free on drive$'
+
+
+
+;get data block numbers for last 32k on (memdrive).
+getlast32:
+ld hl,dblknums
+;start at num_data_blocks-32
+ld a,(numdatblks)
+ld b,32
+sub b
+
+gl32lp:
+ld (hl),a
+inc hl
+inc a
+djnz gl32lp
+ret
+
+
+;see if data blocks figured out in getlast32 are all free or not.
+chklast32:
+;get free block map
+ld a,(memdrive)
+ld d,a
+ld c,140
+call 5
+ld de,freeblkmap
+ld bc,256
+ldir
+
+ld hl,dblknums
+ld b,32
+cl32lp:
+ld ix,freeblkmap
+ld d,0
+ld e,(hl)
+add ix,de
+ld a,(ix)
+and a
+ret z	;and nc
+inc hl
+djnz cl32lp
+
+scf	;all are available
+ret
+
+
+;make the two required dir entries for a `$$bigrun' file.
+;(dir entries are at dirblks, and the 32 data block nums at dblknums)
+alloc32:
+;first modify mem_ent1 and mem_ent2.
+ld hl,dblknums
+ld de,mem_ent1+16
+ld bc,16
+ldir
+ld de,mem_ent2+16
+ld bc,16
+ldir
+
+;now try to find somewhere to put them.
+call findent
+jr nc,entfail
+ld (ent1loc),hl
+ld (hl),0	;just for now, to make sure it doesn't find it again
+call findent
+jr nc,entfail
+ld (ent2loc),hl
+
+;copy dir entries over, then
+ld hl,mem_ent1
+ld de,(ent1loc)
+ld bc,32
+ldir
+ld hl,mem_ent2
+ld de,(ent2loc)
+ld bc,32
+ldir
+
+;all done!
+ret
+
+
+findent:
+ld hl,dirblks
+dfdirlp:
+ld a,(hl)
+cp 0e5h
+scf
+ret z
+
+ld de,32
+add hl,de
+
+;see if we've reached the end of dirblks
+ex de,hl
+ld hl,(dirblksiz)
+ld bc,dirblks
+add hl,bc
+and a
+sbc hl,de
+ex de,hl
+
+jr nz,dfdirlp
+
+and a	;nc, didn't find one
+ret
+
+
+entfail:
+ld de,mentfail
+ld c,9
+call 5
+rst 0
+mentfail: defb 'Need two free dir entries$'
+
+
+ent1loc: defw 0
+ent2loc: defw 0
+
+mem_ent1:	;first dir entry
+defb 15,'$$BIGRUN   ',0,0,0,080h
+defs 16
+
+mem_ent2:	;second dir entry
+defb 15,'$$BIGRUN   ',1,0,0,080h
+defs 16
+
+;fcb used earlier on to delete any possible old file.
+memfcb:
+defb 0,'$$BIGRUN   ',0,0,0,0
+defs 33-16
+
+
+
+blktbl:
+defb 0		;block number (modified)
+defb 0		;record number in block (modified)
+defb 0		;drive (modified)
+defw 0		;address to read/write bytes to/from (modified)
+
+
+dir_read:
+ld ix,blktbl
+ld hl,dirblks
+ld a,(memdrive)
+ld (ix+2),a
+
+ld c,0
+dr_blklp:
+ld (ix),c
+
+ld b,0
+dr_sectlp:
+ld (ix+1),b
+push bc
+push hl
+ex de,hl
+ld (ix+3),e
+ld (ix+4),d
+
+ld de,blktbl
+ld c,136	;read from data block
+call 5
+inc a
+jr z,dir_rderr
+
+pop hl
+ld de,128
+add hl,de
+pop bc
+inc b
+ld a,b
+cp 8
+jr nz,dr_sectlp
+
+inc c
+ld a,(numdirblks)
+cp c
+jr nz,dr_blklp
+ret
+
+
+dir_rderr:
+ld de,mrderr
+ld c,9
+call 5
+rst 0
+mrderr: defb 'Error reading dir$'
+
+
+;almost identical to read, as it happens...
+dir_write:
+ld ix,blktbl
+ld hl,dirblks
+ld a,(memdrive)
+ld (ix+2),a
+
+ld c,0
+dw_blklp:
+ld (ix),c
+
+ld b,0
+dw_sectlp:
+ld (ix+1),b
+push bc
+push hl
+ex de,hl
+ld (ix+3),e
+ld (ix+4),d
+
+ld de,blktbl
+ld c,137	;write to data block
+call 5
+inc a
+jr z,dir_wrerr
+
+pop hl
+ld de,128
+add hl,de
+pop bc
+inc b
+ld a,b
+cp 8
+jr nz,dw_sectlp
+
+inc c
+ld a,(numdirblks)
+cp c
+jr nz,dw_blklp
+ret
+
+
+dir_wrerr:
+ld de,mwrerr
+ld c,9
+call 5
+rst 0
+mwrerr: defb 'Error writing dir (not good!)$'
+
+
+
+
+usage:
+ld de,musage
+ld c,9
+call 5
+rst 0
+
+musage:
+defb 'usage: bigrun [d:] command [arg1 [arg2 ...]]',13,10
+defb 'bigrun runs a generic CP/M program in a 62k TPA.',13,10
+defb 'You must have 32k free on the specified drive (or the current one',13,10
+defb 'if not specified) for it to work. The 32k must be at the end',13,10
+defb 'of the drive, so usually you would want to run "defrag" before',13,10
+defb 'running bigrun.',13,10
+defb 'This program does some pretty scary things in order to work;',13,10
+defb 'you run it at your own risk!'
+defb '$'
+
+
+
+
+;rest of file is stuff nicked from ZCN's ccp.z to grok a command-line.
+
+
+cmdtail equ 080h
+fcbuserno	equ 13
+
+;somewhere to copy command-line temporarily - anywhere'll do.
+cmdbuf equ 08000h
+cmdsiz equ cmdbuf+1
+
+;again, these are temporary
+userfcb1 equ 0815ch
+userfcb2 equ 0816ch
+
+curuser: defb 0
+curdrive: defb 0
+
+comfcb equ 06000h	;must stay same, brpatch.z depends on it
+
+;              12345678
+spcscom: defb '        COM'
+
+
+;returns nc if cmdline was blank
+do_cmdline:
+ld e,0ffh
+ld c,32
+call 5
+ld (curuser),a
+
+;blank out our COM loading fcb ready for loading/running command.
+;zero all
+ld hl,comfcb
+push hl
+ld bc,33
+call zeroblk
+;set filenameext to <spaces>COM
+ld hl,spcscom
+pop de
+inc de		;comfcb+1
+;b still zero from zeroblk
+ld c,11
+ldir
+
+;need to copy cmdline, as output is put at 80h (and 5ch/6ch).
+ld hl,080h
+ld de,cmdbuf+1	;plus one, as it expects text at cmdbuf+2.
+ld bc,128
+ldir
+
+;fixup command line and get ready to run program
+call grokclin
+and a
+ret z
+
+;make the two fcbs from cmdline at cmdbuf
+call makefcbs
+call fixstars	;turn * into ?s if needed
+
+;copy fcbs to right place
+ld hl,userfcb1
+ld de,05ch
+ld bc,36
+ldir
+
+;make sure (66h) is fixed by ZCN
+halt
+
+scf
+ret
+
+
+
+;groks command line at cmdbuf.
+;uppercases, splits, builds buffer at 80h, builds com-loading fcb
+;DOES NOT build the two cmdline fcbs.
+grokclin:
+;if len=0 give up now.
+ld a,(cmdsiz)
+and a
+ret z
+
+;put a zero after the command line.
+ld a,(cmdsiz)
+ld hl,cmdbuf+2
+ld b,0
+ld c,a
+add hl,bc
+ld (hl),b
+
+;uppercase the lot (it sucks, but cp/m does it so I have to really...)
+ld hl,cmdbuf+2
+ld a,(cmdsiz)
+ld b,a
+gcl0:
+ld a,(hl)
+call islower
+jr nc,gcl0a
+res 5,a
+ld (hl),a
+gcl0a:
+inc hl
+djnz gcl0
+
+;now split it up into 'head' - command name
+;...and 'tail' - everything after
+;first, remove any whitespace at start of line.
+dec b	;was `ld b,0ffh' - b was zero from djnz, so... :-)
+ld hl,cmdbuf+1
+gcl1:
+inc b
+inc hl
+ld a,(hl)
+and a
+ret z		;if a=0, nothing real entered - exit with error
+call isblank
+jr z,gcl1
+
+;reduce (cmdsiz) by right amount if needed
+ld a,b
+and a
+jr z,gcl1a
+
+ld a,(cmdsiz)
+sub b
+ld (cmdsiz),a
+
+;ok, found 1st real char - now copy that back
+ld b,0
+ld c,a
+inc c		;make sure we copy the zero too
+ld de,cmdbuf+2
+ldir
+
+gcl1a:
+;check if char at cmdbuf+3 is a colon - that is, if we have a filename
+;like 'a:wibble'.
+ld a,(cmdbuf+3)
+cp ':'
+jr nz,gcl1b
+ld hl,cmdbuf+4
+ld de,cmdbuf+2
+ld a,(de)
+sub 64
+ld (comfcb),a
+ld a,(cmdsiz)
+sub 2
+ld (cmdsiz),a
+ld b,0
+ld c,a
+inc c		;make sure we copy the zero too
+ldir
+
+ld a,(cmdbuf+2)
+call isblank
+jr z,gcldone	;if no more after x: give up
+
+gcl1b:
+;now find 1st whitespace char after command name.
+;when finished, c will hold length of cmdname.
+ld hl,cmdbuf+2
+ld c,0
+gcl2:
+inc c
+inc hl
+ld a,(cmdsiz)
+cp c
+jr z,gcl2a	;end of cmdline
+ld a,(hl)
+call isblank
+jr nz,gcl2
+
+gcl2a:
+push hl
+push bc
+
+;so hl is pointing at first blank char. after command name.
+;copy command name into fcb
+ld a,c
+cp 8
+jr c,gcl3
+ld c,8
+gcl3:
+ld hl,cmdbuf+2
+ld de,comfcb+1
+ld b,0
+ldir
+
+;now copy the rest of the cmdline to the buffer at 80h.
+;(well, 81h. the byte count goes at 80h.)
+;first, zero the cmdline buffer
+ld hl,cmdtail
+;b still zero from ldir
+ld c,128
+call zeroblk
+
+pop bc
+pop hl
+ld a,(cmdsiz)	;command-line size
+sub c		;minus length of cmdname
+ld (cmdtail),a
+jr z,gcldone
+
+ld b,0
+ld c,a
+ld de,cmdtail+1
+ldir
+
+gcldone:
+ld a,1		;grokked ok
+ret
+
+
+;returns zero flag set if 'blank' or 'whitespace', i.e. TAB or SPC or
+;NUL (yes, NUL is a curious thing to have as whitespace, but it's
+;really useful to include it, in the context this routine is used).
+isblank:
+and a
+ret z
+cp 9
+ret z
+cp 32
+ret
+
+
+;expand * into ?s in fcbs as needed.
+fixstars:
+ld de,userfcb1
+call fixstar
+ld de,userfcb2
+;FALLS THROUGH
+
+;* -> ?s in fcb (in zero page) at de.
+fixstar:
+inc e
+ld b,8
+call fstrbit
+ld b,3
+;FALLS THROUGH
+
+fstrbit:
+ld c,0		;non-zero if '*' found
+fstrlp1:
+ld a,c
+and a
+jr z,fstr0
+fstrm1:
+ld a,'?'
+ld (de),a
+fstr0:
+ld a,(de)
+cp '*'
+jr nz,fstr1
+inc c
+jr fstrm1	;what is this? spag basic? :-)
+fstr1:
+inc e		;we know it's in zero page
+djnz fstrlp1
+ret
+
+
+;generate the preset fcbs from cmdline now at 081h.
+makefcbs:
+ld hl,cmdtail
+ld b,(hl)
+inc hl
+ld de,userfcb1
+call genfcb
+
+ld de,userfcb2
+;FALLS THROUGH
+
+;entry: b=size of remaining cmdlin
+;	hl=addr of remaining cmdlin
+;	de=fcb addr
+;exit:	b=size of *new* remaining cmdlin
+;	hl=addr of *new* remaining cmdlin
+
+;this currently allows filenames of the form '.xxx', i.e. no filename,
+;only an extension - is this a bad idea?
+;this means it allows filenames like 'ditdedat....' :-)
+genfcb:
+ld (tmpde),de
+
+;zero (or blank) first 16 bytes of fcb (which is all we setup)
+call clrfcb16
+
+;don't bother if cmdlin is len 0
+ld a,b
+and a
+ret z
+
+;set user num.
+;de still fcb (clrfcb16 saves de)
+push hl
+ld hl,fcbuserno
+add hl,de
+ld a,(curuser)
+ld (hl),a
+pop hl
+
+;look for non-blank in cmdlin
+dec hl
+
+gflp1:
+inc hl
+ld a,(hl)
+call isblank
+jr nz,gf1
+djnz gflp1
+ret z
+gf1:
+
+;got it. check for drive identifier.
+inc hl
+ld a,(hl)
+dec hl
+cp ':'
+jr nz,gf1a
+
+ld a,(hl)
+sub 64
+push hl
+ld hl,(tmpde)
+ld (hl),a
+pop hl
+inc hl
+inc hl
+dec b
+dec b
+ret z	;finish if drive id. was all that was left
+
+;start copying to fcb, and keep going until we reach
+;whitespace again.
+;to deal with the problem of filename=8 chars max., we keep a count of
+;chars done so far in c.
+gf1a:
+ld c,0
+ld de,(tmpde)
+inc de	;move fcb ptr. to start of filename
+
+gflp2:
+ld a,(hl)
+cp '.'
+jr z,gfnowext
+call isblank	;i.e. tab, space, or 00h
+ret z		;finished if blank
+;if we're not past the 8 char. limit...
+ld a,c
+cp 8
+jr nc,gf2	;skip if c>=8
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+ld (de),a
+inc de
+
+gf2:
+inc c
+inc hl
+djnz gflp2
+ret z
+
+gfnowext:
+;we're currently pointing at a dot.
+inc hl
+
+;do much the same for the extension.
+ld c,0
+push hl
+ld hl,(tmpde)
+ld de,9
+add hl,de
+ex de,hl
+pop hl
+;fcb ptr. now at start of extension
+
+gflp3:
+ld a,(hl)
+call isblank	;i.e. tab, space, or 00h
+ret z		;we're done if it's a blank
+;if we're not past the 3 char. limit...
+ld a,c
+cp 3
+jr nc,gf3	;skip if c>=3
+
+;then put the char. in and advance the fcb ptr.
+ld a,(hl)
+ld (de),a
+inc de
+
+gf3:
+inc c
+inc hl
+djnz gflp3
+
+;done
+ret
+
+
+tmpde: defw 0
+
+
+;clear fcb, being careful about 066h.
+;de=fcb
+;preserves bc/de/hl
+clrfcb16:
+push bc
+push de
+push hl
+ex de,hl
+ld (hl),0
+inc hl
+ld d,h
+ld e,l
+inc de
+ld bc,8		;filename and 1st char of ext. (i.e. 8+1 but -1 too)
+ld a,32
+ld (hl),a
+ldir
+ld (de),a
+inc de
+ld (de),a
+inc de
+;now four more bytes to zero
+ex de,hl
+;b still zero from ldir
+ld c,4
+call zeroblk
+pop hl
+pop de
+pop bc
+ret
+
+
+;returns carry set if lowercase alpha char. in a
+islower:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+
+
+;entry: hl=addr of block to zero, bc=size
+;exit:  bc=0, de points to 1st byte past end of block
+;f/hl corrupt (a preserved)
+zeroblk:
+dec bc
+ld d,h
+ld e,l
+inc de
+ld (hl),0
+ldir
+ret
+
+
+
+;brpatch.bin is catted onto end
+brbdos:

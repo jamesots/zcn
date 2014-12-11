@@ -1,0 +1,19 @@
+NAME
+	get - read in a file at a specified address
+
+SYNOPSIS
+	get hex_address filename
+
+DESCRIPTION
+	Read the file at the given address, which must be given in
+	hex.
+
+EXAMPLES
+	To load a screen dump (NC100 only!), use `get f020 screen.dmp'.
+
+	To read in a com file (perhaps for patching with `poke'), use
+	`get 100 foo.com'.
+
+BUGS
+	It assumes you know what you're doing, and as such it's not
+	all that difficult to shoot yourself in the foot with it. :-)

@@ -1,0 +1,12 @@
+NAME
+	more - display a text file a page at a time
+
+SYNOPSIS
+	more filename
+
+DESCRIPTION
+	Displays the file, pausing after every 10 lines. You can use
+	^C to abort.
+
+SEE ALSO
+	type
