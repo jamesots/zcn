@@ -16,285 +16,285 @@ tightint: defb 0	;=1 if 'tight' ints only (for games etc.)
 ;init int. handler.
 ;interrupts are disabled when this is called, and remain so on exit.
 initint:
-call initijp
-
-;start auto-poweroff timer.
-ld hl,(pwrofftm)
-ld (potimout),hl
-;zero fstrobe
-xor a
-ld (fstrobe),a
-;reset the int handler jump below
-ld hl,ihinnone
-ld (inthndl+2),hl
-ret
+	call initijp
+	
+	;start auto-poweroff timer.
+	ld hl,(pwrofftm)
+	ld (potimout),hl
+	;zero fstrobe
+	xor a
+	ld (fstrobe),a
+	;reset the int handler jump below
+	ld hl,ihinnone
+	ld (inthndl+2),hl
+	ret
 
 ;init all `jump' stuff, including 0038h jump for compatibility reasons
 ;(some ZCN utils with suitably high deep-magic quotients expect it to
 ;be there :-))
 initijp:
-ld a,0c3h
-ld (038h),a
-ld hl,inthndl
-ld (038h+1),hl
+	ld a,0c3h
+	ld (038h),a
+	ld hl,inthndl
+	ld (038h+1),hl
 
 ;this one does the real work though.
 ;NB: this bit must not use more than 3 words of stack, due to the
 ;`phstack' used in powrhndl.z. Currently it uses one, for the fillblk call.
 initijp_not38:
-ld a,0c3h	;jp nnnn
-ld (0e7e7h),a
-ld hl,inthndl
-ld (0e7e7h+1),hl
-
-;init the IM2 jump table, set I, and switch to IM2
-ld hl,0e600h
-ld a,h
-ld i,a
-ld bc,257	;(257 since low byte of lookup addr can be 0..255)
-ld (hl),0e7h
-call fillblk
-
-im 2
-ret
+	ld a,0c3h	;jp nnnn
+	ld (0e7e7h),a
+	ld hl,inthndl
+	ld (0e7e7h+1),hl
+	
+	;init the IM2 jump table, set I, and switch to IM2
+	ld hl,0e600h
+	ld a,h
+	ld i,a
+	ld bc,257	;(257 since low byte of lookup addr can be 0..255)
+	ld (hl),0e7h
+	call fillblk
+	
+	im 2
+	ret
 
 
 ;don't modify the next two instructions or add new ones!
 inthndl:
-di
-jp ihinnone	;modified to 'jp ihinkeyb' when in int
+	di
+	jp ihinnone	;modified to 'jp ihinkeyb' when in int
 
 ;we're not interrupting an interrupt, so change the stack
 ihinnone:
-ld (iholdspop+1),sp
-ld sp,ihstack
-
-push hl
-
-;a serial interrupt can't be interrupted by a keyb int, only
-; the other way around (we don't re-enable ints at any point
-; during a serial interrupt, but we *do* for keyb ints), so this
-; is safe.
-ld hl,ihinkeyb
-ld (inthndl+2),hl
-
-call intrrupt
-
-;reset the modified jump
-ld hl,ihinnone
-ld (inthndl+2),hl
-
-pop hl
+	ld (iholdspop+1),sp
+	ld sp,ihstack
+	
+	push hl
+	
+	;a serial interrupt can't be interrupted by a keyb int, only
+	; the other way around (we don't re-enable ints at any point
+	; during a serial interrupt, but we *do* for keyb ints), so this
+	; is safe.
+	ld hl,ihinkeyb
+	ld (inthndl+2),hl
+	
+	call intrrupt
+	
+	;reset the modified jump
+	ld hl,ihinnone
+	ld (inthndl+2),hl
+	
+	pop hl
 iholdspop: ld sp,0	;modified above
-ei
-reti
+	ei
+	reti
 
 
 ;if here, it must be a serial interrupt, interrupting a keyb int,
 ; so don't change sp, just save the regs
 ihinkeyb:
-push hl
-call intrrupt
-pop hl
-ei
-reti
+	push hl
+	call intrrupt
+	pop hl
+	ei
+	reti
 
 
 intrrupt:
-;hl pushed already
-push af
-push bc
-push de
-
-;look at the port which tells us what happened to cause interrupt
-;if it was the 1/100th clock, bit 3 is zero and we read the keyboard.
-;if it was the serial port, bit 0 is zero and we read that byte.
-;interrupts are acknowledged by sending the byte read back.
-
-ld hl,fstrobe	;this is used whichever it is
-in a,(090h)
-if IS_NC200
- bit 3,a
- jr z,ihkybd
- and 16
- jp z,ihnc2pwr
-else
-and 8		;bit 3
-jr z,ihkybd
-endif
-
-;if we get here, *must* be a serial int as we set IRQ mask to only
-;allow these two types of int (see serial.z).
-inc hl		;tightint is just after fstrobe
-ld a,(hl)
-and a
-;read byte and put it in buffer
-in a,(0c0h)
-call z,saddbuf	;only if not on tight ints
-if IS_NC200
-ld a,0fbh	;it's bit 2 on the '200
-else
-ld a,0feh	;ack interrupt
-endif
-out (090h),a
+	;hl pushed already
+	push af
+	push bc
+	push de
+	
+	;look at the port which tells us what happened to cause interrupt
+	;if it was the 1/100th clock, bit 3 is zero and we read the keyboard.
+	;if it was the serial port, bit 0 is zero and we read that byte.
+	;interrupts are acknowledged by sending the byte read back.
+	
+	ld hl,fstrobe	;this is used whichever it is
+	in a,(090h)
+	if IS_NC200
+	 bit 3,a
+	 jr z,ihkybd
+	 and 16
+	 jp z,ihnc2pwr
+	else
+	and 8		;bit 3
+	jr z,ihkybd
+	endif
+	
+	;if we get here, *must* be a serial int as we set IRQ mask to only
+	;allow these two types of int (see serial.z).
+	inc hl		;tightint is just after fstrobe
+	ld a,(hl)
+	and a
+	;read byte and put it in buffer
+	in a,(0c0h)
+	call z,saddbuf	;only if not on tight ints
+	if IS_NC200
+	ld a,0fbh	;it's bit 2 on the '200
+	else
+	ld a,0feh	;ack interrupt
+	endif
+	out (090h),a
 
 ;every call to intrrupt ends up here eventually
 int_end:
-pop de
-pop bc
-pop af
-;hl popped by caller
-ret
+	pop de
+	pop bc
+	pop af
+	;hl popped by caller
+	ret
 
 
 ihkybd:
-;update fstrobe (currently, hl=fstrobe)
-ld a,(hl)
-cpl
-ld (hl),a
-
-;skip straight to keyboard stuff if on tight interrupts
-inc hl			;tightint is right after fstrobe
-ld a,(hl)
-and a
-jr z,ihskip1
-
-call kclrmap		;tight ints requires krawmap cleared every time
-jr ihdokeys
+	;update fstrobe (currently, hl=fstrobe)
+	ld a,(hl)
+	cpl
+	ld (hl),a
+	
+	;skip straight to keyboard stuff if on tight interrupts
+	inc hl			;tightint is right after fstrobe
+	ld a,(hl)
+	and a
+	jr z,ihskip1
+	
+	call kclrmap		;tight ints requires krawmap cleared every time
+	jr ihdokeys
 
 ihskip1:
-;do emulated 'drive lights'.
-;we know A is zero (see above).
-ld h,a
-ld l,a
-ld a,(bank1)
-if IS_NC200
- ;can't use cardin...
- ld e,a
- ld a,043h
- ld (bank1),a
- out (011h),a
- ld a,e
- ld (07fc0h),hl
- ld (07fc2h),hl
-else
-ld (0ffc0h),hl
-ld (0ffc2h),hl
-endif
-
-;a is now pre-interrupt (bank1)
-sub 080h
-jr c,ihskip2	;if <80h, no PCMCIA card is paged in.
-cp 040h
-jr nc,ihskip2	;if >=C0h, not PCMCIA.
-rrca
-rrca
-rrca
-rrca
-and 3
-or 0c0h
-ld l,a
-if IS_NC200
- ld h,07fh
- ld (hl),0ffh
-else
-ld h,0ffh
-ld (hl),h
-endif
+	;do emulated 'drive lights'.
+	;we know A is zero (see above).
+	ld h,a
+	ld l,a
+	ld a,(bank1)
+	if IS_NC200
+	 ;can't use cardin...
+	 ld e,a
+	 ld a,043h
+	 ld (bank1),a
+	 out (011h),a
+	 ld a,e
+	 ld (07fc0h),hl
+	 ld (07fc2h),hl
+	else
+	ld (0ffc0h),hl
+	ld (0ffc2h),hl
+	endif
+	
+	;a is now pre-interrupt (bank1)
+	sub 080h
+	jr c,ihskip2	;if <80h, no PCMCIA card is paged in.
+	cp 040h
+	jr nc,ihskip2	;if >=C0h, not PCMCIA.
+	rrca
+	rrca
+	rrca
+	rrca
+	and 3
+	or 0c0h
+	ld l,a
+	if IS_NC200
+	 ld h,07fh
+	 ld (hl),0ffh
+	else
+	ld h,0ffh
+	ld (hl),h
+	endif
 
 ihskip2:
-if IS_NC200
- ld a,e
- ld (bank1),a
- out (011h),a
-endif
-;check the 'rst 30h' at the NMI address (66h)
-ld hl,066h
-ld a,(hl)
-cp 0f7h		;'rst 30h'
-jr z,ih66ok
-;store the new byte in 'logical' addr 66h
-;...but don't if it's 077h (i.e. 0f7h without top bit)
-cp 077h
-jr z,ih66a
-ld (real66),a
+	if IS_NC200
+	 ld a,e
+	 ld (bank1),a
+	 out (011h),a
+	endif
+	;check the 'rst 30h' at the NMI address (66h)
+	ld hl,066h
+	ld a,(hl)
+	cp 0f7h		;'rst 30h'
+	jr z,ih66ok
+	;store the new byte in 'logical' addr 66h
+	;...but don't if it's 077h (i.e. 0f7h without top bit)
+	cp 077h
+	jr z,ih66a
+	ld (real66),a
 ih66a:
-;reset NMI jump
-;hl still 066h
-ld (hl),0f7h
+	;reset NMI jump
+	;hl still 066h
+	ld (hl),0f7h
 
 ih66ok:
-;check auto-poweroff timer.
-ld hl,(potimout)
-ld a,h
-or l
-jr z,ihdokeys		;skip if already zero
-
-dec hl
-ld (potimout),hl
-ld a,h
-or l
-jr z,ihautopo
+	;check auto-poweroff timer.
+	ld hl,(potimout)
+	ld a,h
+	or l
+	jr z,ihdokeys		;skip if already zero
+	
+	dec hl
+	ld (potimout),hl
+	ld a,h
+	or l
+	jr z,ihautopo
 
 ;the poweron routine resets the timeout.
 
 ihdokeys:
-;now read keyboard
-;do the port reading first to get interrupt cleared asap
-ld hl,kportin
-ld bc,0ab0h	;i.e. b=10, c=b0h
-xor a
+	;now read keyboard
+	;do the port reading first to get interrupt cleared asap
+	ld hl,kportin
+	ld bc,0ab0h	;i.e. b=10, c=b0h
+	xor a
 krdplp:
-ld e,a
-in a,(c)
-ld (hl),a
-or e
-inc l
-inc c
-djnz krdplp
-
-;now A is non-zero if a key was pressed (this is arg for kupdate call).
-
-;don't need to clear keyb int explicitly, done implicitly above
-;when we read from the last port (b9h) in krdports
-
-;ah, but we *do* need it on the NC200! Thanks to Ian Miller for the
-;considerable amount of testing needed to figure this out... :-)
-;
-;(in fact, we now have this on the NC100 too since:
-;	- it means you can boot the NC100 kernel on a '200, then run
-;	  zcn200.bin as a .com file, useful if you're sharing a card
-;	  between the two;
-;	- it doesn't cause any problems;
-;	- it's only five bytes.)
-ld bc,0f790h
-out (c),b
-
-ei		;make sure serial input gets dealt with
-call kupdate
-di		;disallow serial ints again until we pop everything
-jr int_end
-
-
-if IS_NC200
+	ld e,a
+	in a,(c)
+	ld (hl),a
+	or e
+	inc l
+	inc c
+	djnz krdplp
+	
+	;now A is non-zero if a key was pressed (this is arg for kupdate call).
+	
+	;don't need to clear keyb int explicitly, done implicitly above
+	;when we read from the last port (b9h) in krdports
+	
+	;ah, but we *do* need it on the NC200! Thanks to Ian Miller for the
+	;considerable amount of testing needed to figure this out... :-)
+	;
+	;(in fact, we now have this on the NC100 too since:
+	;	- it means you can boot the NC100 kernel on a '200, then run
+	;	  zcn200.bin as a .com file, useful if you're sharing a card
+	;	  between the two;
+	;	- it doesn't cause any problems;
+	;	- it's only five bytes.)
+	ld bc,0f790h
+	out (c),b
+	
+	ei		;make sure serial input gets dealt with
+	call kupdate
+	di		;disallow serial ints again until we pop everything
+	jr int_end
+	
+	
+	if IS_NC200
 ihnc2pwr:
-;clear int
-ld a,0efh
-out (090h),a
-;FALLS THROUGH
-endif
+	;clear int
+	ld a,0efh
+	out (090h),a
+	;FALLS THROUGH
+	endif
 
 ;auto power-off
 ihautopo:
-;call NMI poweroff; ints are disabled already so this is ok.
-;iff2 is zero though due to our di, so ints won't be re-enabled
-;on ret from NMI - however, they're enabled on return from this
-;interrupt routine, so that's ok too (in fact, it's better that way!).
-call 066h
-;manually clear interrupt
-;(XXX this probably isn't necessary - it was turned off! leaving it
-;in for now though...)
-;(not ideal for ihnc2pwr fallthrough, but should be ok)
-ld a,0f7h
-out (090h),a
-jp int_end
+	;call NMI poweroff; ints are disabled already so this is ok.
+	;iff2 is zero though due to our di, so ints won't be re-enabled
+	;on ret from NMI - however, they're enabled on return from this
+	;interrupt routine, so that's ok too (in fact, it's better that way!).
+	call 066h
+	;manually clear interrupt
+	;(XXX this probably isn't necessary - it was turned off! leaving it
+	;in for now though...)
+	;(not ideal for ihnc2pwr fallthrough, but should be ok)
+	ld a,0f7h
+	out (090h),a
+	jp int_end

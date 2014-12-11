@@ -109,14 +109,14 @@ klock:   defb 0
 ; and a
 ; ...etc.
 krawmap:
-defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
-defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
-defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
-defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
-defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
-defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
-defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
-defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+	defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
 
 ;holds last 'real' key pressed - i.e. last key read returned
 klast: defb 0
@@ -158,156 +158,156 @@ kwasclk	equ kwasclkop+1
 ;this is what the interrupt routine calls.
 ;entry: A is non-zero if a key is pressed
 kupdate:
-;construct keyboard bytemap
-;(not needed if A is zero)
-and a
-jr z,kunokey2
-
-call kgetmap
-
-;stop now if (tightint) set
-ld a,(tightint)
-and a
-ret nz
-
-;update 'key held down for' timer
-ld hl,(krheld)
-inc hl
-ld (krheld),hl
-
-;figure out keypress from the bytemap
-call krmkey
-jr nc,kunokey	;if no (effective) key pressed 
-
-;check for ctrl-shift-s
-cp 'S'-040h	;of course, it will be a ^s :-)
-jr nz,notcss
-ld e,a
-ld a,(kstate)
-cp 9	;control+leftshift
-ld a,e
-jr nz,notcss
-
-;a is already non-zero (^s) so just use that
-ld (pendsdmp),a		;set 'pending screen dump' flag
-jr kunokey		;act like no key pressed
+	;construct keyboard bytemap
+	;(not needed if A is zero)
+	and a
+	jr z,kunokey2
+	
+	call kgetmap
+	
+	;stop now if (tightint) set
+	ld a,(tightint)
+	and a
+	ret nz
+	
+	;update 'key held down for' timer
+	ld hl,(krheld)
+	inc hl
+	ld (krheld),hl
+	
+	;figure out keypress from the bytemap
+	call krmkey
+	jr nc,kunokey	;if no (effective) key pressed 
+	
+	;check for ctrl-shift-s
+	cp 'S'-040h	;of course, it will be a ^s :-)
+	jr nz,notcss
+	ld e,a
+	ld a,(kstate)
+	cp 9	;control+leftshift
+	ld a,e
+	jr nz,notcss
+	
+	;a is already non-zero (^s) so just use that
+	ld (pendsdmp),a		;set 'pending screen dump' flag
+	jr kunokey		;act like no key pressed
 
 notcss:
-ld e,a
-ld a,(kpurekey)
-ld hl,klast
-cp (hl)
-ld (hl),a
-ld a,e
-;if the key is the same as last time (ignoring shifts), hand over
-;control to the auto-repeat routines - otherwise just add it.
-jr z,kautorep
-
-call kaddbuf	;add char in a to buffer
-;reset both `held key down for' timer and sub-repeat timer
-xor a
-ld h,a
-ld l,a
-ld (krheld),hl
-ld (krsubh),a
-ret
+	ld e,a
+	ld a,(kpurekey)
+	ld hl,klast
+	cp (hl)
+	ld (hl),a
+	ld a,e
+	;if the key is the same as last time (ignoring shifts), hand over
+	;control to the auto-repeat routines - otherwise just add it.
+	jr z,kautorep
+	
+	call kaddbuf	;add char in a to buffer
+	;reset both `held key down for' timer and sub-repeat timer
+	xor a
+	ld h,a
+	ld l,a
+	ld (krheld),hl
+	ld (krsubh),a
+	ret
 
 
 kunokey2:
-;zero things which would be zeroed before first (other) jump to
-;`krnokey' if krmkey were called
-xor a
-ld (kstate),a
-ld (kwasclk),a
+	;zero things which would be zeroed before first (other) jump to
+	;`krnokey' if krmkey were called
+	xor a
+	ld (kstate),a
+	ld (kwasclk),a
 
 kunokey:
-xor a
-ld (klast),a
-ret
+	xor a
+	ld (klast),a
+	ret
 
 
 ;handle auto-repeat (the key is in a, and in (klast))
 kautorep:
-ld c,a
-ld hl,(krheld)
-ld de,krwait	;krwait is <256
-and a
-sbc hl,de
-ret c		;don't bother if not held long enough yet
-ld hl,krsubh
-jr z,krrep1	;jump if first repeat
-
-;now we incr. and test the subrepeat timer.
-inc (hl)
-ld a,krwrep
-cp (hl)
-ret nz
+	ld c,a
+	ld hl,(krheld)
+	ld de,krwait	;krwait is <256
+	and a
+	sbc hl,de
+	ret c		;don't bother if not held long enough yet
+	ld hl,krsubh
+	jr z,krrep1	;jump if first repeat
+	
+	;now we incr. and test the subrepeat timer.
+	inc (hl)
+	ld a,krwrep
+	cp (hl)
+	ret nz
 
 krrep1:
-;d is still zero
-ld (hl),d
-
-ld a,c
+	;d is still zero
+	ld (hl),d
+	
+	ld a,c
 ;FALLS THROUGH to add char to buffer
 
 
 ;add char in a (and (klast)) to keyboard buffer
 kaddbuf:
-;reset auto-poweroff timeout
-ld hl,(pwrofftm)
-ld (potimout),hl
-
-ld e,a
-ld hl,(kbend)
-
-ld a,l
-inc a
-and 07fh	;mod 128
-ld l,a
-
-ld a,(kbstart)
-;if they're equal, the buffer is 'full'
-; (see near 'krend' def. for details)
-cp l
-ret z
-ld (kbend),hl
-
-ld a,l
-dec a
-and 07fh
-ld l,a
-
-ld (hl),e
-ret
+	;reset auto-poweroff timeout
+	ld hl,(pwrofftm)
+	ld (potimout),hl
+	
+	ld e,a
+	ld hl,(kbend)
+	
+	ld a,l
+	inc a
+	and 07fh	;mod 128
+	ld l,a
+	
+	ld a,(kbstart)
+	;if they're equal, the buffer is 'full'
+	; (see near 'krend' def. for details)
+	cp l
+	ret z
+	ld (kbend),hl
+	
+	ld a,l
+	dec a
+	and 07fh
+	ld l,a
+	
+	ld (hl),e
+	ret
 
 
 ;get char from buffer into a (carry set if ok, false if buffer empty).
 kgetchar:
-call chksdmp	;needed in case we do scrndmp at ccp
+	call chksdmp	;needed in case we do scrndmp at ccp
 
 kbasget:	;for bbc basic, so it can read Esc quickly
-;actually get char from serial if we're using aux as conin:
-ld a,(conin)
-cp auxin
-jp z,sgetchar	;exact same function but from serial
-
-ld a,(kbstart)
-ld e,a
-ld a,(kbend)
-cp e
-ret z		;and carry is false
-
-ld hl,(kbstart)
-ld a,(hl)
-push af
-ld a,l
-inc a
-and 07fh
-ld l,a
-pop af
-ld (kbstart),hl
-scf		;carry set
-ret
+	;actually get char from serial if we're using aux as conin:
+	ld a,(conin)
+	cp auxin
+	jp z,sgetchar	;exact same function but from serial
+	
+	ld a,(kbstart)
+	ld e,a
+	ld a,(kbend)
+	cp e
+	ret z		;and carry is false
+	
+	ld hl,(kbstart)
+	ld a,(hl)
+	push af
+	ld a,l
+	inc a
+	and 07fh
+	ld l,a
+	pop af
+	ld (kbstart),hl
+	scf		;carry set
+	ret
 
 
 ;get char from buffer into a (carry set if ok, false if buffer empty).
@@ -316,24 +316,24 @@ ret
 ;extra overhead of reading the char is extremely small (two ops).
 kseechar:
 kchkchar:
-call chksdmp	;needed in case we do scrndmp at ccp
+	call chksdmp	;needed in case we do scrndmp at ccp
 
 kbaschk:	;for bbc basic, so it can check for Esc quickly
-;see char from serial buf if we're using aux as conin:
-ld a,(conin)
-cp auxin
-jp z,sseechar	;exact same function but from serial
-
-ld a,(kbstart)
-ld e,a
-ld a,(kbend)
-cp e
-ret z		;carry false also
-
-ld hl,(kbstart)
-ld a,(hl)
-scf		;carry set
-ret
+	;see char from serial buf if we're using aux as conin:
+	ld a,(conin)
+	cp auxin
+	jp z,sseechar	;exact same function but from serial
+	
+	ld a,(kbstart)
+	ld e,a
+	ld a,(kbend)
+	cp e
+	ret z		;carry false also
+	
+	ld hl,(kbstart)
+	ld a,(hl)
+	scf		;carry set
+	ret
 
 
 ;read raw keypress map and process into byte-per-keypress map
@@ -341,42 +341,42 @@ ret
 ;`jp's are used here for speed (a conditional jp is 3 cycles faster
 ;than a jr when the condition is true).
 kgetmap:
-;we cleared out krawmap last time (after) a key was pressed,
-; and it's also cleared on cold boot.
-
-ld hl,kportin
-ld de,keytbl
-ld c,10
+	;we cleared out krawmap last time (after) a key was pressed,
+	; and it's also cleared on cold boot.
+	
+	ld hl,kportin
+	ld de,keytbl
+	ld c,10
 
 krm_ry:
-ld a,(hl)
-ld b,8
+	ld a,(hl)
+	ld b,8
 
 krm_rx:
-rlca
-jp nc,krmskip
-
-push bc
-push hl
-ex de,hl
-ld c,(hl)
-ex de,hl
-ld hl,krawmap
-ld b,0
-add hl,bc
-inc b
-ld (hl),b
-pop hl
-pop bc
+	rlca
+	jp nc,krmskip
+	
+	push bc
+	push hl
+	ex de,hl
+	ld c,(hl)
+	ex de,hl
+	ld hl,krawmap
+	ld b,0
+	add hl,bc
+	inc b
+	ld (hl),b
+	pop hl
+	pop bc
 
 krmskip:
-inc e		;this is ok for keytbl (see main.z)
-djnz krm_rx
-
-inc l		;this is ok for kportin (see main.z)
-dec c
-jp nz,krm_ry
-ret
+	inc e		;this is ok for keytbl (see main.z)
+	djnz krm_rx
+	
+	inc l		;this is ok for kportin (see main.z)
+	dec c
+	jp nz,krm_ry
+	ret
 
 
 ;kclrmap moved to misc.z (so it can fall through into zeroblk)
@@ -393,243 +393,243 @@ krmkey:
 
 ;first, swap caps lock and control key if (capsctrl).
 capsctrlop: ld a,0	;capsctrl
-and a
-jr z,krskip0
-
-ld hl,krawmap+kcapslk
-ld de,krawmap+kctrl
-ld a,(de)
-ld b,a
-ld a,(hl)
-ld (de),a
-ld (hl),b
+	and a
+	jr z,krskip0
+	
+	ld hl,krawmap+kcapslk
+	ld de,krawmap+kctrl
+	ld a,(de)
+	ld b,a
+	ld a,(hl)
+	ld (de),a
+	ld (hl),b
 
 krskip0:
-;construct shift status and remove shift keys from map
-;(caps lock is also removed but dealt with differently)
-;done the 'wrong way round' because of the rl'ing
-;horrible nasty way to do it but it'll have to do
-
-;the values of ksymbol,kctrl,kfunc,krshift,klshift are deliberately
-;contiguous and in that order, so we can do this:
-ld e,0
-ld hl,krawmap+ksymbol
-ld b,5
-and a		;make sure (krawmap+ksymbol) isn't left non-zero
+	;construct shift status and remove shift keys from map
+	;(caps lock is also removed but dealt with differently)
+	;done the 'wrong way round' because of the rl'ing
+	;horrible nasty way to do it but it'll have to do
+	
+	;the values of ksymbol,kctrl,kfunc,krshift,klshift are deliberately
+	;contiguous and in that order, so we can do this:
+	ld e,0
+	ld hl,krawmap+ksymbol
+	ld b,5
+	and a		;make sure (krawmap+ksymbol) isn't left non-zero
 kshiftlp:
-rr (hl)
-rl e
-inc hl
-djnz kshiftlp
-
-ld a,e
-ld (kstate),a
+	rr (hl)
+	rl e
+	inc hl
+	djnz kshiftlp
+	
+	ld a,e
+	ld (kstate),a
 
 ;ok, that's the keyboard state done, now do the caps lock
 ;hl already points to krawmap+kcapslk, because kcapslk is klshift+1
 kwasclkop: ld c,0	;kwasclk
-xor a
-ld (kwasclk),a
-ld a,(hl)
-and a
-ld (hl),b	;nuke any caps lock keypress (b still zero from djnz)
-jr z,krskip1
-
-ld a,1
-ld (kwasclk),a	;set 'clk was pressed' flag
-
-ld a,c
-and a
-jr nz,krskip1	;if clk was pressed before, don't toggle it again
-
-ld a,(klock)
-xor 1
-ld (klock),a
+	xor a
+	ld (kwasclk),a
+	ld a,(hl)
+	and a
+	ld (hl),b	;nuke any caps lock keypress (b still zero from djnz)
+	jr z,krskip1
+	
+	ld a,1
+	ld (kwasclk),a	;set 'clk was pressed' flag
+	
+	ld a,c
+	and a
+	jr nz,krskip1	;if clk was pressed before, don't toggle it again
+	
+	ld a,(klock)
+	xor 1
+	ld (klock),a
 
 krskip1:
-;that's the shift and caps lock reading done.
-;if more than one key is pressed now, we give up and return 'no key
-;pressed'. (not quite true - see below)
-
-;check keyboard map for key(s)
-ld hl,krawmap
-ld bc,255	;assuming knone is FFh
-ld a,1
-cpir
-;if none was pressed...
-jr nz,krnokey
-;otherwise, save bc (well, c) and check for other keys
-ld e,c
-push hl
-cpir
-pop hl
-jr nz,kronerealkey	;only one key found
-
-;so we've found another match, which means two (or more)
-;non-shift keys are pressed. in this case we don't report `no
-;key pressed', as you might expect, but see if the `kvpure'
-;key (which was the last one to be pressed on its own) is being pressed.
-;if so, we zero it out and run the keyboard check again.
-ld a,(kvpure)
-ld c,a
-ld b,0
-ld hl,krawmap
-add hl,bc
-ld a,(hl)	;is the old key still pressed?
-and a
-jr z,krnokey2	;if not, give up.
-ld (hl),b	;zero it out (b still zero)
-
-;try reading the map again
-ld hl,krawmap
-ld c,255	;assuming knone is FFh (b still zero)
-ld a,1
-cpir
-;we know at least one will still be pressed, so see if this is the
-;only one or not...
-ld e,c
-push hl
-cpir
-pop hl
-jr nz,kronekey	;only one key found
-
-;otherwise, still >=2 keys pressed, so give up.
-jr krnokey2
+	;that's the shift and caps lock reading done.
+	;if more than one key is pressed now, we give up and return 'no key
+	;pressed'. (not quite true - see below)
+	
+	;check keyboard map for key(s)
+	ld hl,krawmap
+	ld bc,255	;assuming knone is FFh
+	ld a,1
+	cpir
+	;if none was pressed...
+	jr nz,krnokey
+	;otherwise, save bc (well, c) and check for other keys
+	ld e,c
+	push hl
+	cpir
+	pop hl
+	jr nz,kronerealkey	;only one key found
+	
+	;so we've found another match, which means two (or more)
+	;non-shift keys are pressed. in this case we don't report `no
+	;key pressed', as you might expect, but see if the `kvpure'
+	;key (which was the last one to be pressed on its own) is being pressed.
+	;if so, we zero it out and run the keyboard check again.
+	ld a,(kvpure)
+	ld c,a
+	ld b,0
+	ld hl,krawmap
+	add hl,bc
+	ld a,(hl)	;is the old key still pressed?
+	and a
+	jr z,krnokey2	;if not, give up.
+	ld (hl),b	;zero it out (b still zero)
+	
+	;try reading the map again
+	ld hl,krawmap
+	ld c,255	;assuming knone is FFh (b still zero)
+	ld a,1
+	cpir
+	;we know at least one will still be pressed, so see if this is the
+	;only one or not...
+	ld e,c
+	push hl
+	cpir
+	pop hl
+	jr nz,kronekey	;only one key found
+	
+	;otherwise, still >=2 keys pressed, so give up.
+	jr krnokey2
 
 
 kronerealkey:
-;if here, we found exactly one key without having to fiddle it. :-)
-;this is the only case where we set kvpure.
-;(other than if >=3 keys are pressed, or if 2 new keys are pressed at
-; exactly the same time - it's set to kvnone in those cases)
-ld a,254
-sub e
-ld (kvpure),a
+	;if here, we found exactly one key without having to fiddle it. :-)
+	;this is the only case where we set kvpure.
+	;(other than if >=3 keys are pressed, or if 2 new keys are pressed at
+	; exactly the same time - it's set to kvnone in those cases)
+	ld a,254
+	sub e
+	ld (kvpure),a
 ;FALLS THROUGH
 ;(means repeating the calc, but so what :-))
 
 kronekey:
-;find the key the saved c (in e) was indicating.
-;address of key is in hl-1, from the cpir.
-;first though, zero out the key
-dec hl
-ld (hl),0
-ld a,254
-sub e
-ld e,a
+	;find the key the saved c (in e) was indicating.
+	;address of key is in hl-1, from the cpir.
+	;first though, zero out the key
+	dec hl
+	ld (hl),0
+	ld a,254
+	sub e
+	ld e,a
 
 krnovp:
-;that's it then, the key number in a. Now we just have to apply modifiers.
-;first apply caps lock if appropriate.
-ld a,(klock)
-and a
-ld a,e
-jr z,krskip2
-call isalpha
-jr nc,krskip2
-xor 020h
+	;that's it then, the key number in a. Now we just have to apply modifiers.
+	;first apply caps lock if appropriate.
+	ld a,(klock)
+	and a
+	ld a,e
+	jr z,krskip2
+	call isalpha
+	jr nc,krskip2
+	xor 020h
 krskip2:
-
-ld (kpurekey),a		;save 'pure' key (pure aside from capslock effects)
-
-ld e,a
-ld a,(kstate)
-ld d,a
-;shift states in d, key pressed in e
-and 3
-;nz=shift
-ld a,e
-call nz,kshiftc
-ld e,a
-
-;now control (note that 'function' also acts as control)
-ld a,d
-and 12		;bit 2 or 3
-jr z,krskip4
-
-;fairly crude - just strip off high 3 bits, giving a mod 32 value.
-ld a,e
-and 01fh
-ld e,a
+	
+	ld (kpurekey),a		;save 'pure' key (pure aside from capslock effects)
+	
+	ld e,a
+	ld a,(kstate)
+	ld d,a
+	;shift states in d, key pressed in e
+	and 3
+	;nz=shift
+	ld a,e
+	call nz,kshiftc
+	ld e,a
+	
+	;now control (note that 'function' also acts as control)
+	ld a,d
+	and 12		;bit 2 or 3
+	jr z,krskip4
+	
+	;fairly crude - just strip off high 3 bits, giving a mod 32 value.
+	ld a,e
+	and 01fh
+	ld e,a
 
 krskip4:
-;symbol adds a meta bit (i.e. sets bit 7)
-bit 4,d
-jr z,krskip6
-set 7,e
+	;symbol adds a meta bit (i.e. sets bit 7)
+	bit 4,d
+	jr z,krskip6
+	set 7,e
 
 krskip6:
-ld a,e
-scf		;carry true
-ret
+	ld a,e
+	scf		;carry true
+	ret
 
 ;this exit used if >=3 non-shift keys were pressed (too many!)
 krnokey2:
-call kclrmap	;need to clear the map, as many keys were pressed
-;have to make sure we lose kvpure state...
-ld a,knone
-ld (kvpure),a
+	call kclrmap	;need to clear the map, as many keys were pressed
+	;have to make sure we lose kvpure state...
+	ld a,knone
+	ld (kvpure),a
 ;FALLS THROUGH
 
 krnokey:
-;used to have `ld a,knone' here, but that's not needed, just this...
-and a		;carry false
-ret
+	;used to have `ld a,knone' here, but that's not needed, just this...
+	and a		;carry false
+	ret
 
 
 ;returns carry set if upper or lower alphabetic in a
 isalpha:
-call isupper
-ret c
-jr islower
+	call isupper
+	ret c
+	jr islower
 
 ;returns carry set if uppercase alpha char. in a
 isupper:
-cp 'A'
-ccf
-ret nc
-cp '['
-ret
+	cp 'A'
+	ccf
+	ret nc
+	cp '['
+	ret
 
 ;returns carry set if lowercase alpha char. in a
 islower:
-cp 'a'
-ccf
-ret nc
-cp '{'
-ret
+	cp 'a'
+	ccf
+	ret nc
+	cp '{'
+	ret
 
 
 ;shift a character - i.e. `a' goes to `A', `;' goes to `:', etc.
 ;does alphabetics by xor'ing with 20h in case of caps lock.
 ;preserves d
 kshiftc:
-call isalpha
-jr nc,ksc1
-
-xor 020h
-ret
+	call isalpha
+	jr nc,ksc1
+	
+	xor 020h
+	ret
 
 kshsrc:
-;source bytes (22 bytes)
-defb '12','3', '4567890-=[];',027h,'#,./\`'	;027h is ' (single quote)
+	;source bytes (22 bytes)
+	defb '12','3', '4567890-=[];',027h,'#,./\`'	;027h is ' (single quote)
 kshdst:
-;dest bytes
-defb '!"',09ch,'$%^&*()_+{}:','@', '~<>?|~'	;9ch is the pound sign
+	;dest bytes
+	defb '!"',09ch,'$%^&*()_+{}:','@', '~<>?|~'	;9ch is the pound sign
 
 ksc1:
-;great. it gets a bit painful here.
-ld hl,kshsrc
-ld bc,22
-cpir
-ret nz		;give up if it's not in the table
-
-;otherwise use the dest byte
-ld e,a
-ld a,21
-sub c
-ld c,a
-ld hl,kshdst
-add hl,bc
-ld a,(hl)
-ret
+	;great. it gets a bit painful here.
+	ld hl,kshsrc
+	ld bc,22
+	cpir
+	ret nz		;give up if it's not in the table
+	
+	;otherwise use the dest byte
+	ld e,a
+	ld a,21
+	sub c
+	ld c,a
+	ld hl,kshdst
+	add hl,bc
+	ld a,(hl)
+	ret

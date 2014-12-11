@@ -1,8 +1,8 @@
-;ZCN v1.3 - a free CP/M-like OS for the Amstrad NC100 Notepad.
-;Copyright (C) 1994-2000 Russell Marks. See `zcn.txt' for license details.
-
-;assemble this for an experimental NC200 version.
-
-IS_NC200 equ 1
-
-include main.z
+	;ZCN v1.3 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+	;Copyright (C) 1994-2000 Russell Marks. See `zcn.txt' for license details.
+	
+	;assemble this for an experimental NC200 version.
+	
+	IS_NC200 equ 1
+	
+	include main.z

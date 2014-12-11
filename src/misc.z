@@ -27,40 +27,40 @@
 ; defb 'Hello w',_or,'ld',0	:-)
 ;exit: a=zero, f/de/hl corrupt (bc preserved)
 ilprint:
-ex (sp),hl
+	ex (sp),hl
 ilploop:
-ld a,(hl)
-and a
-jr z,ilpstop
-jp m,iltrans	;i.e. jump if bit 7 is set
+	ld a,(hl)
+	and a
+	jr z,ilpstop
+	jp m,iltrans	;i.e. jump if bit 7 is set
 ilpcont:
-call putchar
-inc hl
-jr ilploop
+	call putchar
+	inc hl
+	jr ilploop
 ilpstop:
-pop de
-inc hl
-jp (hl)
+	pop de
+	inc hl
+	jp (hl)
 
 iltrans:
-;translate a 2-letter-combination code into the letters.
-;if bit 5 of A is set, capitalise first letter.
-;(really it just toggles bit 5 :-))
-push hl
-ld d,a
-and 31
-ld h,0
-ld l,a
-ld a,d
-and 32
-ld de,illookup
-add hl,de
-xor (hl)
-call putchar
-inc hl
-ld a,(hl)
-pop hl
-jr ilpcont
+	;translate a 2-letter-combination code into the letters.
+	;if bit 5 of A is set, capitalise first letter.
+	;(really it just toggles bit 5 :-))
+	push hl
+	ld d,a
+	and 31
+	ld h,0
+	ld l,a
+	ld a,d
+	and 32
+	ld de,illookup
+	add hl,de
+	xor (hl)
+	call putchar
+	inc hl
+	ld a,(hl)
+	pop hl
+	jr ilpcont
 
 ;max. 32 entries (80h..9fh). Use Ax/Bxh codes (better, add `_caps' to
 ;code) to get capital 1st letter. NB: symbols starting with underscore
@@ -89,54 +89,54 @@ __str	equ 090h
 _twostr	equ 091h
 
 illookup:
-defb 13,10,'mainorsed s pe **'
+	defb 13,10,'mainorsed s pe **'
 
 
 ;print cr/lf
 ;exit: a=zero, f/de/hl corrupt (bc preserved)
 do_crlf:
-call ilprint
-defb _crlf,0
-ret
+	call ilprint
+	defb _crlf,0
+	ret
 
 
 
 ;display number in hl as hex
 disphex:
-ld a,h
-call hexbyte
-ld a,l
+	ld a,h
+	call hexbyte
+	ld a,l
 ;FALLS THROUGH
 
 ;print byte in a as hex
 ;saves hl/de/bc
 hexbyte:
-push hl
-push de
-push bc
-push af
-and 0f0h
-rrca
-rrca
-rrca
-rrca
-call hexit
-call tputchar
-pop af
-and 15
-call hexit
-call tputchar
-pop bc
-pop de
-pop hl
-ret
+	push hl
+	push de
+	push bc
+	push af
+	and 0f0h
+	rrca
+	rrca
+	rrca
+	rrca
+	call hexit
+	call tputchar
+	pop af
+	and 15
+	call hexit
+	call tputchar
+	pop bc
+	pop de
+	pop hl
+	ret
 
 hexit:
-add a,48
-cp 58
-ret c
-add a,7
-ret
+	add a,48
+	cp 58
+	ret c
+	add a,7
+	ret
 
 
 
@@ -152,19 +152,19 @@ ret
 ;exit:  hl=z
 ;af/bc/de corrupt
 multiply:
-ld hl,0
-ld a,16
+	ld hl,0
+	ld a,16
 mulp:
-srl d
-rr e
-jr nc,musp
-add hl,bc
+	srl d
+	rr e
+	jr nc,musp
+	add hl,bc
 musp:
-sla c
-rl b
-dec a
-jr nz,mulp
-ret
+	sla c
+	rl b
+	dec a
+	jr nz,mulp
+	ret
 
 
 ;the big hairy nasty one
@@ -173,75 +173,75 @@ ret
 ;exit:  hl=z1 (result), de=z2 (remainder)
 ;af/bc corrupt
 divide:
-ld b,h
-ld c,l
-;see if we're trying to divide by zero
-ld a,d
-or e
-ret z
-
-push ix
-ld ix,0
-ld hl,0
-ld a,16
+	ld b,h
+	ld c,l
+	;see if we're trying to divide by zero
+	ld a,d
+	or e
+	ret z
+	
+	push ix
+	ld ix,0
+	ld hl,0
+	ld a,16
 
 dvlp:
-push af
-sla l
-rl h
-
-add ix,ix
-
-bit 7,b
-jr z,dvs1
-
-set 0,l
+	push af
+	sla l
+	rl h
+	
+	add ix,ix
+	
+	bit 7,b
+	jr z,dvs1
+	
+	set 0,l
 
 dvs1:
-push hl
-and a
-sbc hl,de
-jp m,dvs2
-
-;nasty! fiddle the stack
-ex (sp),hl
-
-;we effectively need to do 'or ix,1'.
-
-;this is probably the fastest way to do it with documented opcodes:
-;push ix
-;pop hl
-;ld a,1
-;or l
-;ld l,a
-;push hl
-;pop ix
-
-;we use ld a,1/or ixl/ld ixl,a instead, which should be quicker.
-;(if I remember rightly, 'set 0,ixl' doesn't work)
-ld a,1
-defb 0ddh
-or l		;or ixl
-defb 0ddh
-ld l,a		;ld ixl,a
+	push hl
+	and a
+	sbc hl,de
+	jp m,dvs2
+	
+	;nasty! fiddle the stack
+	ex (sp),hl
+	
+	;we effectively need to do 'or ix,1'.
+	
+	;this is probably the fastest way to do it with documented opcodes:
+	;push ix
+	;pop hl
+	;ld a,1
+	;or l
+	;ld l,a
+	;push hl
+	;pop ix
+	
+	;we use ld a,1/or ixl/ld ixl,a instead, which should be quicker.
+	;(if I remember rightly, 'set 0,ixl' doesn't work)
+	ld a,1
+	defb 0ddh
+	or l		;or ixl
+	defb 0ddh
+	ld l,a		;ld ixl,a
 
 dvs2:
-pop hl
-
-sla c
-rl b
-
-pop af
-dec a
-jr nz,dvlp
-
-;finally! got the results.
-ex de,hl
-push ix
-pop hl
-pop ix
-;exit: hl=result, de=remainder
-ret
+	pop hl
+	
+	sla c
+	rl b
+	
+	pop af
+	dec a
+	jr nz,dvlp
+	
+	;finally! got the results.
+	ex de,hl
+	push ix
+	pop hl
+	pop ix
+	;exit: hl=result, de=remainder
+	ret
 
 
 ;numtmp is in main.z
@@ -250,35 +250,35 @@ ret
 ;entry: de=number to display
 ;exit: af/bc/de/hl corrupt
 dispdec:
-ld hl,numtmp+5
+	ld hl,numtmp+5
 
 dispnlp:
-push hl
-ex de,hl
-ld de,10
-call divide
-
-ld a,e
-or 48
-ex de,hl
-pop hl
-dec hl
-ld (hl),a
-ld a,d
-or e
-jr nz,dispnlp
-
-ex de,hl
-jp bdprint
+	push hl
+	ex de,hl
+	ld de,10
+	call divide
+	
+	ld a,e
+	or 48
+	ex de,hl
+	pop hl
+	dec hl
+	ld (hl),a
+	ld a,d
+	or e
+	jr nz,dispnlp
+	
+	ex de,hl
+	jp bdprint
 
 
 
 asciinum_hex:
-ld b,16
-jr asciinum
+	ld b,16
+	jr asciinum
 
 asciinum_dec:
-ld b,10
+	ld b,10
 ;FALLS THROUGH
 
 ;convert number of specified base as ASCII at hl to number.
@@ -288,120 +288,120 @@ ld b,10
 ;       b=base (e.g. 10 for decimal)
 ;exit:  hl=number
 asciinum:
-ld de,0		;total of number so far.
+	ld de,0		;total of number so far.
 atoilp:
-ld a,(hl)
-;uppercase it
-call islower
-jr nc,atoi0
-res 5,a
+	ld a,(hl)
+	;uppercase it
+	call islower
+	jr nc,atoi0
+	res 5,a
 atoi0:
-sub 48
-jr c,atoidone	;if not digit, end
-cp 10
-jr c,atoi0a
-sub 7		;compensate if we're using letters
+	sub 48
+	jr c,atoidone	;if not digit, end
+	cp 10
+	jr c,atoi0a
+	sub 7		;compensate if we're using letters
 atoi0a:
-cp b
-jr nc,atoidone	;if not digit, end
-;otherwise, multiply our running total by base and add this.
-push hl
-push bc
-push af
-ld c,b
-ld b,0
-call multiply
-pop af
-ld e,a
-ld d,0
-add hl,de
-ex de,hl
-pop bc
-pop hl
-inc hl
-jr atoilp
+	cp b
+	jr nc,atoidone	;if not digit, end
+	;otherwise, multiply our running total by base and add this.
+	push hl
+	push bc
+	push af
+	ld c,b
+	ld b,0
+	call multiply
+	pop af
+	ld e,a
+	ld d,0
+	add hl,de
+	ex de,hl
+	pop bc
+	pop hl
+	inc hl
+	jr atoilp
 
 atoidone:
-;got number in de - put it in hl.
-ex de,hl
-ret
+	;got number in de - put it in hl.
+	ex de,hl
+	ret
 
 
 ;hexdump 128 bytes from hl.
 ;WARNING: must ONLY be called by internal commands, not the OS itself!
 ;(reason being, it uses rst 28h to call ilprint)
 hexdump:
-ld d,h
-ld e,l
+	ld d,h
+	ld e,l
 
 ;hexdump 128 bytes from hl, but use de as offset.
 ;on exit, de has been incr'd by 128.
 hexdump2:
-ld c,8		;num lines.
+	ld c,8		;num lines.
 rpy:
-push de
-push hl
-ex de,hl
-call disphex
-rst 028h	;ilprint
-defb ': ',0
-pop hl
-
-ld b,16		;num cols.
+	push de
+	push hl
+	ex de,hl
+	call disphex
+	rst 028h	;ilprint
+	defb ': ',0
+	pop hl
+	
+	ld b,16		;num cols.
 rpx1:
-ld a,(hl)
-call hexbyte
-ld a,32
-call putchar
-inc hl
-djnz rpx1
-ld a,32
-call putchar
-
-;now as ASCII
-ld de,16
-and a
-sbc hl,de
-;e still 16
-ld b,e
-pop de		;pop de, as we add 16 to it during the loop
+	ld a,(hl)
+	call hexbyte
+	ld a,32
+	call putchar
+	inc hl
+	djnz rpx1
+	ld a,32
+	call putchar
+	
+	;now as ASCII
+	ld de,16
+	and a
+	sbc hl,de
+	;e still 16
+	ld b,e
+	pop de		;pop de, as we add 16 to it during the loop
 rpx2:
-ld a,(hl)
-call isprint
-jr c,rpskip1
-ld a,'.'
+	ld a,(hl)
+	call isprint
+	jr c,rpskip1
+	ld a,'.'
 rpskip1:
-call putchar
-inc hl
-inc de
-djnz rpx2
-
-push de
-push hl
-call do_crlf	;bc not modified
-pop hl
-pop de
-
-dec c
-jr nz,rpy
-
-;wahay!
-ret
+	call putchar
+	inc hl
+	inc de
+	djnz rpx2
+	
+	push de
+	push hl
+	call do_crlf	;bc not modified
+	pop hl
+	pop de
+	
+	dec c
+	jr nz,rpy
+	
+	;wahay!
+	ret
 
 
 ;effectively, 'halt' - wait (up to) 1/100th
 ;works even across poweroff/poweron, and also ignores any other
 ;types of interrupts than 1/100th sec timer (e.g. serial input).
 fakehalt:
-push hl
-ld hl,fstrobe
-ld a,(hl)
+	push hl
+	ld hl,fstrobe
+	ld a,(hl)
 beeplp2:
-ei
-cp (hl)
-jr z,beeplp2
-pop hl
-ret
+	ei
+	cp (hl)
+	jr z,beeplp2
+	pop hl
+	ret
 
 
 ;do a screen dump to `screen.dmp'.
@@ -414,132 +414,132 @@ scrnfcb: defb 0,'SCREEN  DMP',0,0,0,0
 	defb 0
 
 scrndump:
-;using internal stack
-push bc
-push de
-push hl
-ld hl,(dmapos)
-push hl
-
-xor a
-ld hl,scrnfcb
-ld (hl),a
-ex de,hl
-call bfmake
-inc a
-jr z,scrnexit	;abort on error
-
-;need to save CCP cmdline buffer and comfcb, as the bdos will use
-;them in bfmake/bfwrite. only need save first 16 bytes of comfcb though.
-;this is... hairy. we shove it on the 'extra' lines of the screen.
-
-ld hl,cmdbuf
-ld de,0f000h
-ld bc,128
-ldir
-ld hl,comfcb
-;want de=ff80h; since e will already = 80h...
-ld d,0ffh
-;b still zero
-ld c,16
-ldir
-
-if IS_NC200
- ld hl,06000h
- ld b,63	;a bit over twice as much (see below)
-else
-ld hl,0f080h
-ld b,30		;64*60=3840 bytes=30 records (middle 60 lines)
-endif
+	;using internal stack
+	push bc
+	push de
+	push hl
+	ld hl,(dmapos)
+	push hl
+	
+	xor a
+	ld hl,scrnfcb
+	ld (hl),a
+	ex de,hl
+	call bfmake
+	inc a
+	jr z,scrnexit	;abort on error
+	
+	;need to save CCP cmdline buffer and comfcb, as the bdos will use
+	;them in bfmake/bfwrite. only need save first 16 bytes of comfcb though.
+	;this is... hairy. we shove it on the 'extra' lines of the screen.
+	
+	ld hl,cmdbuf
+	ld de,0f000h
+	ld bc,128
+	ldir
+	ld hl,comfcb
+	;want de=ff80h; since e will already = 80h...
+	ld d,0ffh
+	;b still zero
+	ld c,16
+	ldir
+	
+	if IS_NC200
+	 ld hl,06000h
+	 ld b,63	;a bit over twice as much (see below)
+	else
+	ld hl,0f080h
+	ld b,30		;64*60=3840 bytes=30 records (middle 60 lines)
+	endif
 scrnwlp:
-push bc
-push hl
-if IS_NC200
- ld de,0f800h	;ok to use on the '200
- ld (dmapos),de
- ld bc,128
- ld a,043h
- call cardin
- ldir
- call cardout
-else
-ld (dmapos),hl
-endif
-ld de,scrnfcb
-call bfwrite
-pop hl
-pop bc
-ld de,128
-add hl,de
-djnz scrnwlp
-
-;file close not necessary on ZCN
-
-;beep
-if IS_NC200
- ;not safe to call visbell directly on '200
- ld a,7
- call putchar
-else
-call visbell
-endif
-
-;put stuff back
-;(I *could* avoid the zeroing-out on the '200, but this code
-; is ugly enough already :-))
-ld hl,0f000h
-push hl
-ld de,cmdbuf
-ld bc,128
-ldir
-pop hl
-;b still zero from ldir
-ld c,128
-call zeroblk
-
-ld hl,0ff80h
-push hl
-ld de,comfcb
-;b still zero from ldir
-ld c,16
-ldir
-pop hl
-;b still zero from ldir
-ld c,16
-call zeroblk
+	push bc
+	push hl
+	if IS_NC200
+	 ld de,0f800h	;ok to use on the '200
+	 ld (dmapos),de
+	 ld bc,128
+	 ld a,043h
+	 call cardin
+	 ldir
+	 call cardout
+	else
+	ld (dmapos),hl
+	endif
+	ld de,scrnfcb
+	call bfwrite
+	pop hl
+	pop bc
+	ld de,128
+	add hl,de
+	djnz scrnwlp
+	
+	;file close not necessary on ZCN
+	
+	;beep
+	if IS_NC200
+	 ;not safe to call visbell directly on '200
+	 ld a,7
+	 call putchar
+	else
+	call visbell
+	endif
+	
+	;put stuff back
+	;(I *could* avoid the zeroing-out on the '200, but this code
+	; is ugly enough already :-))
+	ld hl,0f000h
+	push hl
+	ld de,cmdbuf
+	ld bc,128
+	ldir
+	pop hl
+	;b still zero from ldir
+	ld c,128
+	call zeroblk
+	
+	ld hl,0ff80h
+	push hl
+	ld de,comfcb
+	;b still zero from ldir
+	ld c,16
+	ldir
+	pop hl
+	;b still zero from ldir
+	ld c,16
+	call zeroblk
 
 scrnexit:
-;reset 'pending screen dump' flag
-xor a
-ld (pendsdmp),a
-
-pop hl
-ld (dmapos),hl
-pop hl
-pop de
-pop bc
-ret
+	;reset 'pending screen dump' flag
+	xor a
+	ld (pendsdmp),a
+	
+	pop hl
+	ld (dmapos),hl
+	pop hl
+	pop de
+	pop bc
+	ret
 
 
 ;check 'pending screen dump' flag
 ;saves af/bc/de/hl
 chksdmp:
-push af
+	push af
 pendmpop: ld a,0	;pending screen dump if non-zero
-and a
-call nz,scrndump	;saves bc/de/hl and shouldn't use others
-pop af
-ret
+	and a
+	call nz,scrndump	;saves bc/de/hl and shouldn't use others
+	pop af
+	ret
 
 
 ;clear raw key map
 kclrmap:
-ld hl,krawmap
+	ld hl,krawmap
 ;FALLS THROUGH
 
 ;call zeroblk with bc=256
 zero256:
-ld bc,256
+	ld bc,256
 ;FALLS THROUGH
 
 ;zeroblk
@@ -551,11 +551,11 @@ ld bc,256
 ;NB: this must not use any stack, as it's sometimes called in precarious
 ;situations (via initijp_not38 from powrhndl.z, for example).
 zeroblk:
-ld (hl),0
+	ld (hl),0
 fillblk:
-dec bc
-ld d,h
-ld e,l
-inc de
-ldir
-ret
+	dec bc
+	ld d,h
+	ld e,l
+	inc de
+	ldir
+	ret

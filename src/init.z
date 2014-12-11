@@ -8,152 +8,152 @@ cpmstack: defw start
 
 ;the 'cold boot'
 bootsys:
-di	;just in case
-
-;page in correct ram in positions 0/1/2 and clear 0-255.
-ld hl,04140h
-ld (bank0),hl
-ld a,l
-out (010h),a
-ld a,h
-out (011h),a
-inc a		;42h
-out (012h),a
-
-ld a,0c9h
-ld (066h),a	;also just in case
-ld (0100h),a	;and for later, in case they do '!!' at the start!
-
-ld hl,start
-ld (cpmstack),hl
-ld sp,hl
-
-;zero zero page :-)
-ld bc,0100h
-ld h,c	;zero
-ld l,c
-call zeroblk
-
-;rearrange memory a bit on the '200
-if IS_NC200
-call nc200fix
-endif
-
-;NB: no text should be written before `fontdata' is set.
-
-call initpowr	;NMI handler
-call initint	;int handler (sets up jump table, sets I, does `im 2', etc.)
-ld a,16
-ld (linedrvop+1),a ;make sure sinit enables line driver (see serial.z)
-call sinit	;serial handler (also sets up IRQ mask)
-call kclrmap	;clear krawmap (related to keyboard handler)
-
-;init drive/user etc.
-xor a
-ld h,a
-ld l,a
-ld (curdrive),a
-ld (curuser),hl	;set curuser/prevuser
-out (090h),a	;clear any pending interrupts
-ld (insub),a
-ld (bdosdbug),a
-ld (capsctrl),a
-ld (conout),hl	;set conout/conin
-ld (realbeep),a
-ld (pendsdmp),a
-ld (subtail),a
-ld (xattrs+1),a
-ld (mouse),a
-ld (prompt+5),a	;(see below)
-inc a
-ld (batwarn),a
-ld (crlf_op+1),a
-ld h,0eah	;hl=ea00h (since l is still zero)
-ld (fontdata),hl
-
-if IS_NC200
-;enable backlight
-;a is still 1
-ld (lightop+1),a
-out (070h),a
-endif
-
-ld hl,06425h	;'%d'
-ld (prompt),hl
-ld h,062h	;'%b' (effectively)
-ld (prompt+2),hl
-ld a,'>'
-ld (prompt+4),a
-;(prompt+5) byte set to zero above
-
-;we're about to use bdos stuff, so we (finally!) enable ints.
-ei
-
-call clrscrn	;clear screen (inits terminal emulator)
-call curseit	;draw cursor
-
-;give startup banner (with `ver' routine)
-call iver
-call do_crlf
-
-;now before doing a warm boot, try to start up `autoexec.sub'.
-ld hl,autoxfcb
-ld de,subfcb
-push de
-ld bc,12
-ldir
-
-;open file
-pop de
-call bfopen
-inc a
-jr z,wboot		;error - couldn't open sub file
-
-xor a
-ld (subuser),a	;unum 0
-;set the 'take commands from file' flag.
-inc a
-ld (insub),a
-
-;zero pos. in dma, and rand rec. stuff in fcb
-ld hl,080h
-ld (subpos),hl
-ld l,h
-ld (subfcb+fcbrand),hl
+	di	;just in case
+	
+	;page in correct ram in positions 0/1/2 and clear 0-255.
+	ld hl,04140h
+	ld (bank0),hl
+	ld a,l
+	out (010h),a
+	ld a,h
+	out (011h),a
+	inc a		;42h
+	out (012h),a
+	
+	ld a,0c9h
+	ld (066h),a	;also just in case
+	ld (0100h),a	;and for later, in case they do '!!' at the start!
+	
+	ld hl,start
+	ld (cpmstack),hl
+	ld sp,hl
+	
+	;zero zero page :-)
+	ld bc,0100h
+	ld h,c	;zero
+	ld l,c
+	call zeroblk
+	
+	;rearrange memory a bit on the '200
+	if IS_NC200
+	call nc200fix
+	endif
+	
+	;NB: no text should be written before `fontdata' is set.
+	
+	call initpowr	;NMI handler
+	call initint	;int handler (sets up jump table, sets I, does `im 2', etc.)
+	ld a,16
+	ld (linedrvop+1),a ;make sure sinit enables line driver (see serial.z)
+	call sinit	;serial handler (also sets up IRQ mask)
+	call kclrmap	;clear krawmap (related to keyboard handler)
+	
+	;init drive/user etc.
+	xor a
+	ld h,a
+	ld l,a
+	ld (curdrive),a
+	ld (curuser),hl	;set curuser/prevuser
+	out (090h),a	;clear any pending interrupts
+	ld (insub),a
+	ld (bdosdbug),a
+	ld (capsctrl),a
+	ld (conout),hl	;set conout/conin
+	ld (realbeep),a
+	ld (pendsdmp),a
+	ld (subtail),a
+	ld (xattrs+1),a
+	ld (mouse),a
+	ld (prompt+5),a	;(see below)
+	inc a
+	ld (batwarn),a
+	ld (crlf_op+1),a
+	ld h,0eah	;hl=ea00h (since l is still zero)
+	ld (fontdata),hl
+	
+	if IS_NC200
+	;enable backlight
+	;a is still 1
+	ld (lightop+1),a
+	out (070h),a
+	endif
+	
+	ld hl,06425h	;'%d'
+	ld (prompt),hl
+	ld h,062h	;'%b' (effectively)
+	ld (prompt+2),hl
+	ld a,'>'
+	ld (prompt+4),a
+	;(prompt+5) byte set to zero above
+	
+	;we're about to use bdos stuff, so we (finally!) enable ints.
+	ei
+	
+	call clrscrn	;clear screen (inits terminal emulator)
+	call curseit	;draw cursor
+	
+	;give startup banner (with `ver' routine)
+	call iver
+	call do_crlf
+	
+	;now before doing a warm boot, try to start up `autoexec.sub'.
+	ld hl,autoxfcb
+	ld de,subfcb
+	push de
+	ld bc,12
+	ldir
+	
+	;open file
+	pop de
+	call bfopen
+	inc a
+	jr z,wboot		;error - couldn't open sub file
+	
+	xor a
+	ld (subuser),a	;unum 0
+	;set the 'take commands from file' flag.
+	inc a
+	ld (insub),a
+	
+	;zero pos. in dma, and rand rec. stuff in fcb
+	ld hl,080h
+	ld (subpos),hl
+	ld l,h
+	ld (subfcb+fcbrand),hl
 ;falls through
 
 
 ;warm boot
 wboot:
-ld sp,(cpmstack)
-call initbdos	;also fixes IM and enables ints
-
-;we don't bother resetting the screen address as there's a bit in the
-;CCP that does that.
-
-ld hl,mouse
-ld b,(hl)
-xor a
-ld (hl),a
-ld (xattrs+1),a	;clear attributes
-;set byte 0004h to high nibble=userno low nibble=drive
-ld (0004h),a	;wow that was hard :-)
-
-;if mouse was on before, call sinit to get back to old baud rate etc.
-ld a,b
-and a
-call nz,sinit
-
-call ccpsub	;run $$$.SUB if it exists in current drive/user
-jp mainloop	;jump to main loop (i.e. ccp stuff)
+	ld sp,(cpmstack)
+	call initbdos	;also fixes IM and enables ints
+	
+	;we don't bother resetting the screen address as there's a bit in the
+	;CCP that does that.
+	
+	ld hl,mouse
+	ld b,(hl)
+	xor a
+	ld (hl),a
+	ld (xattrs+1),a	;clear attributes
+	;set byte 0004h to high nibble=userno low nibble=drive
+	ld (0004h),a	;wow that was hard :-)
+	
+	;if mouse was on before, call sinit to get back to old baud rate etc.
+	ld a,b
+	and a
+	call nz,sinit
+	
+	call ccpsub	;run $$$.SUB if it exists in current drive/user
+	jp mainloop	;jump to main loop (i.e. ccp stuff)
 
 
 ;bit of fcb for autoexec.sub
 autoxfcb: defb 1,'AUTOEXECSUB'
-
-
-
-if IS_NC200
+	
+	
+	
+	if IS_NC200
 
 ;on the '200, we normally run the top 16k in RAM page 4, leaving
 ;RAM 3 available for the larger screen without breaking things.
@@ -162,17 +162,17 @@ if IS_NC200
 ;so what this routine does is copy from RAM 3 to RAM 4, and put
 ;RAM 4 in place.
 nc200fix:
-ld a,044h
-out (011h),a
-ld hl,0c000h
-ld de,04000h
-ld b,d
-ld c,e
-ldir
-ld a,041h
-out (011h),a
-ld a,044h
-out (013h),a
-ret
-
-endif
+	ld a,044h
+	out (011h),a
+	ld hl,0c000h
+	ld de,04000h
+	ld b,d
+	ld c,e
+	ldir
+	ld a,041h
+	out (011h),a
+	ld a,044h
+	out (013h),a
+	ret
+	
+	endif

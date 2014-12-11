@@ -50,46 +50,46 @@
 ;called by all bios routines, except trivial ones.
 ;BTW, trivial = uses no extra stack. :-)
 bisetup:
-ei
-pop hl
-ld (bstksav),sp
-ld sp,intstack	;use internal stack
-ld de,bexitstk	;push addr of stack-restore routine for 'ret'
-push de
-call chksdmp
-jp (hl)		;return to calling BIOS routine
+	ei
+	pop hl
+	ld (bstksav),sp
+	ld sp,intstack	;use internal stack
+	ld de,bexitstk	;push addr of stack-restore routine for 'ret'
+	push de
+	call chksdmp
+	jp (hl)		;return to calling BIOS routine
 
 biconin:
-call bisetup
+	call bisetup
 biclp:
-call bdgetkey
-jr nc,biclp
-ret
+	call bdgetkey
+	jr nc,biclp
+	ret
 
 biconout:
-call bisetup
-ld e,c
-jp bconout
+	call bisetup
+	ld e,c
+	jp bconout
 
 bicnstat:
-call bisetup
-jp bconstat
+	call bisetup
+	jp bconstat
 
 
 bilstout:
-call bisetup
-ld e,c
-jp blstout
+	call bisetup
+	ld e,c
+	jp blstout
 
 
 biauxout:
-call bisetup
-ld e,c
-jp bauxout
+	call bisetup
+	ld e,c
+	jp bauxout
 
 biauxin:
-call bisetup
-jp bauxin
+	call bisetup
+	jp bauxin
 
 
 ;none of the rest done - give an error if called
@@ -102,46 +102,6 @@ biread:
 biwrite:
 bilistst:
 bisectrn:
-call ilprint
-defb 'BIO',_caps+_s_,'err',_or,0
-rst 0
-
-;;disk position
-;track:	defw 0
-;sector: defb 0
-;
-;
-;bihome:
-;xor a
-;ld (sector),a
-;ld hl,0
-;ld (track),hl
-;ret
-;
-;biseldsk:
-;ld hl,0
-;cp 4
-;ret nc
-;ld a,c
-;ld (curdrive),a
-;ld hl,dphbase
-;ret
-
-;bisettrk:
-;ld (track),bc
-;ret
-
-;bisetsec:
-;ld a,c
-;ld (sector),a
-;ret
-
-;bisetdma:
-;ld (dmapos),bc
-;ret
-
-;bisectrn:
-;;no translation
-;ld h,b
-;ld l,c
-;ret
+	call ilprint
+	defb 'BIO',_caps+_s_,'err',_or,0
+	rst 0
