@@ -4,4 +4,4 @@
 all:
 
 clean:
-	$(RM) *~ extra/*~
+	$(RM) *~ extra/*~ *.bin extra/*.bin *.com extra/*.com
